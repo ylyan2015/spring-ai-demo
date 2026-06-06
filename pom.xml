@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
+    <groupId>com.github.ylyan2015</groupId>
     <artifactId>spring-ai-demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>spring-ai-demo</name>

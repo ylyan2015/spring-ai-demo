@@ -13,6 +13,7 @@
 - ✅ **历史持久化** - 使用 H2 数据库存储对话历史，可随时查阅
 - ✅ **上下文记忆** - 可配置的上下文窗口，保留最近 N 轮对话
 - ✅ **RESTful API** - 提供完整的 REST API 接口
+- ✅ **Web 界面** - 美观的聊天界面，支持会话列表、实时对话
 
 ## 技术栈
 
@@ -20,6 +21,7 @@
 - **Spring Boot 3.4.1** - 应用框架
 - **Spring AI 1.0.0** - AI 集成框架
 - **Spring Data JPA** - 数据持久化
+- **Thymeleaf** - 模板引擎
 - **H2 Database** - 内存数据库
 - **Ollama** - 本地大语言模型服务
 - **Maven** - 项目构建工具
@@ -66,9 +68,24 @@ mvn spring-boot:run
 
 或者直接运行主类 `SpringAiDemoApplication`。
 
-### 4. 测试聊天功能
+### 4. 使用 Web 界面（推荐）
 
-应用启动后，可以使用以下 API 进行测试：
+应用启动后，直接在浏览器中访问：
+
+```
+http://localhost:8080
+```
+
+Web 界面提供以下功能：
+- 📝 **会话管理** - 左侧边栏显示所有会话，点击切换
+- ➕ **新建对话** - 点击"新对话"按钮创建新会话
+- 💬 **实时聊天** - 输入消息并发送，支持 Enter 发送、Shift+Enter 换行
+- 📜 **历史记录** - 自动加载当前会话的历史消息
+- 🎨 **友好界面** - 清晰的消息气泡，区分用户和 AI 消息
+
+### 5. 使用 API 测试
+
+如果你想通过 API 进行测试，可以使用以下方式：
 
 #### 创建新会话
 ```bash
@@ -99,7 +116,8 @@ spring-ai-demo/
 ├── src/main/java/com/github/ylyan2015/springaidemo/
 │   ├── SpringAiDemoApplication.java    # 应用主类
 │   ├── controller/
-│   │   └── ChatController.java         # 聊天控制器（REST API）
+│   │   ├── ChatController.java         # 聊天控制器（REST API）
+│   │   └── PageController.java         # 页面控制器（Web 路由）
 │   ├── service/
 │   │   └── ChatService.java            # 聊天服务（业务逻辑）
 │   ├── entity/
@@ -109,6 +127,13 @@ spring-ai-demo/
 │       ├── ConversationRepository.java # 会话数据访问
 │       └── MessageRepository.java      # 消息数据访问
 ├── src/main/resources/
+│   ├── static/
+│   │   ├── css/
+│   │   │   └── chat.css                # 聊天界面样式
+│   │   └── js/
+│   │       └── chat.js                 # 前端交互逻辑
+│   ├── templates/
+│   │   └── index.html                  # 主页面模板
 │   └── application.yml                 # 应用配置文件
 ├── pom.xml                             # Maven 配置文件
 ├── README.md                           # 项目说明文档
@@ -156,8 +181,9 @@ chat:
 
 你可以根据需要修改：
 - `base-url`: Ollama 服务的地址
-- `model`: 使用的模型名称（如 llama3、mistral、qwen 等）
+- `model`: 使用的模型名称（如 llama3、mistral、qwen2.5 等）
 - `max-context-messages`: 上下文记忆长度，控制 AI 能记住多少轮对话
+- `port`: 应用运行端口
 
 ## API 接口
 

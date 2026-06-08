@@ -1,24 +1,143 @@
 package com.github.ylyan2015.springaidemo.controller;
 
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import com.github.ylyan2015.springaidemo.entity.Message;
+import com.github.ylyan2015.springaidemo.service.ChatService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 聊天控制器
+ * 提供多轮对话、会话管理等API接口
+ */
 @RestController
+@RequestMapping("/api/chat")
 public class ChatController {
 
-    private final ChatClient chatClient;
+    private final ChatService chatService;
 
-    public ChatController(ChatClient.Builder chatClientBuilder) {
-        this.chatClient = chatClientBuilder.build();
+    public ChatController(ChatService chatService) {
+        this.chatService = chatService;
     }
 
-    @GetMapping("/chat")
-    public String chat(@RequestParam(value = "message", defaultValue = "Hello, how are you?") String message) {
-        return chatClient.prompt()
-                .user(message)
-                .call()
-                .content();
+    /**
+     * 发送消息（支持多轮对话）
+     *
+     * @param request 包含sessionId和message的请求体
+     * @return AI回复
+     */
+    @PostMapping("/send")
+    public ResponseEntity<Map<String, Object>> sendMessage(@RequestBody ChatRequest request) {
+        String response = chatService.sendMessage(request.getSessionId(), request.getMessage());
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("sessionId", request.getSessionId() != null ? request.getSessionId() : "auto-generated");
+        result.put("response", response);
+        
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * GET方式发送消息（兼容旧接口）
+     *
+     * @param message 用户消息
+     * @param sessionId 会话ID（可选）
+     * @return AI回复
+     */
+    @GetMapping("/send")
+    public ResponseEntity<Map<String, Object>> sendMessageGet(
+            @RequestParam String message,
+            @RequestParam(required = false) String sessionId) {
+        String response = chatService.sendMessage(sessionId, message);
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("sessionId", sessionId != null ? sessionId : "auto-generated");
+        result.put("response", response);
+        
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取会话历史消息
+     *
+     * @param sessionId 会话ID
+     * @return 历史消息列表
+     */
+    @GetMapping("/history/{sessionId}")
+    public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String sessionId) {
+        List<Message> history = chatService.getConversationHistory(sessionId);
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("sessionId", sessionId);
+        result.put("messages", history);
+        result.put("count", history.size());
+        
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 创建新会话
+     *
+     * @return 新会话ID
+     */
+    @PostMapping("/conversation")
+    public ResponseEntity<Map<String, Object>> createConversation() {
+        String sessionId = chatService.createConversation();
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("sessionId", sessionId);
+        
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 删除会话
+     *
+     * @param sessionId 会话ID
+     * @return 操作结果
+     */
+    @DeleteMapping("/conversation/{sessionId}")
+    public ResponseEntity<Map<String, Object>> deleteConversation(@PathVariable String sessionId) {
+        chatService.deleteConversation(sessionId);
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("message", "会话已删除");
+        
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 聊天请求DTO
+     */
+    public static class ChatRequest {
+        private String sessionId;
+        private String message;
+
+        public ChatRequest() {
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public void setMessage(String message) {
+            this.message = message;
+        }
     }
 }

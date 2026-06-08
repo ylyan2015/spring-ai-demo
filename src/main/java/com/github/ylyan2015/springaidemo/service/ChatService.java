@@ -1,0 +1,182 @@
+package com.github.ylyan2015.springaidemo.service;
+
+import com.github.ylyan2015.springaidemo.entity.Conversation;
+import com.github.ylyan2015.springaidemo.entity.Message;
+import com.github.ylyan2015.springaidemo.repository.ConversationRepository;
+import com.github.ylyan2015.springaidemo.repository.MessageRepository;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * 聊天服务类
+ * 处理多轮对话、上下文记忆等核心业务逻辑
+ */
+@Service
+public class ChatService {
+
+    private final ChatClient chatClient;
+    private final ConversationRepository conversationRepository;
+    private final MessageRepository messageRepository;
+
+    /**
+     * 最大上下文消息数量（保留最近N轮对话）
+     * 每轮包含用户消息和AI回复，所以实际消息数 = maxContextMessages * 2
+     */
+    @Value("${chat.max-context-messages:10}")
+    private int maxContextMessages;
+
+    public ChatService(ChatClient.Builder chatClientBuilder,
+                      ConversationRepository conversationRepository,
+                      MessageRepository messageRepository) {
+        this.chatClient = chatClientBuilder.build();
+        this.conversationRepository = conversationRepository;
+        this.messageRepository = messageRepository;
+    }
+
+    /**
+     * 创建新会话
+     *
+     * @return 会话ID
+     */
+    @Transactional
+    public String createConversation() {
+        String sessionId = UUID.randomUUID().toString();
+        Conversation conversation = new Conversation(sessionId);
+        conversationRepository.save(conversation);
+        return sessionId;
+    }
+
+    /**
+     * 发送消息并获取回复（支持多轮对话）
+     *
+     * @param sessionId 会话ID
+     * @param userMessage 用户消息
+     * @return AI回复
+     */
+    @Transactional
+    public String sendMessage(String sessionId, String userMessage) {
+        // 1. 如果会话ID为空，创建新会话
+        if (sessionId == null || sessionId.isEmpty()) {
+            sessionId = createConversation();
+        }
+
+        // 2. 验证会话是否存在（使用final变量以在lambda中使用）
+        final String finalSessionId = sessionId;
+        Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
+                .orElseGet(() -> {
+                    Conversation newConv = new Conversation(finalSessionId);
+                    return conversationRepository.save(newConv);
+                });
+
+        // 3. 保存用户消息
+        int messageOrder = (int) messageRepository.countBySessionId(finalSessionId);
+        Message userMsgEntity = new Message(finalSessionId, "user", userMessage, messageOrder);
+        messageRepository.save(userMsgEntity);
+
+        // 4. 构建带上下文的对话历史
+        List<Message> recentMessages = getRecentMessages(finalSessionId);
+        List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
+
+        // 5. 调用AI模型获取回复
+        String aiResponse = chatClient.prompt()
+                .messages(chatMessages)
+                .call()
+                .content();
+
+        // 6. 保存AI回复
+        Message aiMsgEntity = new Message(finalSessionId, "assistant", aiResponse, messageOrder + 1);
+        messageRepository.save(aiMsgEntity);
+
+        // 7. 如果是对话的第一条消息，自动生成标题
+        if (messageOrder == 0 && aiResponse != null) {
+            String title = generateTitle(userMessage);
+            conversation.setTitle(title);
+            conversationRepository.save(conversation);
+        }
+
+        return aiResponse;
+    }
+
+    /**
+     * 获取会话历史消息
+     *
+     * @param sessionId 会话ID
+     * @return 消息列表
+     */
+    public List<Message> getConversationHistory(String sessionId) {
+        return messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
+    }
+
+    /**
+     * 删除会话
+     *
+     * @param sessionId 会话ID
+     */
+    @Transactional
+    public void deleteConversation(String sessionId) {
+        messageRepository.deleteBySessionId(sessionId);
+        conversationRepository.deleteBySessionId(sessionId);
+    }
+
+    /**
+     * 获取最近的N条消息用于上下文
+     *
+     * @param sessionId 会话ID
+     * @return 最近的消息列表
+     */
+    private List<Message> getRecentMessages(String sessionId) {
+        List<Message> allMessages = messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
+        
+        // 如果消息数量超过限制，只保留最近的N条
+        if (allMessages.size() > maxContextMessages * 2) {
+            return allMessages.subList(allMessages.size() - maxContextMessages * 2, allMessages.size());
+        }
+        
+        return allMessages;
+    }
+
+    /**
+     * 将数据库消息转换为Spring AI聊天消息
+     *
+     * @param messages 数据库消息列表
+     * @return Spring AI消息列表
+     */
+    private List<org.springframework.ai.chat.messages.Message> buildChatHistory(List<Message> messages) {
+        return messages.stream()
+                .map(msg -> {
+                    if ("user".equalsIgnoreCase(msg.getRole())) {
+                        return new UserMessage(msg.getContent());
+                    } else if ("assistant".equalsIgnoreCase(msg.getRole())) {
+                        return new AssistantMessage(msg.getContent());
+                    } else if ("system".equalsIgnoreCase(msg.getRole())) {
+                        return new SystemMessage(msg.getContent());
+                    }
+                    return null;
+                })
+                .filter(msg -> msg != null)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 生成会话标题（简单实现：取用户消息的前20个字符）
+     *
+     * @param firstMessage 第一条消息
+     * @return 会话标题
+     */
+    private String generateTitle(String firstMessage) {
+        if (firstMessage == null || firstMessage.isEmpty()) {
+            return "新对话";
+        }
+        
+        // 去除换行符，截取前20个字符
+        String title = firstMessage.replaceAll("\\s+", " ");
+        return title.length() > 20 ? title.substring(0, 20) + "..." : title;
+    }
+}

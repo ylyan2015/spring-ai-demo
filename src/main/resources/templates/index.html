@@ -25,8 +25,13 @@
             </div>
             
             <div class="sidebar-footer">
-                <div class="model-info">
-                    <span class="model-name">Qwen2.5</span>
+                <div class="model-selector">
+                    <label for="modelSelect">模型：</label>
+                    <select id="modelSelect" class="model-select">
+                        <option value="ollama">离线模式</option>
+                        <option value="deepseek">DeepSeek V3</option>
+                        <option value="openai">OpenAI GPT</option>
+                    </select>
                 </div>
             </div>
         </aside>
@@ -38,7 +43,7 @@
                 <div class="welcome-screen" id="welcomeScreen">
                     <div class="welcome-content">
                         <h1>Spring AI Chat</h1>
-                        <p>基于 Ollama + Qwen2.5 的智能对话助手</p>
+                        <p>智能对话助手 - 支持离线模式、DeepSeek 和 OpenAI</p>
                     </div>
                 </div>
             </div>

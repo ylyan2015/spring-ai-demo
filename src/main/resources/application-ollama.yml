@@ -1,0 +1,9 @@
+# Ollama 本地模型配置
+
+spring:
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: qwen2.5:7b-instruct
+        # 其他可选模型: llama3, mistral, gemma2 等

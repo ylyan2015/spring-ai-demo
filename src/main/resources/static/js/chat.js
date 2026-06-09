@@ -1,6 +1,7 @@
 // 全局状态
 let currentSessionId = null;
 let conversations = [];
+let currentModel = 'ollama';
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -9,10 +10,12 @@ const sendBtn = document.getElementById('sendBtn');
 const newChatBtn = document.getElementById('newChatBtn');
 const conversationList = document.getElementById('conversationList');
 const welcomeScreen = document.getElementById('welcomeScreen');
+const modelSelect = document.getElementById('modelSelect');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     loadConversations();
+    loadCurrentModel();
     setupEventListeners();
 });
 
@@ -39,6 +42,9 @@ function setupEventListeners() {
 
     // 新对话按钮
     newChatBtn.addEventListener('click', createNewConversation);
+
+    // 模型选择器变化
+    modelSelect.addEventListener('change', handleModelSwitch);
 }
 
 // 自动调整文本框高度
@@ -381,4 +387,79 @@ function formatTime(date) {
 function showError(message) {
     // 简单的alert，可以改进为更优雅的toast提示
     alert(message);
+}
+
+// 加载当前模型
+async function loadCurrentModel() {
+    try {
+        const response = await fetch('/api/model/current');
+        if (response.ok) {
+            const data = await response.json();
+            currentModel = data.model;
+            modelSelect.value = currentModel;
+        }
+    } catch (error) {
+        console.error('加载模型信息失败:', error);
+    }
+}
+
+// 处理模型切换
+async function handleModelSwitch() {
+    const newModel = modelSelect.value;
+    
+    if (newModel === currentModel) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/model/switch', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ model: newModel })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            currentModel = newModel;
+            showSuccess(data.message);
+        } else {
+            showError(data.message);
+            // 恢复原来的选择
+            modelSelect.value = currentModel;
+        }
+    } catch (error) {
+        console.error('切换模型失败:', error);
+        showError('切换模型失败，请重试');
+        modelSelect.value = currentModel;
+    }
+}
+
+// 显示成功提示
+function showSuccess(message) {
+    // 创建临时提示元素
+    const toast = document.createElement('div');
+    toast.className = 'toast-success';
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        z-index: 1000;
+        animation: slideIn 0.3s ease;
+    `;
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
 }

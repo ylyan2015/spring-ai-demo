@@ -13,7 +13,7 @@ spring:
     
     # OpenAI 配置（仅用于提供 API Key，实际 Base URL 在代码中指定）
     openai:
-      api-key: ${OPENAI_API_KEY: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}
+      api-key: ${OPENAI_API_KEY}
   
   # JPA Configuration (通用配置)
   jpa:

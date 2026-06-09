@@ -1,0 +1,12 @@
+# OpenAI 模型配置
+
+spring:
+  ai:
+    openai:
+      # OpenAI API地址
+      base-url: https://api.openai.com
+      api-key: ${OPENAI_API_KEY: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}
+      chat:
+        options:
+          model: gpt-4o-mini
+          # 其他可选模型: gpt-4o, gpt-3.5-turbo

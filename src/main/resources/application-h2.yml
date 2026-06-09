@@ -1,0 +1,18 @@
+# H2 数据库配置（备份/开发模式）
+
+spring:
+  datasource:
+    # 使用文件持久化模式，数据存储在 ./data/chatdb.mv.db
+    url: jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+  
+  # H2 Console (访问 http://localhost:8080/h2-console)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console

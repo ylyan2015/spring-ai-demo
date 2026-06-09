@@ -1,0 +1,11 @@
+# PostgreSQL 数据库配置
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/chatdb
+    driver-class-name: org.postgresql.Driver
+    username: postgres
+    password: postgres
+  
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect

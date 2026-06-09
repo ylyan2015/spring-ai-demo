@@ -1,0 +1,12 @@
+# DeepSeek 模型配置（使用OpenAI兼容API）
+
+spring:
+  ai:
+    deepseek:
+      # DeepSeek API地址（注意：不要包含 /v1，Spring AI 会自动添加）
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY:sk-ac17f7be4d694928b96b3bd6127663c6}
+      chat:
+        options:
+          model: deepseek-chat
+          # 其他可选模型: deepseek-coder, deepseek-reasoner

@@ -3,7 +3,7 @@ server:
 
 spring:
   profiles:
-    active: deepseek,h2  # 默认使用DeepSeek + H2数据库，可改为 ollama,h2 使用离线模式
+    active: deepseek,openai,h2  # 默认使用DeepSeek + H2数据库，可改为 ollama,h2 使用离线模式
   
   ai:
     ollama:
@@ -11,10 +11,11 @@ spring:
       chat:
         model: qwen2.5:7b-instruct
     
-    # OpenAI 配置（仅用于提供 API Key，实际 Base URL 在代码中指定）
+    # OpenAI 配置（仅用于通用配置 ，实际 Base URL 、API Key 等在单独配置文件中指定）
     openai:
-      api-key: ${OPENAI_API_KEY}
-  
+      rest-template:
+        connect-timeout: 5000
+        read-timeout: 10000
   # JPA Configuration (通用配置)
   jpa:
     hibernate:

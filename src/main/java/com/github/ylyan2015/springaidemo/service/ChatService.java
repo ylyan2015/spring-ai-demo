@@ -1,12 +1,18 @@
 package com.github.ylyan2015.springaidemo.service;
 
+import com.github.ylyan2015.springaidemo.controller.ModelService;
 import com.github.ylyan2015.springaidemo.entity.Conversation;
 import com.github.ylyan2015.springaidemo.entity.Message;
+import com.github.ylyan2015.springaidemo.entity.User;
 import com.github.ylyan2015.springaidemo.repository.ConversationRepository;
 import com.github.ylyan2015.springaidemo.repository.MessageRepository;
+import com.github.ylyan2015.springaidemo.repository.UserRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,13 +23,15 @@ import java.util.stream.Collectors;
 /**
  * 聊天服务类
  * 处理多轮对话、上下文记忆等核心业务逻辑
+ * 支持多种AI模型：Ollama、OpenAI、DeepSeek等
  */
 @Service
 public class ChatService {
 
-    private final ChatClient chatClient;
+    private final ModelService modelService;
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
+    private final UserRepository userRepository;
 
     /**
      * 最大上下文消息数量（保留最近N轮对话）
@@ -32,25 +40,49 @@ public class ChatService {
     @Value("${chat.max-context-messages:10}")
     private int maxContextMessages;
 
-    public ChatService(ChatClient.Builder chatClientBuilder,
+    public ChatService(ModelService modelService,
                       ConversationRepository conversationRepository,
-                      MessageRepository messageRepository) {
-        this.chatClient = chatClientBuilder.build();
+                      MessageRepository messageRepository,
+                      UserRepository userRepository) {
+        this.modelService = modelService;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
+        this.userRepository = userRepository;
     }
 
     /**
-     * 创建新会话
+     * 创建新会话（绑定到当前用户）
      *
      * @return 会话ID
      */
     @Transactional
     public String createConversation() {
+        Long userId = getCurrentUserId();
         String sessionId = UUID.randomUUID().toString();
-        Conversation conversation = new Conversation(sessionId);
+        Conversation conversation = new Conversation(sessionId, userId);
         conversationRepository.save(conversation);
         return sessionId;
+    }
+
+    /**
+     * 获取当前登录用户的所有会话
+     */
+    public List<Conversation> getUserConversations() {
+        Long userId = getCurrentUserId();
+        return conversationRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+    }
+
+    /**
+     * 获取当前登录用户ID
+     */
+    private Long getCurrentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            throw new RuntimeException("用户未登录");
+        }
+        User user = userRepository.findByUsername(auth.getName())
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        return user.getId();
     }
 
     /**
@@ -71,7 +103,8 @@ public class ChatService {
         final String finalSessionId = sessionId;
         Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
                 .orElseGet(() -> {
-                    Conversation newConv = new Conversation(finalSessionId);
+                    Long uid = getCurrentUserId();
+                    Conversation newConv = new Conversation(finalSessionId, uid);
                     return conversationRepository.save(newConv);
                 });
 
@@ -85,10 +118,31 @@ public class ChatService {
         List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
 
         // 5. 调用AI模型获取回复
-        String aiResponse = chatClient.prompt()
-                .messages(chatMessages)
-                .call()
-                .content();
+        String aiResponse;
+        try {
+            ChatClient chatClient = modelService.getChatClient();
+            aiResponse = chatClient.prompt()
+                    .messages(chatMessages)
+                    .call()
+                    .content();
+        } catch (Exception e) {
+            String modelName = modelService.getCurrentModelName();
+            String errorMsg = e.getMessage();
+            
+            // 提供更友好的错误提示
+            if (errorMsg != null && (errorMsg.contains("ClosedChannel") || errorMsg.contains("ConnectException"))) {
+                errorMsg = "网络连接失败，请检查：\n" +
+                          "1. 如果使用离线模式，请确保 Ollama 服务已启动（ollama serve）\n" +
+                          "2. 如果使用在线模式，请检查网络连接和 API Key 是否正确\n" +
+                          "3. 防火墙或代理可能阻止了连接";
+            } else if (errorMsg != null && errorMsg.contains("401")) {
+                errorMsg = "API Key 无效或已过期，请检查配置";
+            } else if (errorMsg != null && errorMsg.contains("404")) {
+                errorMsg = "模型不存在，请检查模型名称配置";
+            }
+            
+            throw new RuntimeException("调用AI模型失败 [" + modelName + "]: \n" + errorMsg, e);
+        }
 
         // 6. 保存AI回复
         Message aiMsgEntity = new Message(finalSessionId, "assistant", aiResponse, messageOrder + 1);
@@ -115,12 +169,18 @@ public class ChatService {
     }
 
     /**
-     * 删除会话
+     * 删除会话（仅允许拥有者删除）
      *
      * @param sessionId 会话ID
      */
     @Transactional
     public void deleteConversation(String sessionId) {
+        Long userId = getCurrentUserId();
+        Conversation conv = conversationRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new RuntimeException("会话不存在"));
+        if (!conv.getUserId().equals(userId)) {
+            throw new RuntimeException("无权删除该会话");
+        }
         messageRepository.deleteBySessionId(sessionId);
         conversationRepository.deleteBySessionId(sessionId);
     }

@@ -5,7 +5,7 @@ spring:
     deepseek:
       # DeepSeek API地址（注意：不要包含 /v1，Spring AI 会自动添加）
       base-url: https://api.deepseek.com
-      api-key: ${DEEPSEEK_API_KEY}
+      api-key: ${DEEPSEEK_API_KEY:sk-b708d463c41b4b818ec6ff8fc5d8dfe1}
       chat:
         options:
           model: deepseek-chat

@@ -4,6 +4,7 @@ import com.github.ylyan2015.springaidemo.entity.Conversation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -21,4 +22,9 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
      * 根据会话ID删除会话
      */
     void deleteBySessionId(String sessionId);
+
+    /**
+     * 查找用户的所有会话，按更新时间降序
+     */
+    List<Conversation> findByUserIdOrderByUpdatedAtDesc(Long userId);
 }

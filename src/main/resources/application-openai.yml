@@ -5,7 +5,7 @@ spring:
     openai:
       # OpenAI API地址
       base-url: https://api.openai.com
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAI_API_KEY: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}
       chat:
         options:
           model: gpt-4o-mini

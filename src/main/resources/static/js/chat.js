@@ -14,97 +14,91 @@ const modelSelect = document.getElementById('modelSelect');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
-    loadCurrentUser();
     loadConversations();
     loadCurrentModel();
     setupEventListeners();
 });
 
-// 加载当前用户信息
-async function loadCurrentUser() {
-    try {
-        const resp = await fetch('/api/auth/user');
-        const data = await resp.json();
-        if (!data.loggedIn) {
-            window.location.href = '/login';
-            return;
-        }
-        document.getElementById('userName').textContent = data.username;
-    } catch (e) {
-        window.location.href = '/login';
-    }
-}
-
-// 退出登录
-async function doLogout() {
-    try {
-        await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) {}
-    window.location.href = '/login';
-}
-
-// 处理API响应，检查认证状态
-function handleAuthResponse(response) {
-    if (response.status === 401 || response.status === 403) {
-        window.location.href = '/login';
-        return false;
-    }
-    return true;
-}
-
 // 设置事件监听器
 function setupEventListeners() {
+    // 发送按钮点击
     sendBtn.addEventListener('click', sendMessage);
+
+    // 输入框键盘事件
     messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            if (!sendBtn.disabled) sendMessage();
+            if (!sendBtn.disabled) {
+                sendMessage();
+            }
         }
     });
+
+    // 输入框内容变化
     messageInput.addEventListener('input', () => {
         updateSendButtonState();
         autoResizeTextarea();
     });
+
+    // 新对话按钮
     newChatBtn.addEventListener('click', createNewConversation);
+
+    // 模型选择器变化
     modelSelect.addEventListener('change', handleModelSwitch);
 }
 
+// 自动调整文本框高度
 function autoResizeTextarea() {
     messageInput.style.height = 'auto';
     messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
 }
 
+// 更新发送按钮状态
 function updateSendButtonState() {
-    sendBtn.disabled = messageInput.value.trim().length === 0;
+    const hasText = messageInput.value.trim().length > 0;
+    sendBtn.disabled = !hasText;
 }
 
 // 创建新会话
 async function createNewConversation() {
     try {
-        const response = await fetch('/api/chat/conversation', { method: 'POST' });
-        if (!handleAuthResponse(response)) return;
-        if (!response.ok) throw new Error('创建会话失败');
+        const response = await fetch('/api/chat/conversation', {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error('创建会话失败');
+        }
+
         const data = await response.json();
         currentSessionId = data.sessionId;
+        
+        // 清空消息区域
         clearMessages();
         showWelcomeScreen();
+        
+        // 重新加载会话列表
         await loadConversations();
+        
+        // 聚焦输入框
         messageInput.focus();
+        
     } catch (error) {
         console.error('创建会话错误:', error);
         showError('创建会话失败，请重试');
     }
 }
 
-// 加载会话列表（从服务端获取）
+// 加载会话列表
 async function loadConversations() {
     try {
-        const response = await fetch('/api/chat/conversations');
-        if (!handleAuthResponse(response)) return;
-        if (!response.ok) throw new Error('加载会话列表失败');
-        const data = await response.json();
-        conversations = data.conversations || [];
-        renderConversationList();
+        // 这里简化处理，实际应该从后端获取会话列表
+        // 目前使用localStorage存储会话ID列表
+        const savedSessions = localStorage.getItem('conversations');
+        if (savedSessions) {
+            conversations = JSON.parse(savedSessions);
+            renderConversationList();
+        }
     } catch (error) {
         console.error('加载会话列表错误:', error);
     }
@@ -113,15 +107,16 @@ async function loadConversations() {
 // 渲染会话列表
 function renderConversationList() {
     conversationList.innerHTML = '';
+    
     conversations.forEach(conv => {
         const item = document.createElement('div');
         item.className = `conversation-item ${conv.id === currentSessionId ? 'active' : ''}`;
         item.onclick = () => selectConversation(conv.id);
-
+        
         const title = document.createElement('span');
         title.className = 'conversation-title';
         title.textContent = conv.title || '新对话';
-
+        
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'delete-conversation-btn';
         deleteBtn.innerHTML = `
@@ -134,7 +129,7 @@ function renderConversationList() {
             e.stopPropagation();
             deleteConversation(conv.id);
         };
-
+        
         item.appendChild(title);
         item.appendChild(deleteBtn);
         conversationList.appendChild(item);
@@ -150,22 +145,32 @@ async function selectConversation(sessionId) {
 
 // 删除会话
 async function deleteConversation(sessionId) {
-    if (!confirm('确定要删除这个会话吗？')) return;
+    if (!confirm('确定要删除这个会话吗？')) {
+        return;
+    }
+    
     try {
-        const response = await fetch(`/api/chat/conversation/${sessionId}`, { method: 'DELETE' });
-        if (!handleAuthResponse(response)) return;
-        const data = await response.json();
-        if (!data.success) {
-            showError(data.message || '删除失败');
-            return;
+        const response = await fetch(`/api/chat/conversation/${sessionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error('删除会话失败');
         }
+        
+        // 从列表中移除
         conversations = conversations.filter(c => c.id !== sessionId);
+        localStorage.setItem('conversations', JSON.stringify(conversations));
+        
+        // 如果删除的是当前会话，清空消息
         if (currentSessionId === sessionId) {
             currentSessionId = null;
             clearMessages();
             showWelcomeScreen();
         }
+        
         renderConversationList();
+        
     } catch (error) {
         console.error('删除会话错误:', error);
         showError('删除会话失败，请重试');
@@ -176,44 +181,59 @@ async function deleteConversation(sessionId) {
 async function sendMessage() {
     const message = messageInput.value.trim();
     if (!message) return;
-
+    
+    // 如果没有会话ID，创建新会话
     if (!currentSessionId) {
         await createNewConversation();
-        if (!currentSessionId) return; // 创建失败则退出
     }
-
+    
+    // 隐藏欢迎屏幕
     hideWelcomeScreen();
+    
+    // 添加用户消息到界面
     addMessageToUI('user', message);
+    
+    // 清空输入框
     messageInput.value = '';
     updateSendButtonState();
     autoResizeTextarea();
+    
+    // 显示加载动画
     showTypingIndicator();
-
+    
     try {
         const response = await fetch('/api/chat/send', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: currentSessionId, message })
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                sessionId: currentSessionId,
+                message: message
+            })
         });
-        if (!handleAuthResponse(response)) return;
-        if (!response.ok) throw new Error('发送消息失败');
-
+        
+        if (!response.ok) {
+            throw new Error('发送消息失败');
+        }
+        
         const data = await response.json();
+        
+        // 隐藏加载动画
         hideTypingIndicator();
+        
+        // 添加AI回复到界面
         addMessageToUI('assistant', data.response);
-
+        
         // 如果是第一条消息，更新会话标题
         const sessionMessages = document.querySelectorAll('.message');
         if (sessionMessages.length === 2) {
-            // 更新会话列表中的标题
-            const conv = conversations.find(c => c.id === currentSessionId);
-            const title = message.substring(0, 30) + (message.length > 30 ? '...' : '');
-            if (conv) {
-                conv.title = title;
-                renderConversationList();
-            }
+            updateConversationTitle(currentSessionId, message);
         }
+        
+        // 滚动到底部
         scrollToBottom();
+        
     } catch (error) {
         console.error('发送消息错误:', error);
         hideTypingIndicator();
@@ -225,60 +245,92 @@ async function sendMessage() {
 function addMessageToUI(role, content) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message message-${role}`;
+    
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
     bubble.textContent = content;
+    
     const time = document.createElement('div');
     time.className = 'message-time';
     time.textContent = formatTime(new Date());
+    
     messageDiv.appendChild(bubble);
     messageDiv.appendChild(time);
     messagesContainer.appendChild(messageDiv);
+    
     scrollToBottom();
 }
 
+// 显示加载动画
 function showTypingIndicator() {
     const typingDiv = document.createElement('div');
     typingDiv.className = 'message message-assistant';
     typingDiv.id = 'typingIndicator';
+    
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
+    
     const indicator = document.createElement('div');
     indicator.className = 'typing-indicator';
-    indicator.innerHTML = `<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>`;
+    indicator.innerHTML = `
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+    `;
+    
     bubble.appendChild(indicator);
     typingDiv.appendChild(bubble);
     messagesContainer.appendChild(typingDiv);
+    
     scrollToBottom();
 }
 
+// 隐藏加载动画
 function hideTypingIndicator() {
-    const el = document.getElementById('typingIndicator');
-    if (el) el.remove();
+    const indicator = document.getElementById('typingIndicator');
+    if (indicator) {
+        indicator.remove();
+    }
 }
 
 // 加载消息历史
 async function loadMessageHistory(sessionId) {
     try {
         const response = await fetch(`/api/chat/history/${sessionId}`);
-        if (!handleAuthResponse(response)) return;
-        if (!response.ok) throw new Error('加载历史记录失败');
+        
+        if (!response.ok) {
+            throw new Error('加载历史记录失败');
+        }
+        
         const data = await response.json();
+        
+        // 清空当前消息
         clearMessages();
+        
+        // 如果有消息，隐藏欢迎屏幕
         if (data.messages && data.messages.length > 0) {
             hideWelcomeScreen();
-            data.messages.forEach(msg => addMessageToUI(msg.role, msg.content));
+            
+            // 添加所有历史消息
+            data.messages.forEach(msg => {
+                addMessageToUI(msg.role, msg.content);
+            });
         } else {
             showWelcomeScreen();
         }
+        
     } catch (error) {
         console.error('加载历史记录错误:', error);
         showError('加载历史记录失败');
     }
 }
 
-function clearMessages() { messagesContainer.innerHTML = ''; }
+// 清空消息
+function clearMessages() {
+    messagesContainer.innerHTML = '';
+}
 
+// 显示欢迎屏幕
 function showWelcomeScreen() {
     if (!document.getElementById('welcomeScreen')) {
         const welcome = document.createElement('div');
@@ -287,25 +339,55 @@ function showWelcomeScreen() {
         welcome.innerHTML = `
             <div class="welcome-content">
                 <h1>Spring AI Chat</h1>
-                <p>智能对话助手 - 支持离线模式、DeepSeek 和 OpenAI</p>
+                <p>基于 Ollama + Qwen2.5 的智能对话助手</p>
             </div>
         `;
         messagesContainer.appendChild(welcome);
     }
 }
 
+// 隐藏欢迎屏幕
 function hideWelcomeScreen() {
-    const el = document.getElementById('welcomeScreen');
-    if (el) el.remove();
+    const welcome = document.getElementById('welcomeScreen');
+    if (welcome) {
+        welcome.remove();
+    }
 }
 
-function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
+// 更新会话标题
+function updateConversationTitle(sessionId, title) {
+    const conv = conversations.find(c => c.id === sessionId);
+    if (conv) {
+        conv.title = title.substring(0, 30) + (title.length > 30 ? '...' : '');
+        localStorage.setItem('conversations', JSON.stringify(conversations));
+        renderConversationList();
+    } else {
+        conversations.push({
+            id: sessionId,
+            title: title.substring(0, 30) + (title.length > 30 ? '...' : '')
+        });
+        localStorage.setItem('conversations', JSON.stringify(conversations));
+        renderConversationList();
+    }
+}
 
+// 滚动到底部
+function scrollToBottom() {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// 格式化时间
 function formatTime(date) {
-    return `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
 }
 
-function showError(message) { alert(message); }
+// 显示错误提示
+function showError(message) {
+    // 简单的alert，可以改进为更优雅的toast提示
+    alert(message);
+}
 
 // 加载当前模型
 async function loadCurrentModel() {
@@ -324,19 +406,28 @@ async function loadCurrentModel() {
 // 处理模型切换
 async function handleModelSwitch() {
     const newModel = modelSelect.value;
-    if (newModel === currentModel) return;
+    
+    if (newModel === currentModel) {
+        return;
+    }
+    
     try {
         const response = await fetch('/api/model/switch', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({ model: newModel })
         });
+        
         const data = await response.json();
+        
         if (data.success) {
             currentModel = newModel;
             showSuccess(data.message);
         } else {
             showError(data.message);
+            // 恢复原来的选择
             modelSelect.value = currentModel;
         }
     } catch (error) {
@@ -346,15 +437,27 @@ async function handleModelSwitch() {
     }
 }
 
+// 显示成功提示
 function showSuccess(message) {
+    // 创建临时提示元素
     const toast = document.createElement('div');
+    toast.className = 'toast-success';
     toast.textContent = message;
     toast.style.cssText = `
-        position:fixed;top:20px;right:20px;background:#10b981;color:white;
-        padding:12px 24px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);
-        z-index:1000;animation:slideIn 0.3s ease;
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        z-index: 1000;
+        animation: slideIn 0.3s ease;
     `;
+    
     document.body.appendChild(toast);
+    
     setTimeout(() => {
         toast.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => toast.remove(), 300);

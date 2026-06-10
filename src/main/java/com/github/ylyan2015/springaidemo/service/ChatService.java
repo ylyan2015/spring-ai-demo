@@ -3,16 +3,12 @@ package com.github.ylyan2015.springaidemo.service;
 import com.github.ylyan2015.springaidemo.controller.ModelService;
 import com.github.ylyan2015.springaidemo.entity.Conversation;
 import com.github.ylyan2015.springaidemo.entity.Message;
-import com.github.ylyan2015.springaidemo.entity.User;
 import com.github.ylyan2015.springaidemo.repository.ConversationRepository;
 import com.github.ylyan2015.springaidemo.repository.MessageRepository;
-import com.github.ylyan2015.springaidemo.repository.UserRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +27,6 @@ public class ChatService {
     private final ModelService modelService;
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final UserRepository userRepository;
 
     /**
      * 最大上下文消息数量（保留最近N轮对话）
@@ -42,47 +37,23 @@ public class ChatService {
 
     public ChatService(ModelService modelService,
                       ConversationRepository conversationRepository,
-                      MessageRepository messageRepository,
-                      UserRepository userRepository) {
+                      MessageRepository messageRepository) {
         this.modelService = modelService;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
-        this.userRepository = userRepository;
     }
 
     /**
-     * 创建新会话（绑定到当前用户）
+     * 创建新会话
      *
      * @return 会话ID
      */
     @Transactional
     public String createConversation() {
-        Long userId = getCurrentUserId();
         String sessionId = UUID.randomUUID().toString();
-        Conversation conversation = new Conversation(sessionId, userId);
+        Conversation conversation = new Conversation(sessionId);
         conversationRepository.save(conversation);
         return sessionId;
-    }
-
-    /**
-     * 获取当前登录用户的所有会话
-     */
-    public List<Conversation> getUserConversations() {
-        Long userId = getCurrentUserId();
-        return conversationRepository.findByUserIdOrderByUpdatedAtDesc(userId);
-    }
-
-    /**
-     * 获取当前登录用户ID
-     */
-    private Long getCurrentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
-            throw new RuntimeException("用户未登录");
-        }
-        User user = userRepository.findByUsername(auth.getName())
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
-        return user.getId();
     }
 
     /**
@@ -103,8 +74,7 @@ public class ChatService {
         final String finalSessionId = sessionId;
         Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
                 .orElseGet(() -> {
-                    Long uid = getCurrentUserId();
-                    Conversation newConv = new Conversation(finalSessionId, uid);
+                    Conversation newConv = new Conversation(finalSessionId);
                     return conversationRepository.save(newConv);
                 });
 
@@ -169,18 +139,12 @@ public class ChatService {
     }
 
     /**
-     * 删除会话（仅允许拥有者删除）
+     * 删除会话
      *
      * @param sessionId 会话ID
      */
     @Transactional
     public void deleteConversation(String sessionId) {
-        Long userId = getCurrentUserId();
-        Conversation conv = conversationRepository.findBySessionId(sessionId)
-                .orElseThrow(() -> new RuntimeException("会话不存在"));
-        if (!conv.getUserId().equals(userId)) {
-            throw new RuntimeException("无权删除该会话");
-        }
         messageRepository.deleteBySessionId(sessionId);
         conversationRepository.deleteBySessionId(sessionId);
     }

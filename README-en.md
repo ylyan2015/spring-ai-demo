@@ -1,18 +1,15 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user registration and login system.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.).
 
 ## Project Overview
 
-This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system where chat history is bound to users, ensuring data privacy and security.
+This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.).
 
 ### ✨ Core Features
 
-- ✅ **User Authentication** - Registration/login with random captcha verification
-- ✅ **Secure Password Transfer** - RSA asymmetric encryption for password transmission, BCrypt for storage
 - ✅ **Multi-turn Conversation Support** - Automatically maintains conversation context, AI remembers previous chat content
 - ✅ **Session Management** - Supports creating, querying, and deleting multiple independent sessions
-- ✅ **Chat Bound to Users** - Each user's chat history is isolated, only viewable and deletable by the owner
 - ✅ **History Persistence** - Uses PostgreSQL/H2 database to store conversation history for easy reference
 - ✅ **Context Memory** - Configurable context window, retains the last N rounds of conversation
 - ✅ **RESTful API** - Provides complete REST API interfaces
@@ -24,12 +21,10 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **Java 17** - Programming language
 - **Spring Boot 3.4.1** - Application framework
 - **Spring AI 1.0.0** - AI integration framework
-- **Spring Security** - Security authentication framework
 - **Spring Data JPA** - Data persistence
 - **Thymeleaf** - Template engine
 - **PostgreSQL/H2 Database** - Database (switchable)
 - **AI Models**: Ollama / OpenAI / DeepSeek (switchable)
-- **RSA + BCrypt** - Password encryption scheme
 - **Maven** - Build tool
 
 ## Prerequisites
@@ -98,60 +93,24 @@ After the application starts, access directly in your browser:
 http://localhost:8080
 ```
 
-The system will automatically redirect to the login/registration page. Please register an account for first-time use.
-
-#### Registration & Login
-
-1. **Register an Account**:
-   - Click the "Register" tab
-   - Enter username
-   - Enter password (must contain uppercase, lowercase letters and digits, 6-50 characters)
-   - Re-enter password for confirmation
-   - Enter the 5-character random captcha displayed on the page
-   - Click the "Register" button
-
-2. **Login**:
-   - Enter username and password
-   - Enter the 5-character random captcha displayed on the page
-   - Click the "Login" button
-
-> **Security Note**: Passwords are encrypted using RSA asymmetric encryption before transmission. The server stores password hashes using the BCrypt algorithm. Even if the database is compromised, plaintext passwords cannot be recovered.
-
-#### Chat Features
-
 The web interface provides the following features:
-- 👤 **User Info** - Current username displayed at bottom-left, with logout support
-- 📝 **Session Management** - All sessions for the current user displayed in the left sidebar, click to switch
+- 📝 **Session Management** - All sessions displayed in the left sidebar, click to switch
 - ➕ **New Conversation** - Click "New Chat" button to create a new session
 - 💬 **Real-time Chat** - Input and send messages, supports Enter to send, Shift+Enter for new line
 - 📜 **History** - Automatically loads current session's message history
-- 🗑️ **Delete Session** - Users can only delete their own sessions
 - 🎨 **Friendly Interface** - Clear message bubbles distinguishing user and AI messages
-- 🔄 **Model Switching** - Directly switch AI models at the bottom of the sidebar
+- 🔄 **Model Switching** - Directly switch AI models at the bottom of the sidebar (Offline Mode/DeepSeek V4 Pro)
 
 ### 5. Test with API
 
-If you want to test via API, please register and login first:
+If you want to test via API, you can use the following methods:
 
-#### Get RSA Public Key
+#### Create New Session
 ```bash
-curl http://localhost:8080/api/auth/public-key
+curl -X POST http://localhost:8080/api/chat/conversation
 ```
 
-#### Get Captcha
-```bash
-curl http://localhost:8080/api/auth/captcha
-```
-
-#### Register User
-```bash
-# Password must be encrypted with RSA public key before transmission, see API_TEST-en.md for details
-curl -X POST http://localhost:8080/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"testuser","password":"<RSA-encrypted-password>","confirmPassword":"<RSA-encrypted-password>","captcha":"captcha-code"}'
-```
-
-#### Send Message (requires login)
+#### Send Message (Multi-turn Conversation)
 ```bash
 curl -X POST http://localhost:8080/api/chat/send \
   -H "Content-Type: application/json" \
@@ -159,6 +118,11 @@ curl -X POST http://localhost:8080/api/chat/send \
     "sessionId": "your-session-id",
     "message": "Hello, please introduce yourself"
   }'
+```
+
+#### Get Conversation History
+```bash
+curl http://localhost:8080/api/chat/history/your-session-id
 ```
 
 **For detailed API documentation, please refer to:** [API_TEST-en.md](API_TEST-en.md)
@@ -169,27 +133,18 @@ curl -X POST http://localhost:8080/api/chat/send \
 spring-ai-demo/
 ├── src/main/java/com/github/ylyan2015/springaidemo/
 │   ├── SpringAiDemoApplication.java    # Main application class
-│   ├── config/
-│   │   ├── AiModelConfig.java          # AI model configuration
-│   │   ├── RsaKeyPairGenerator.java    # RSA key pair generator
-│   │   └── SecurityConfig.java         # Spring Security configuration
 │   ├── controller/
-│   │   ├── AuthController.java         # Auth controller (register/login/captcha)
 │   │   ├── ChatController.java         # Chat controller (REST API)
 │   │   ├── ModelController.java        # Model management controller
 │   │   └── PageController.java         # Page controller (Web routing)
 │   ├── service/
-│   │   ├── AuthService.java            # Auth service (register/login logic)
-│   │   ├── CaptchaService.java         # Captcha service
 │   │   └── ChatService.java            # Chat service (business logic)
 │   ├── entity/
-│   │   ├── Conversation.java           # Conversation entity (bound to userId)
-│   │   ├── Message.java                # Message entity
-│   │   └── User.java                   # User entity
+│   │   ├── Conversation.java           # Conversation entity
+│   │   └── Message.java                # Message entity
 │   └── repository/
 │       ├── ConversationRepository.java # Conversation data access
-│       ├── MessageRepository.java      # Message data access
-│       └── UserRepository.java         # User data access
+│       └── MessageRepository.java      # Message data access
 ├── src/main/resources/
 │   ├── static/
 │   │   ├── css/
@@ -197,25 +152,13 @@ spring-ai-demo/
 │   │   └── js/
 │   │       └── chat.js                 # Frontend interaction logic
 │   ├── templates/
-│   │   ├── index.html                  # Main chat page template
-│   │   └── login.html                  # Login/register page template
+│   │   └── index.html                  # Main page template
 │   └── application.yml                 # Application configuration file
 ├── pom.xml                             # Maven configuration file
-├── README.md / README-en.md            # Project documentation (Chinese/English)
-└── API_TEST.md / API_TEST-en.md        # API testing guide (Chinese/English)
-```
-
-## User Authentication Flow
-
-```
-Registration/Login Flow:
-1. Frontend fetches RSA public key (/api/auth/public-key)
-2. Frontend fetches captcha (/api/auth/captcha), displays 5 random alphanumeric characters
-3. User fills in the form (registration requires entering password twice, must match)
-4. Frontend encrypts password with RSA public key (Web Crypto API)
-5. Frontend sends encrypted password + username + captcha to backend
-6. Backend validates captcha → RSA decrypts password → validates password strength → BCrypt encrypts for storage
-7. On successful login/registration, HttpSession is established
+├── README.md                           # Chinese documentation
+├── README-en.md                        # English documentation
+├── API_TEST.md                         # Chinese API test guide
+└── API_TEST-en.md                      # English API test guide
 ```
 
 ## Configuration Guide
@@ -381,36 +324,38 @@ You can modify as needed:
 - `max-context-messages`: Context memory length, controls how many rounds of conversation AI can remember
 - `port`: Application running port
 
-## API Endpoints Overview
+## API Endpoints
 
-### Auth Endpoints (No Login Required)
+### 1. Create Session
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auth/public-key` | GET | Get RSA public key |
-| `/api/auth/captcha` | GET | Get 5-character random captcha |
-| `/api/auth/register` | POST | User registration |
-| `/api/auth/login` | POST | User login |
-| `/api/auth/logout` | POST | Logout |
-| `/api/auth/user` | GET | Get current user info |
+- **URL**: `/api/chat/conversation`
+- **Method**: POST
+- **Response**: Returns newly created session ID
 
-### Chat Endpoints (Login Required)
+### 2. Send Message
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/chat/conversation` | POST | Create new session |
-| `/api/chat/conversations` | GET | Get all sessions for current user |
-| `/api/chat/send` | POST | Send message |
-| `/api/chat/history/{sessionId}` | GET | Get conversation history |
-| `/api/chat/conversation/{sessionId}` | DELETE | Delete session (owner only) |
+- **URL**: `/api/chat/send`
+- **Method**: POST
+- **Request Body**:
+  ```json
+  {
+    "sessionId": "Session ID (optional, auto-created if not provided)",
+    "message": "User message"
+  }
+  ```
+- **Response**: AI reply content
 
-### Model Management Endpoints
+### 3. Get Conversation History
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/model/current` | GET | Get current model |
-| `/api/model/available` | GET | Get available models list |
-| `/api/model/switch` | POST | Switch model |
+- **URL**: `/api/chat/history/{sessionId}`
+- **Method**: GET
+- **Response**: All historical messages for the session
+
+### 4. Delete Session
+
+- **URL**: `/api/chat/conversation/{sessionId}`
+- **Method**: DELETE
+- **Response**: Operation result
 
 **For detailed API documentation and examples, please refer to:** [API_TEST-en.md](API_TEST-en.md)
 
@@ -418,12 +363,11 @@ You can modify as needed:
 
 ### How Multi-turn Conversations Work
 
-1. **User Login**: Session is established after user registers/logs in
-2. **Session Creation**: Each conversation session has a unique ID (UUID), bound to the current user
-3. **Message Storage**: Both user messages and AI replies are saved to the database
-4. **Context Building**: When sending a new message, automatically retrieves the last N rounds of conversation history
-5. **AI Call**: Sends complete conversation history to the AI model for context memory
-6. **Result Saving**: AI replies are also saved to the database for future use
+1. **Session Creation**: Each conversation session has a unique ID (UUID)
+2. **Message Storage**: Both user messages and AI replies are saved to the database
+3. **Context Building**: When sending a new message, automatically retrieves the last N rounds of conversation history
+4. **AI Call**: Sends complete conversation history to the AI model for context memory
+5. **Result Saving**: AI replies are also saved to the database for future use
 
 ### Adding New AI Features
 
@@ -435,11 +379,13 @@ public class MyService {
     private final ChatClient chatClient;
     
     public String processMessage(String userMessage) {
+        // Build message list
         List<Message> messages = Arrays.asList(
             new SystemMessage("You are a professional assistant"),
             new UserMessage(userMessage)
         );
         
+        // Call AI
         return chatClient.prompt()
                 .messages(messages)
                 .call()
@@ -521,21 +467,9 @@ Recommended tools:
 - DataGrip
 - psql command-line tool
 
-### 8. Getting "Captcha Error" During Registration?
-
-The captcha is case-insensitive, but make sure to enter it promptly after fetching. Captchas are single-use and expire after submission; please refresh to get a new one.
-
-### 9. What If I Forget My Password?
-
-The current version does not support password reset. You can delete the user record directly from the database and re-register:
-```sql
-DELETE FROM users WHERE username = 'your-username';
-```
-
 ## References
 
 - [Spring AI Official Documentation](https://spring.io/projects/spring-ai)
-- [Spring Security Official Documentation](https://spring.io/projects/spring-security)
 - [Ollama Official Website](https://ollama.com)
 - [Spring Boot Official Documentation](https://spring.io/projects/spring-boot)
 

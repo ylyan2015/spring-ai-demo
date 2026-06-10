@@ -18,12 +18,6 @@ public class Conversation {
     private Long id;
 
     /**
-     * 所属用户ID
-     */
-    @Column(name = "user_id")
-    private Long userId;
-
-    /**
      * 会话唯一标识（UUID）
      */
     @Column(name = "session_id", unique = true, nullable = false)
@@ -71,16 +65,6 @@ public class Conversation {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
-
-    public Conversation(String sessionId, Long userId) {
-        this.sessionId = sessionId;
-        this.userId = userId;
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
-    }
-
-    public Long getUserId() { return userId; }
-    public void setUserId(Long userId) { this.userId = userId; }
 
     // Getters and Setters
     public Long getId() {

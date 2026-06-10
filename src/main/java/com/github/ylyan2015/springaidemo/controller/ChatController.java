@@ -1,6 +1,5 @@
 package com.github.ylyan2015.springaidemo.controller;
 
-import com.github.ylyan2015.springaidemo.entity.Conversation;
 import com.github.ylyan2015.springaidemo.entity.Message;
 import com.github.ylyan2015.springaidemo.service.ChatService;
 import org.springframework.http.ResponseEntity;
@@ -9,7 +8,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 聊天控制器
@@ -100,44 +98,19 @@ public class ChatController {
     }
 
     /**
-     * 删除会话（仅允许拥有者删除）
+     * 删除会话
      *
      * @param sessionId 会话ID
      * @return 操作结果
      */
     @DeleteMapping("/conversation/{sessionId}")
     public ResponseEntity<Map<String, Object>> deleteConversation(@PathVariable String sessionId) {
-        try {
-            chatService.deleteConversation(sessionId);
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("message", "会话已删除");
-            return ResponseEntity.ok(result);
-        } catch (RuntimeException e) {
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
-        }
-    }
-
-    /**
-     * 获取当前用户的所有会话
-     */
-    @GetMapping("/conversations")
-    public ResponseEntity<Map<String, Object>> listConversations() {
-        List<Conversation> convs = chatService.getUserConversations();
-        List<Map<String, Object>> items = convs.stream().map(c -> {
-            Map<String, Object> item = new HashMap<>();
-            item.put("id", c.getSessionId());
-            item.put("title", c.getTitle() != null ? c.getTitle() : "新对话");
-            item.put("updatedAt", c.getUpdatedAt());
-            return item;
-        }).collect(Collectors.toList());
-
+        chatService.deleteConversation(sessionId);
+        
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
-        result.put("conversations", items);
+        result.put("message", "会话已删除");
+        
         return ResponseEntity.ok(result);
     }
 

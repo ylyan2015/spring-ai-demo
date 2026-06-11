@@ -4,7 +4,10 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource;
 import java.security.*;
+import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
@@ -40,7 +43,10 @@ public class RsaKeyPairGenerator {
     public String decrypt(String encryptedBase64) throws Exception {
         byte[] encryptedBytes = Base64.getDecoder().decode(encryptedBase64);
         Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
-        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+        // 显式指定MGF1使用SHA-256，与前端Web Crypto API保持一致
+        OAEPParameterSpec oaepSpec = new OAEPParameterSpec(
+                "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT);
+        cipher.init(Cipher.DECRYPT_MODE, privateKey, oaepSpec);
         byte[] decrypted = cipher.doFinal(encryptedBytes);
         return new String(decrypted, "UTF-8");
     }

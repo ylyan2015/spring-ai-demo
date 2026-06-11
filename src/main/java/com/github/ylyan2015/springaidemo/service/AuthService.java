@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 认证服务
@@ -19,6 +21,8 @@ import java.util.regex.Pattern;
  */
 @Service
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     /**
      * 密码规则：至少一个大写、一个小写、一个数字，长度6-50
@@ -63,6 +67,7 @@ public class AuthService {
             rawPassword = rsaKeyPairGenerator.decrypt(encryptedPassword);
             rawConfirmPassword = rsaKeyPairGenerator.decrypt(confirmPassword);
         } catch (Exception e) {
+            log.error("注册密码RSA解密失败", e);
             result.put("success", false);
             result.put("message", "密码解密失败，请重试");
             return result;
@@ -122,6 +127,7 @@ public class AuthService {
         try {
             rawPassword = rsaKeyPairGenerator.decrypt(encryptedPassword);
         } catch (Exception e) {
+            log.error("登录密码RSA解密失败", e);
             result.put("success", false);
             result.put("message", "密码解密失败，请重试");
             return result;

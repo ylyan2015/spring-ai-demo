@@ -37,6 +37,44 @@
                         <option value="openai">OpenAI GPT</option>
                     </select>
                 </div>
+                <!-- 参数预设面板 -->
+                <div class="param-panel" id="paramPanel">
+                    <button class="param-toggle-btn" id="paramToggleBtn" onclick="toggleParamPanel()">
+                        <span>参数设置</span>
+                        <svg id="paramArrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div class="param-body" id="paramBody" style="display:none;">
+                        <div class="param-row">
+                            <label>Temperature</label>
+                            <div class="param-input-group">
+                                <input type="range" id="paramTemperature" min="0" max="2" step="0.1" value="0.7">
+                                <span class="param-val" id="valTemperature">0.7</span>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <label>Max Tokens</label>
+                            <div class="param-input-group">
+                                <input type="number" id="paramMaxTokens" min="1" max="8192" step="1" value="2048" class="param-number">
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <label>Top P</label>
+                            <div class="param-input-group">
+                                <input type="range" id="paramTopP" min="0" max="1" step="0.05" value="0.9">
+                                <span class="param-val" id="valTopP">0.9</span>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <label>Top K</label>
+                            <div class="param-input-group">
+                                <input type="number" id="paramTopK" min="1" max="100" step="1" value="40" class="param-number">
+                            </div>
+                        </div>
+                        <button class="param-save-btn" id="paramSaveBtn" onclick="saveParamPreset()">保存预设</button>
+                    </div>
+                </div>
             </div>
         </aside>
 

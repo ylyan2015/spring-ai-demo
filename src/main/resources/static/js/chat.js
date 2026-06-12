@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadConversations();
     loadCurrentModel();
     setupEventListeners();
+    setupParamListeners();
 });
 
 // 加载当前用户信息
@@ -67,6 +68,18 @@ function setupEventListeners() {
     });
     newChatBtn.addEventListener('click', createNewConversation);
     modelSelect.addEventListener('change', handleModelSwitch);
+}
+
+// 设置参数滑块实时显示
+function setupParamListeners() {
+    const temp = document.getElementById('paramTemperature');
+    const topP = document.getElementById('paramTopP');
+    temp.addEventListener('input', () => {
+        document.getElementById('valTemperature').textContent = temp.value;
+    });
+    topP.addEventListener('input', () => {
+        document.getElementById('valTopP').textContent = topP.value;
+    });
 }
 
 function autoResizeTextarea() {
@@ -335,6 +348,7 @@ async function handleModelSwitch() {
         if (data.success) {
             currentModel = newModel;
             showSuccess(data.message);
+            loadParamPreset();  // 切换模型后加载该模型的参数预设
         } else {
             showError(data.message);
             modelSelect.value = currentModel;
@@ -359,4 +373,74 @@ function showSuccess(message) {
         toast.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => toast.remove(), 300);
     }, 2000);
+}
+
+// ==================== 参数预设功能 ====================
+
+// 展开/收起参数面板
+function toggleParamPanel() {
+    const body = document.getElementById('paramBody');
+    const arrow = document.getElementById('paramArrow');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        arrow.style.transform = 'rotate(180deg)';
+        loadParamPreset();
+    } else {
+        body.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// 加载当前模型的参数预设
+async function loadParamPreset() {
+    try {
+        const response = await fetch(`/api/model/params/${currentModel}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.success && data.preset) {
+            const p = data.preset;
+            if (p.temperature != null) {
+                document.getElementById('paramTemperature').value = p.temperature;
+                document.getElementById('valTemperature').textContent = p.temperature;
+            }
+            if (p.maxTokens != null) {
+                document.getElementById('paramMaxTokens').value = p.maxTokens;
+            }
+            if (p.topP != null) {
+                document.getElementById('paramTopP').value = p.topP;
+                document.getElementById('valTopP').textContent = p.topP;
+            }
+            if (p.topK != null) {
+                document.getElementById('paramTopK').value = p.topK;
+            }
+        }
+    } catch (e) {
+        console.error('加载参数预设失败:', e);
+    }
+}
+
+// 保存参数预设
+async function saveParamPreset() {
+    const preset = {
+        temperature: parseFloat(document.getElementById('paramTemperature').value),
+        maxTokens: parseInt(document.getElementById('paramMaxTokens').value),
+        topP: parseFloat(document.getElementById('paramTopP').value),
+        topK: parseInt(document.getElementById('paramTopK').value)
+    };
+    try {
+        const response = await fetch(`/api/model/params/${currentModel}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(preset)
+        });
+        const data = await response.json();
+        if (data.success) {
+            showSuccess(data.message);
+        } else {
+            showError(data.message || '保存失败');
+        }
+    } catch (e) {
+        console.error('保存参数预设失败:', e);
+        showError('保存失败，请重试');
+    }
 }

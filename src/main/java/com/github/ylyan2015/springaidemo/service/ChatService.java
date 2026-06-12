@@ -9,6 +9,7 @@ import com.github.ylyan2015.springaidemo.repository.MessageRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.*;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.Authentication;
@@ -117,14 +118,24 @@ public class ChatService {
         List<Message> recentMessages = getRecentMessages(finalSessionId);
         List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
 
-        // 5. 调用AI模型获取回复
+        // 5. 调用AI模型获取回复（动态应用参数预设）
         String aiResponse;
         try {
             ChatClient chatClient = modelService.getChatClient();
-            aiResponse = chatClient.prompt()
-                    .messages(chatMessages)
-                    .call()
-                    .content();
+            Long userId = getCurrentUserId();
+            ChatOptions options = modelService.buildChatOptions(userId);
+            if (options != null) {
+                aiResponse = chatClient.prompt()
+                        .options(options)
+                        .messages(chatMessages)
+                        .call()
+                        .content();
+            } else {
+                aiResponse = chatClient.prompt()
+                        .messages(chatMessages)
+                        .call()
+                        .content();
+            }
         } catch (Exception e) {
             String modelName = modelService.getCurrentModelName();
             String errorMsg = e.getMessage();

@@ -1,6 +1,6 @@
 #FileLock
-#Wed Jun 10 22:02:43 CST 2026
-server=192.168.43.5\:4360
-hostName=YanYulin
+#Fri Jun 12 23:36:57 CST 2026
+server=192.168.2.20\:11826
+hostName=192.168.2.20
 method=file
-id=19eb1d7b1468d2462b6704469ac8c375ab59f2c1874
+id=19ebc7aa823ae5f3a173c4b935a1b53e7e810080761

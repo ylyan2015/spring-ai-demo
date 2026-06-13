@@ -550,3 +550,25 @@ body {
 .param-save-btn:hover {
     background-color: var(--accent-hover);
 }
+
+/* 日期时间显示 */
+.datetime-display {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.datetime-time {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    font-variant-numeric: tabular-nums;
+}
+
+.datetime-date {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}

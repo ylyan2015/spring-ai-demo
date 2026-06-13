@@ -2,6 +2,8 @@
 let currentSessionId = null;
 let conversations = [];
 let currentModel = 'ollama';
+let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; // 默认浏览器时区
+let clockTimer = null;
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCurrentModel();
     setupEventListeners();
     setupParamListeners();
+    loadTimezoneAndStartClock();
 });
 
 // 加载当前用户信息
@@ -316,6 +319,60 @@ function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scro
 
 function formatTime(date) {
     return `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+}
+
+// ==================== 时区与实时时钟 ====================
+
+// 从后端获取时区并启动时钟
+async function loadTimezoneAndStartClock() {
+    try {
+        const resp = await fetch('/api/timezone');
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.success && data.timezone) {
+                userTimezone = data.timezone;
+            }
+        }
+    } catch (e) {
+        console.warn('获取时区失败，使用浏览器默认时区:', e);
+    }
+    startClock();
+}
+
+// 启动实时时钟
+function startClock() {
+    updateClock();
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(updateClock, 1000);
+}
+
+// 更新时钟显示
+function updateClock() {
+    const now = new Date();
+    const timeEl = document.getElementById('datetimeTime');
+    const dateEl = document.getElementById('datetimeDate');
+    if (!timeEl || !dateEl) return;
+
+    // 使用 Intl 格式化时间
+    const timeStr = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: userTimezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).format(now);
+
+    // 使用 Intl 格式化日期 + 星期
+    const dateStr = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: userTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'long'
+    }).format(now);
+
+    timeEl.textContent = timeStr;
+    dateEl.textContent = dateStr;
 }
 
 function showError(message) { alert(message); }

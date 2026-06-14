@@ -33,6 +33,7 @@ public class ChatService {
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
+    private final RagService ragService;
 
     /**
      * 最大上下文消息数量（保留最近N轮对话）
@@ -44,11 +45,13 @@ public class ChatService {
     public ChatService(ModelService modelService,
                       ConversationRepository conversationRepository,
                       MessageRepository messageRepository,
-                      UserRepository userRepository) {
+                      UserRepository userRepository,
+                      RagService ragService) {
         this.modelService = modelService;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.userRepository = userRepository;
+        this.ragService = ragService;
     }
 
     /**
@@ -96,7 +99,7 @@ public class ChatService {
      * @return 流式AI回复片段
      */
     @Transactional
-    public StreamResponse streamMessage(String sessionId, String userMessage) {
+    public StreamResponse streamMessage(String sessionId, String userMessage, boolean ragEnabled) {
         // 1. 如果会话ID为空，创建新会话
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = createConversation();
@@ -119,6 +122,15 @@ public class ChatService {
         // 4. 构建带上下文的对话历史
         List<Message> recentMessages = getRecentMessages(finalSessionId);
         List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
+
+        // 4.5 RAG：如果启用且知识库有文档，注入相关上下文
+        if (ragEnabled && ragService.hasDocuments()) {
+            List<String> context = ragService.searchRelevantContext(userMessage, 3);
+            if (!context.isEmpty()) {
+                String ragContext = buildRagSystemPrompt(context);
+                chatMessages.add(0, new SystemMessage(ragContext));
+            }
+        }
 
         // 5. 调用AI模型获取流式回复
         ChatClient chatClient = modelService.getChatClient();
@@ -197,7 +209,7 @@ public class ChatService {
      * @return AI回复
      */
     @Transactional
-    public String sendMessage(String sessionId, String userMessage) {
+    public String sendMessage(String sessionId, String userMessage, boolean ragEnabled) {
         // 1. 如果会话ID为空，创建新会话
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = createConversation();
@@ -220,6 +232,15 @@ public class ChatService {
         // 4. 构建带上下文的对话历史
         List<Message> recentMessages = getRecentMessages(finalSessionId);
         List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
+
+        // 4.5 RAG：如果启用且知识库有文档，注入相关上下文
+        if (ragEnabled && ragService.hasDocuments()) {
+            List<String> context = ragService.searchRelevantContext(userMessage, 3);
+            if (!context.isEmpty()) {
+                String ragContext = buildRagSystemPrompt(context);
+                chatMessages.add(0, new SystemMessage(ragContext));
+            }
+        }
 
         // 5. 调用AI模型获取回复（动态应用参数预设）
         String aiResponse;
@@ -336,6 +357,21 @@ public class ChatService {
                 })
                 .filter(msg -> msg != null)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 构建 RAG 上下文系统提示
+     */
+    private String buildRagSystemPrompt(List<String> context) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You have access to the following reference documents. Use them to answer the user's question if relevant. ");
+        sb.append("If the documents are not relevant, answer based on your own knowledge.\n\n");
+        sb.append("--- Reference Documents ---\n");
+        for (int i = 0; i < context.size(); i++) {
+            sb.append("[Doc ").append(i + 1).append("] ").append(context.get(i)).append("\n\n");
+        }
+        sb.append("--- End of Reference ---");
+        return sb.toString();
     }
 
     /**

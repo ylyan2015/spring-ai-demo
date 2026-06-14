@@ -6,6 +6,7 @@ let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; // 默认�
 let clockTimer = null;
 let weatherTimer = null;
 let userCoords = { latitude: null, longitude: null }; // IP定位坐标
+let ragEnabled = false; // RAG 知识库增强开关
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -220,7 +221,7 @@ async function sendMessage() {
         const response = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: currentSessionId, message })
+            body: JSON.stringify({ sessionId: currentSessionId, message, ragEnabled })
         });
 
         if (!handleAuthResponse(response)) { isStreaming = false; sendBtn.disabled = false; return; }
@@ -694,5 +695,114 @@ async function saveParamPreset() {
     } catch (e) {
         console.error('保存参数预设失败:', e);
         showError('保存失败，请重试');
+    }
+}
+
+// ==================== RAG 知识库功能 ====================
+
+// 展开/收起知识库面板
+function toggleRagPanel() {
+    const body = document.getElementById('ragBody');
+    const arrow = document.getElementById('ragArrow');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        arrow.style.transform = 'rotate(180deg)';
+        loadRagDocuments();
+    } else {
+        body.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// 切换 RAG 模式
+function toggleRagMode() {
+    ragEnabled = document.getElementById('ragEnableCheckbox').checked;
+    if (ragEnabled) {
+        showSuccess('知识库增强已启用，对话将参考已上传的文档');
+    }
+}
+
+// 加载知识库文档列表
+async function loadRagDocuments() {
+    try {
+        const response = await fetch('/api/documents/list');
+        if (!handleAuthResponse(response)) return;
+        if (!response.ok) return;
+        const data = await response.json();
+        renderRagDocList(data.documents || []);
+    } catch (e) {
+        console.error('加载知识库文档失败:', e);
+    }
+}
+
+// 渲染文档列表
+function renderRagDocList(docs) {
+    const list = document.getElementById('ragDocList');
+    if (!docs.length) {
+        list.innerHTML = '<div class="rag-empty">暂无文档，请上传</div>';
+        return;
+    }
+    list.innerHTML = '';
+    docs.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'rag-doc-item';
+        const name = document.createElement('span');
+        name.className = 'rag-doc-name';
+        name.textContent = doc.fileName;
+        name.title = `${doc.chunkCount} 个分块, ${(doc.fileSize / 1024).toFixed(1)} KB`;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'rag-doc-del';
+        delBtn.textContent = '✕';
+        delBtn.onclick = () => deleteRagDocument(doc.docId);
+        item.appendChild(name);
+        item.appendChild(delBtn);
+        list.appendChild(item);
+    });
+}
+
+// 上传文档
+async function uploadRagDocument(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = ''; // 重置以允许重新上传同一文件
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/documents/upload', {
+            method: 'POST',
+            body: formData
+        });
+        if (!handleAuthResponse(response)) return;
+        const data = await response.json();
+        if (data.success) {
+            showSuccess(`文档 "${data.document.fileName}" 已上传 (${data.document.chunkCount} 个分块)`);
+            loadRagDocuments();
+        } else {
+            showError(data.message || '上传失败');
+        }
+    } catch (e) {
+        console.error('上传文档失败:', e);
+        showError('上传文档失败，请重试');
+    }
+}
+
+// 删除文档
+async function deleteRagDocument(docId) {
+    if (!confirm('确定要删除这个文档吗？')) return;
+    try {
+        const response = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+        if (!handleAuthResponse(response)) return;
+        const data = await response.json();
+        if (data.success) {
+            showSuccess('文档已删除');
+            loadRagDocuments();
+        } else {
+            showError(data.message || '删除失败');
+        }
+    } catch (e) {
+        console.error('删除文档失败:', e);
+        showError('删除失败，请重试');
     }
 }

@@ -645,3 +645,129 @@ body {
 .weather-desc {
     color: var(--text-secondary);
 }
+
+/* ==================== RAG 知识库面板 ==================== */
+.rag-panel {
+    margin-top: 8px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 8px;
+}
+
+.rag-toggle-btn {
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 4px;
+    transition: color 0.2s;
+}
+
+.rag-toggle-btn:hover {
+    color: var(--text-primary);
+}
+
+.rag-body {
+    padding: 8px 0;
+}
+
+.rag-upload-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.rag-upload-btn {
+    padding: 5px 12px;
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    white-space: nowrap;
+}
+
+.rag-upload-btn:hover {
+    background-color: var(--accent-hover);
+}
+
+.rag-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.rag-doc-list {
+    max-height: 120px;
+    overflow-y: auto;
+    margin-bottom: 8px;
+}
+
+.rag-doc-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    transition: background-color 0.2s;
+}
+
+.rag-doc-item:hover {
+    background-color: var(--bg-tertiary, rgba(0,0,0,0.04));
+}
+
+.rag-doc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.rag-doc-del {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s;
+}
+
+.rag-doc-item:hover .rag-doc-del {
+    opacity: 1;
+}
+
+.rag-doc-del:hover {
+    color: #ef4444;
+}
+
+.rag-empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 8px;
+}
+
+.rag-enable-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding-top: 4px;
+    border-top: 1px solid var(--border-color);
+}
+
+.rag-enable-label input[type="checkbox"] {
+    accent-color: var(--accent-color);
+}

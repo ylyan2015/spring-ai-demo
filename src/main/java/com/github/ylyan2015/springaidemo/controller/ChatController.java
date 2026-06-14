@@ -38,7 +38,7 @@ public class ChatController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> streamMessage(@RequestBody ChatRequest request) {
         ChatService.StreamResponse streamResponse = chatService.streamMessage(
-                request.getSessionId(), request.getMessage());
+                request.getSessionId(), request.getMessage(), request.isRagEnabled());
 
         StringBuilder fullResponse = new StringBuilder();
 
@@ -92,7 +92,7 @@ public class ChatController {
      */
     @PostMapping("/send")
     public ResponseEntity<Map<String, Object>> sendMessage(@RequestBody ChatRequest request) {
-        String response = chatService.sendMessage(request.getSessionId(), request.getMessage());
+        String response = chatService.sendMessage(request.getSessionId(), request.getMessage(), request.isRagEnabled());
         
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -113,7 +113,7 @@ public class ChatController {
     public ResponseEntity<Map<String, Object>> sendMessageGet(
             @RequestParam String message,
             @RequestParam(required = false) String sessionId) {
-        String response = chatService.sendMessage(sessionId, message);
+        String response = chatService.sendMessage(sessionId, message, false);
         
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -206,6 +206,7 @@ public class ChatController {
     public static class ChatRequest {
         private String sessionId;
         private String message;
+        private boolean ragEnabled = false;
 
         public ChatRequest() {
         }
@@ -224,6 +225,14 @@ public class ChatController {
 
         public void setMessage(String message) {
             this.message = message;
+        }
+
+        public boolean isRagEnabled() {
+            return ragEnabled;
+        }
+
+        public void setRagEnabled(boolean ragEnabled) {
+            this.ragEnabled = ragEnabled;
         }
     }
 }

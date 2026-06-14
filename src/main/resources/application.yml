@@ -10,6 +10,8 @@ spring:
       base-url: http://localhost:11434
       chat:
         model: qwen2.5:7b-instruct
+      embedding:
+        model: nomic-embed-text  # RAG embedding 模型（需先 ollama pull nomic-embed-text）
     
     # OpenAI 配置（仅用于通用配置 ，实际 Base URL 、API Key 等在单独配置文件中指定）
     openai:
@@ -44,3 +46,7 @@ management:
 # Chat Configuration
 chat:
   max-context-messages: 10  # 保留最近10轮对话作为上下文
+
+# RAG 配置
+rag:
+  embedding-model: ollama  # embedding 提供者: ollama（本地免费）或 openai（需有效API Key）

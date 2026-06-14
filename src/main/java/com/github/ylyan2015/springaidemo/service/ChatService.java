@@ -11,11 +11,11 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.UUID;
@@ -84,6 +84,109 @@ public class ChatService {
         User user = userRepository.findByUsername(auth.getName())
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
         return user.getId();
+    }
+
+    /**
+     * 流式发送消息并获取回复（SSE Streaming）
+     * 先保存用户消息和构建上下文，然后以流式方式返回AI回复。
+     * 流完成后由调用方负责保存完整的AI回复。
+     *
+     * @param sessionId 会话ID
+     * @param userMessage 用户消息
+     * @return 流式AI回复片段
+     */
+    @Transactional
+    public StreamResponse streamMessage(String sessionId, String userMessage) {
+        // 1. 如果会话ID为空，创建新会话
+        if (sessionId == null || sessionId.isEmpty()) {
+            sessionId = createConversation();
+        }
+
+        // 2. 验证/创建会话
+        final String finalSessionId = sessionId;
+        Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
+                .orElseGet(() -> {
+                    Long uid = getCurrentUserId();
+                    Conversation newConv = new Conversation(finalSessionId, uid);
+                    return conversationRepository.save(newConv);
+                });
+
+        // 3. 保存用户消息
+        int messageOrder = (int) messageRepository.countBySessionId(finalSessionId);
+        Message userMsgEntity = new Message(finalSessionId, "user", userMessage, messageOrder);
+        messageRepository.save(userMsgEntity);
+
+        // 4. 构建带上下文的对话历史
+        List<Message> recentMessages = getRecentMessages(finalSessionId);
+        List<org.springframework.ai.chat.messages.Message> chatMessages = buildChatHistory(recentMessages);
+
+        // 5. 调用AI模型获取流式回复
+        ChatClient chatClient = modelService.getChatClient();
+        Long userId = getCurrentUserId();
+        ChatOptions options = modelService.buildChatOptions(userId);
+
+        Flux<String> contentFlux;
+        if (options != null) {
+            contentFlux = chatClient.prompt()
+                    .options(options)
+                    .messages(chatMessages)
+                    .stream()
+                    .content();
+        } else {
+            contentFlux = chatClient.prompt()
+                    .messages(chatMessages)
+                    .stream()
+                    .content();
+        }
+
+        // 6. 是否第一条消息（用于自动生成标题）
+        boolean isFirstMessage = (messageOrder == 0);
+
+        return new StreamResponse(finalSessionId, contentFlux, isFirstMessage, userMessage, messageOrder);
+    }
+
+    /**
+     * 流完成后保存AI回复和更新会话标题
+     */
+    @Transactional
+    public void saveStreamResult(String sessionId, String fullResponse, boolean isFirstMessage, String userMessage, int messageOrder) {
+        // 保存AI回复
+        Message aiMsgEntity = new Message(sessionId, "assistant", fullResponse, messageOrder + 1);
+        messageRepository.save(aiMsgEntity);
+
+        // 如果是第一条消息，自动生成标题
+        if (isFirstMessage && fullResponse != null) {
+            String title = generateTitle(userMessage);
+            conversationRepository.findBySessionId(sessionId).ifPresent(conv -> {
+                conv.setTitle(title);
+                conversationRepository.save(conv);
+            });
+        }
+    }
+
+    /**
+     * 流式响应封装
+     */
+    public static class StreamResponse {
+        private final String sessionId;
+        private final Flux<String> contentFlux;
+        private final boolean isFirstMessage;
+        private final String userMessage;
+        private final int messageOrder;
+
+        public StreamResponse(String sessionId, Flux<String> contentFlux, boolean isFirstMessage, String userMessage, int messageOrder) {
+            this.sessionId = sessionId;
+            this.contentFlux = contentFlux;
+            this.isFirstMessage = isFirstMessage;
+            this.userMessage = userMessage;
+            this.messageOrder = messageOrder;
+        }
+
+        public String getSessionId() { return sessionId; }
+        public Flux<String> getContentFlux() { return contentFlux; }
+        public boolean isFirstMessage() { return isFirstMessage; }
+        public String getUserMessage() { return userMessage; }
+        public int getMessageOrder() { return messageOrder; }
     }
 
     /**

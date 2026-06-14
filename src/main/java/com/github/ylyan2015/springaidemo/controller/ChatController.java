@@ -3,8 +3,11 @@ package com.github.ylyan2015.springaidemo.controller;
 import com.github.ylyan2015.springaidemo.entity.Conversation;
 import com.github.ylyan2015.springaidemo.entity.Message;
 import com.github.ylyan2015.springaidemo.service.ChatService;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.util.HashMap;
 import java.util.List;
@@ -23,6 +26,62 @@ public class ChatController {
 
     public ChatController(ChatService chatService) {
         this.chatService = chatService;
+    }
+
+    /**
+     * 流式发送消息（SSE）
+     * 返回 ServerSentEvent 流，前端通过 EventSource 或 fetch 消费
+     *
+     * @param request 包含sessionId和message的请求体
+     * @return SSE流
+     */
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> streamMessage(@RequestBody ChatRequest request) {
+        ChatService.StreamResponse streamResponse = chatService.streamMessage(
+                request.getSessionId(), request.getMessage());
+
+        StringBuilder fullResponse = new StringBuilder();
+
+        return streamResponse.getContentFlux()
+                // 发送 sessionId 作为第一个事件
+                .concatWith(Flux.empty())
+                .map(chunk -> {
+                    fullResponse.append(chunk);
+                    return ServerSentEvent.<String>builder()
+                            .event("message")
+                            .data(chunk)
+                            .build();
+                })
+                // 流开始时发送 session 信息
+                .startWith(ServerSentEvent.<String>builder()
+                        .event("session")
+                        .data(streamResponse.getSessionId())
+                        .build())
+                // 流结束时发送 done 事件并保存结果
+                .concatWith(Flux.defer(() -> {
+                    try {
+                        chatService.saveStreamResult(
+                                streamResponse.getSessionId(),
+                                fullResponse.toString(),
+                                streamResponse.isFirstMessage(),
+                                streamResponse.getUserMessage(),
+                                streamResponse.getMessageOrder()
+                        );
+                        return Flux.just(ServerSentEvent.<String>builder()
+                                .event("done")
+                                .data("[DONE]")
+                                .build());
+                    } catch (Exception e) {
+                        return Flux.just(ServerSentEvent.<String>builder()
+                                .event("error")
+                                .data("保存消息失败: " + e.getMessage())
+                                .build());
+                    }
+                }))
+                .onErrorResume(e -> Flux.just(ServerSentEvent.<String>builder()
+                        .event("error")
+                        .data("调用AI模型失败: " + e.getMessage())
+                        .build()));
     }
 
     /**

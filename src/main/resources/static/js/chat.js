@@ -190,14 +190,16 @@ async function deleteConversation(sessionId) {
     }
 }
 
+let isStreaming = false; // 是否正在流式接收
+
 // 发送消息
 async function sendMessage() {
     const message = messageInput.value.trim();
-    if (!message) return;
+    if (!message || isStreaming) return;
 
     if (!currentSessionId) {
         await createNewConversation();
-        if (!currentSessionId) return; // 创建失败则退出
+        if (!currentSessionId) return;
     }
 
     hideWelcomeScreen();
@@ -205,25 +207,72 @@ async function sendMessage() {
     messageInput.value = '';
     updateSendButtonState();
     autoResizeTextarea();
-    showTypingIndicator();
+
+    // 创建流式消息气泡（带光标动画）
+    const assistantBubble = createStreamingBubble();
+    isStreaming = true;
+    sendBtn.disabled = true;
+
+    let fullResponse = '';
+    let sessionFromServer = currentSessionId;
 
     try {
-        const response = await fetch('/api/chat/send', {
+        const response = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId: currentSessionId, message })
         });
-        if (!handleAuthResponse(response)) return;
+
+        if (!handleAuthResponse(response)) { isStreaming = false; sendBtn.disabled = false; return; }
         if (!response.ok) throw new Error('发送消息失败');
 
-        const data = await response.json();
-        hideTypingIndicator();
-        addMessageToUI('assistant', data.response);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        // 如果是第一条消息，更新会话标题
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // 解析 SSE 事件（按 \n\n 分割）
+            const events = buffer.split('\n\n');
+            buffer = events.pop(); // 保留未完整的部分
+
+            for (const eventText of events) {
+                if (!eventText.trim()) continue;
+                let eventType = 'message';
+                let eventData = '';
+
+                for (const line of eventText.split('\n')) {
+                    if (line.startsWith('event:')) {
+                        eventType = line.substring(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        eventData = line.substring(5);
+                    }
+                }
+
+                if (eventType === 'session') {
+                    sessionFromServer = eventData;
+                    currentSessionId = eventData;
+                } else if (eventType === 'message') {
+                    fullResponse += eventData;
+                    assistantBubble.innerHTML = renderMarkdown(fullResponse);
+                    scrollToBottom();
+                } else if (eventType === 'done') {
+                    // 流结束，移除光标动画
+                    assistantBubble.classList.remove('streaming');
+                } else if (eventType === 'error') {
+                    assistantBubble.innerHTML = `<span style="color:#ef4444">${eventData}</span>`;
+                    assistantBubble.classList.remove('streaming');
+                }
+            }
+        }
+
+        // 更新会话标题（第一条消息）
         const sessionMessages = document.querySelectorAll('.message');
         if (sessionMessages.length === 2) {
-            // 更新会话列表中的标题
             const conv = conversations.find(c => c.id === currentSessionId);
             const title = message.substring(0, 30) + (message.length > 30 ? '...' : '');
             if (conv) {
@@ -231,12 +280,66 @@ async function sendMessage() {
                 renderConversationList();
             }
         }
+        await loadConversations();
         scrollToBottom();
     } catch (error) {
         console.error('发送消息错误:', error);
-        hideTypingIndicator();
-        showError('发送消息失败，请重试');
+        if (!fullResponse) {
+            assistantBubble.innerHTML = `<span style="color:#ef4444">发送消息失败，请重试</span>`;
+        }
+        assistantBubble.classList.remove('streaming');
+    } finally {
+        isStreaming = false;
+        sendBtn.disabled = messageInput.value.trim().length === 0;
     }
+}
+
+// 创建流式消息气泡（带闪烁光标）
+function createStreamingBubble() {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message message-assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble streaming';
+    bubble.innerHTML = '<span class="streaming-cursor"></span>';
+    const time = document.createElement('div');
+    time.className = 'message-time';
+    time.textContent = formatTime(new Date());
+    messageDiv.appendChild(bubble);
+    messageDiv.appendChild(time);
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+    return bubble;
+}
+
+// 简单的 Markdown 渲染（处理代码块、加粗、换行等）
+function renderMarkdown(text) {
+    // 转义 HTML
+    let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // 代码块 ```...```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+    });
+
+    // 行内代码 `...`
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // 加粗 **...**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // 斜体 *...*
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // 换行
+    html = html.replace(/\n/g, '<br>');
+
+    // 添加流式光标
+    html += '<span class="streaming-cursor"></span>';
+
+    return html;
 }
 
 // 添加消息到UI

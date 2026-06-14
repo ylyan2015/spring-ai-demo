@@ -34,6 +34,7 @@ public class SecurityConfig {
                     "/api/auth/**",
                     "/api/model/**",
                     "/api/timezone/**",
+                    "/actuator/**",
                     "/h2-console/**"
                 ).permitAll()
                 .anyRequest().authenticated()

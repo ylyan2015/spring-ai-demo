@@ -4,6 +4,8 @@ let conversations = [];
 let currentModel = 'ollama';
 let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; // 默认浏览器时区
 let clockTimer = null;
+let weatherTimer = null;
+let userCoords = { latitude: null, longitude: null }; // IP定位坐标
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -332,11 +334,38 @@ async function loadTimezoneAndStartClock() {
             if (data.success && data.timezone) {
                 userTimezone = data.timezone;
             }
+            if (data.latitude != null && data.longitude != null) {
+                userCoords = { latitude: data.latitude, longitude: data.longitude };
+            }
         }
     } catch (e) {
         console.warn('获取时区失败，使用浏览器默认时区:', e);
     }
     startClock();
+    // 如果后端未返回坐标，尝试浏览器地理定位
+    if (userCoords.latitude == null) {
+        requestBrowserLocation();
+    } else {
+        loadWeather();
+    }
+}
+
+// 浏览器地理定位回退（私有IP时使用）
+function requestBrowserLocation() {
+    if (!navigator.geolocation) {
+        console.warn('浏览器不支持地理定位');
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+            loadWeather();
+        },
+        (err) => {
+            console.warn('地理定位失败:', err.message);
+        },
+        { timeout: 8000, maximumAge: 600000 }
+    );
 }
 
 // 启动实时时钟
@@ -373,6 +402,69 @@ function updateClock() {
 
     timeEl.textContent = timeStr;
     dateEl.textContent = dateStr;
+}
+
+// ==================== 天气显示（Open-Meteo） ====================
+
+// WMO 天气代码映射：[emoji, 中文描述]
+const WMO_CODES = {
+    0:  ['☀️', '晴'],
+    1:  ['🌤️', '大部晴朗'],
+    2:  ['⛅', '多云'],
+    3:  ['☁️', '阴'],
+    45: ['🌫️', '雾'],
+    48: ['🌫️', '霜雾'],
+    51: ['🌦️', '小毛毛雨'],
+    53: ['🌦️', '毛毛雨'],
+    55: ['🌦️', '大毛毛雨'],
+    56: ['🌧️', '冻毛毛雨'],
+    57: ['🌧️', '冻雨'],
+    61: ['🌧️', '小雨'],
+    63: ['🌧️', '中雨'],
+    65: ['🌧️', '大雨'],
+    66: ['🌧️', '小冻雨'],
+    67: ['🌧️', '大冻雨'],
+    71: ['🌨️', '小雪'],
+    73: ['🌨️', '中雪'],
+    75: ['❄️', '大雪'],
+    77: ['🌨️', '雪粒'],
+    80: ['🌧️', '小阵雨'],
+    81: ['🌧️', '阵雨'],
+    82: ['⛈️', '大阵雨'],
+    85: ['🌨️', '小阵雪'],
+    86: ['❄️', '大阵雪'],
+    95: ['⛈️', '雷暴'],
+    96: ['⛈️', '雷暴冰電'],
+    99: ['⛈️', '强雷暴冰電']
+};
+
+function getWeatherInfo(code) {
+    return WMO_CODES[code] || ['🌡️', '未知'];
+}
+
+// 加载并渲染天气，每10分钟刷新一次
+async function loadWeather() {
+    if (userCoords.latitude == null || userCoords.longitude == null) return;
+    const weatherEl = document.getElementById('datetimeWeather');
+    if (!weatherEl) return;
+
+    try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${userCoords.latitude}&longitude=${userCoords.longitude}&current=temperature_2m,weather_code&timezone=auto`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('天气API请求失败');
+        const data = await resp.json();
+        const temp = Math.round(data.current.temperature_2m);
+        const code = data.current.weather_code;
+        const [icon, desc] = getWeatherInfo(code);
+        weatherEl.innerHTML = `<span class="weather-icon">${icon}</span><span class="weather-temp">${temp}°C</span><span class="weather-desc">${desc}</span>`;
+    } catch (e) {
+        console.warn('加载天气失败:', e);
+        weatherEl.innerHTML = '';
+    }
+
+    // 每10分钟刷新天气
+    if (weatherTimer) clearInterval(weatherTimer);
+    weatherTimer = setInterval(loadWeather, 10 * 60 * 1000);
 }
 
 function showError(message) { alert(message); }

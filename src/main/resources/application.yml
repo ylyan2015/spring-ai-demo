@@ -23,7 +23,17 @@ spring:
     show-sql: true
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
+
+# Actuator 监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,beans,mappings,loggers
+  endpoint:
+    health:
+      show-details: when-authorized
 
 # Chat Configuration
 chat:

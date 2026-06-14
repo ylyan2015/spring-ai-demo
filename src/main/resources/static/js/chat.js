@@ -2,6 +2,11 @@
 let currentSessionId = null;
 let conversations = [];
 let currentModel = 'ollama';
+let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; // 默认浏览器时区
+let clockTimer = null;
+let weatherTimer = null;
+let userCoords = { latitude: null, longitude: null }; // IP定位坐标
+let ragEnabled = false; // RAG 知识库增强开关
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -19,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCurrentModel();
     setupEventListeners();
     setupParamListeners();
+    loadTimezoneAndStartClock();
 });
 
 // 加载当前用户信息
@@ -185,14 +191,16 @@ async function deleteConversation(sessionId) {
     }
 }
 
+let isStreaming = false; // 是否正在流式接收
+
 // 发送消息
 async function sendMessage() {
     const message = messageInput.value.trim();
-    if (!message) return;
+    if (!message || isStreaming) return;
 
     if (!currentSessionId) {
         await createNewConversation();
-        if (!currentSessionId) return; // 创建失败则退出
+        if (!currentSessionId) return;
     }
 
     hideWelcomeScreen();
@@ -200,25 +208,72 @@ async function sendMessage() {
     messageInput.value = '';
     updateSendButtonState();
     autoResizeTextarea();
-    showTypingIndicator();
+
+    // 创建流式消息气泡（带光标动画）
+    const assistantBubble = createStreamingBubble();
+    isStreaming = true;
+    sendBtn.disabled = true;
+
+    let fullResponse = '';
+    let sessionFromServer = currentSessionId;
 
     try {
-        const response = await fetch('/api/chat/send', {
+        const response = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: currentSessionId, message })
+            body: JSON.stringify({ sessionId: currentSessionId, message, ragEnabled })
         });
-        if (!handleAuthResponse(response)) return;
+
+        if (!handleAuthResponse(response)) { isStreaming = false; sendBtn.disabled = false; return; }
         if (!response.ok) throw new Error('发送消息失败');
 
-        const data = await response.json();
-        hideTypingIndicator();
-        addMessageToUI('assistant', data.response);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        // 如果是第一条消息，更新会话标题
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // 解析 SSE 事件（按 \n\n 分割）
+            const events = buffer.split('\n\n');
+            buffer = events.pop(); // 保留未完整的部分
+
+            for (const eventText of events) {
+                if (!eventText.trim()) continue;
+                let eventType = 'message';
+                let eventData = '';
+
+                for (const line of eventText.split('\n')) {
+                    if (line.startsWith('event:')) {
+                        eventType = line.substring(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        eventData = line.substring(5);
+                    }
+                }
+
+                if (eventType === 'session') {
+                    sessionFromServer = eventData;
+                    currentSessionId = eventData;
+                } else if (eventType === 'message') {
+                    fullResponse += eventData;
+                    assistantBubble.innerHTML = renderMarkdown(fullResponse);
+                    scrollToBottom();
+                } else if (eventType === 'done') {
+                    // 流结束，移除光标动画
+                    assistantBubble.classList.remove('streaming');
+                } else if (eventType === 'error') {
+                    assistantBubble.innerHTML = `<span style="color:#ef4444">${eventData}</span>`;
+                    assistantBubble.classList.remove('streaming');
+                }
+            }
+        }
+
+        // 更新会话标题（第一条消息）
         const sessionMessages = document.querySelectorAll('.message');
         if (sessionMessages.length === 2) {
-            // 更新会话列表中的标题
             const conv = conversations.find(c => c.id === currentSessionId);
             const title = message.substring(0, 30) + (message.length > 30 ? '...' : '');
             if (conv) {
@@ -226,12 +281,66 @@ async function sendMessage() {
                 renderConversationList();
             }
         }
+        await loadConversations();
         scrollToBottom();
     } catch (error) {
         console.error('发送消息错误:', error);
-        hideTypingIndicator();
-        showError('发送消息失败，请重试');
+        if (!fullResponse) {
+            assistantBubble.innerHTML = `<span style="color:#ef4444">发送消息失败，请重试</span>`;
+        }
+        assistantBubble.classList.remove('streaming');
+    } finally {
+        isStreaming = false;
+        sendBtn.disabled = messageInput.value.trim().length === 0;
     }
+}
+
+// 创建流式消息气泡（带闪烁光标）
+function createStreamingBubble() {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message message-assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble streaming';
+    bubble.innerHTML = '<span class="streaming-cursor"></span>';
+    const time = document.createElement('div');
+    time.className = 'message-time';
+    time.textContent = formatTime(new Date());
+    messageDiv.appendChild(bubble);
+    messageDiv.appendChild(time);
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+    return bubble;
+}
+
+// 简单的 Markdown 渲染（处理代码块、加粗、换行等）
+function renderMarkdown(text) {
+    // 转义 HTML
+    let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // 代码块 ```...```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+    });
+
+    // 行内代码 `...`
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // 加粗 **...**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // 斜体 *...*
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // 换行
+    html = html.replace(/\n/g, '<br>');
+
+    // 添加流式光标
+    html += '<span class="streaming-cursor"></span>';
+
+    return html;
 }
 
 // 添加消息到UI
@@ -316,6 +425,150 @@ function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scro
 
 function formatTime(date) {
     return `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+}
+
+// ==================== 时区与实时时钟 ====================
+
+// 从后端获取时区并启动时钟
+async function loadTimezoneAndStartClock() {
+    try {
+        const resp = await fetch('/api/timezone');
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.success && data.timezone) {
+                userTimezone = data.timezone;
+            }
+            if (data.latitude != null && data.longitude != null) {
+                userCoords = { latitude: data.latitude, longitude: data.longitude };
+            }
+        }
+    } catch (e) {
+        console.warn('获取时区失败，使用浏览器默认时区:', e);
+    }
+    startClock();
+    // 如果后端未返回坐标，尝试浏览器地理定位
+    if (userCoords.latitude == null) {
+        requestBrowserLocation();
+    } else {
+        loadWeather();
+    }
+}
+
+// 浏览器地理定位回退（私有IP时使用）
+function requestBrowserLocation() {
+    if (!navigator.geolocation) {
+        console.warn('浏览器不支持地理定位');
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+            loadWeather();
+        },
+        (err) => {
+            console.warn('地理定位失败:', err.message);
+        },
+        { timeout: 8000, maximumAge: 600000 }
+    );
+}
+
+// 启动实时时钟
+function startClock() {
+    updateClock();
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(updateClock, 1000);
+}
+
+// 更新时钟显示
+function updateClock() {
+    const now = new Date();
+    const timeEl = document.getElementById('datetimeTime');
+    const dateEl = document.getElementById('datetimeDate');
+    if (!timeEl || !dateEl) return;
+
+    // 使用 Intl 格式化时间
+    const timeStr = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: userTimezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).format(now);
+
+    // 使用 Intl 格式化日期 + 星期
+    const dateStr = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: userTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'long'
+    }).format(now);
+
+    timeEl.textContent = timeStr;
+    dateEl.textContent = dateStr;
+}
+
+// ==================== 天气显示（Open-Meteo） ====================
+
+// WMO 天气代码映射：[emoji, 中文描述]
+const WMO_CODES = {
+    0:  ['☀️', '晴'],
+    1:  ['🌤️', '大部晴朗'],
+    2:  ['⛅', '多云'],
+    3:  ['☁️', '阴'],
+    45: ['🌫️', '雾'],
+    48: ['🌫️', '霜雾'],
+    51: ['🌦️', '小毛毛雨'],
+    53: ['🌦️', '毛毛雨'],
+    55: ['🌦️', '大毛毛雨'],
+    56: ['🌧️', '冻毛毛雨'],
+    57: ['🌧️', '冻雨'],
+    61: ['🌧️', '小雨'],
+    63: ['🌧️', '中雨'],
+    65: ['🌧️', '大雨'],
+    66: ['🌧️', '小冻雨'],
+    67: ['🌧️', '大冻雨'],
+    71: ['🌨️', '小雪'],
+    73: ['🌨️', '中雪'],
+    75: ['❄️', '大雪'],
+    77: ['🌨️', '雪粒'],
+    80: ['🌧️', '小阵雨'],
+    81: ['🌧️', '阵雨'],
+    82: ['⛈️', '大阵雨'],
+    85: ['🌨️', '小阵雪'],
+    86: ['❄️', '大阵雪'],
+    95: ['⛈️', '雷暴'],
+    96: ['⛈️', '雷暴冰電'],
+    99: ['⛈️', '强雷暴冰電']
+};
+
+function getWeatherInfo(code) {
+    return WMO_CODES[code] || ['🌡️', '未知'];
+}
+
+// 加载并渲染天气，每10分钟刷新一次
+async function loadWeather() {
+    if (userCoords.latitude == null || userCoords.longitude == null) return;
+    const weatherEl = document.getElementById('datetimeWeather');
+    if (!weatherEl) return;
+
+    try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${userCoords.latitude}&longitude=${userCoords.longitude}&current=temperature_2m,weather_code&timezone=auto`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('天气API请求失败');
+        const data = await resp.json();
+        const temp = Math.round(data.current.temperature_2m);
+        const code = data.current.weather_code;
+        const [icon, desc] = getWeatherInfo(code);
+        weatherEl.innerHTML = `<span class="weather-icon">${icon}</span><span class="weather-temp">${temp}°C</span><span class="weather-desc">${desc}</span>`;
+    } catch (e) {
+        console.warn('加载天气失败:', e);
+        weatherEl.innerHTML = '';
+    }
+
+    // 每10分钟刷新天气
+    if (weatherTimer) clearInterval(weatherTimer);
+    weatherTimer = setInterval(loadWeather, 10 * 60 * 1000);
 }
 
 function showError(message) { alert(message); }
@@ -442,5 +695,114 @@ async function saveParamPreset() {
     } catch (e) {
         console.error('保存参数预设失败:', e);
         showError('保存失败，请重试');
+    }
+}
+
+// ==================== RAG 知识库功能 ====================
+
+// 展开/收起知识库面板
+function toggleRagPanel() {
+    const body = document.getElementById('ragBody');
+    const arrow = document.getElementById('ragArrow');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        arrow.style.transform = 'rotate(180deg)';
+        loadRagDocuments();
+    } else {
+        body.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// 切换 RAG 模式
+function toggleRagMode() {
+    ragEnabled = document.getElementById('ragEnableCheckbox').checked;
+    if (ragEnabled) {
+        showSuccess('知识库增强已启用，对话将参考已上传的文档');
+    }
+}
+
+// 加载知识库文档列表
+async function loadRagDocuments() {
+    try {
+        const response = await fetch('/api/documents/list');
+        if (!handleAuthResponse(response)) return;
+        if (!response.ok) return;
+        const data = await response.json();
+        renderRagDocList(data.documents || []);
+    } catch (e) {
+        console.error('加载知识库文档失败:', e);
+    }
+}
+
+// 渲染文档列表
+function renderRagDocList(docs) {
+    const list = document.getElementById('ragDocList');
+    if (!docs.length) {
+        list.innerHTML = '<div class="rag-empty">暂无文档，请上传</div>';
+        return;
+    }
+    list.innerHTML = '';
+    docs.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'rag-doc-item';
+        const name = document.createElement('span');
+        name.className = 'rag-doc-name';
+        name.textContent = doc.fileName;
+        name.title = `${doc.chunkCount} 个分块, ${(doc.fileSize / 1024).toFixed(1)} KB`;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'rag-doc-del';
+        delBtn.textContent = '✕';
+        delBtn.onclick = () => deleteRagDocument(doc.docId);
+        item.appendChild(name);
+        item.appendChild(delBtn);
+        list.appendChild(item);
+    });
+}
+
+// 上传文档
+async function uploadRagDocument(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = ''; // 重置以允许重新上传同一文件
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/documents/upload', {
+            method: 'POST',
+            body: formData
+        });
+        if (!handleAuthResponse(response)) return;
+        const data = await response.json();
+        if (data.success) {
+            showSuccess(`文档 "${data.document.fileName}" 已上传 (${data.document.chunkCount} 个分块)`);
+            loadRagDocuments();
+        } else {
+            showError(data.message || '上传失败');
+        }
+    } catch (e) {
+        console.error('上传文档失败:', e);
+        showError('上传文档失败，请重试');
+    }
+}
+
+// 删除文档
+async function deleteRagDocument(docId) {
+    if (!confirm('确定要删除这个文档吗？')) return;
+    try {
+        const response = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+        if (!handleAuthResponse(response)) return;
+        const data = await response.json();
+        if (data.success) {
+            showSuccess('文档已删除');
+            loadRagDocuments();
+        } else {
+            showError(data.message || '删除失败');
+        }
+    } catch (e) {
+        console.error('删除文档失败:', e);
+        showError('删除失败，请重试');
     }
 }

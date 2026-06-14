@@ -9,13 +9,14 @@ import java.util.Map;
 
 /**
  * 验证码服务
- * 生成并验证5位字母数字随机验证码，存储在Session中
+ * 生成并验证4位字母数字随机验证码（排除易混淆字符 0/O/o/z/Z/2），存储在Session中
  */
 @Service
 public class CaptchaService {
 
-    private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    private static final int CAPTCHA_LENGTH = 5;
+    // 排除易混淆字符：0, O, o, z, Z, 2
+    private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYabcdefghjkmnpqrstuvwxy13456789";
+    private static final int CAPTCHA_LENGTH = 4;
     private static final String SESSION_CAPTCHA_KEY = "CAPTCHA";
     private static final SecureRandom RANDOM = new SecureRandom();
 

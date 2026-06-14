@@ -173,8 +173,8 @@
             <div class="form-group">
                 <label>验证码</label>
                 <div class="captcha-row">
-                    <input type="text" id="loginCaptcha" placeholder="请输入验证码" maxlength="5" autocomplete="off">
-                    <div class="captcha-display" id="loginCaptchaDisplay" onclick="refreshCaptcha('login')" title="点击刷新">-----</div>
+                    <input type="text" id="loginCaptcha" placeholder="请输入验证码" maxlength="4" autocomplete="off">
+                    <div class="captcha-display" id="loginCaptchaDisplay" onclick="refreshCaptcha('login')" title="点击刷新">----</div>
                 </div>
                 <div class="captcha-hint">点击图片可刷新验证码</div>
             </div>
@@ -199,8 +199,8 @@
             <div class="form-group">
                 <label>验证码</label>
                 <div class="captcha-row">
-                    <input type="text" id="regCaptcha" placeholder="请输入验证码" maxlength="5" autocomplete="off">
-                    <div class="captcha-display" id="regCaptchaDisplay" onclick="refreshCaptcha('register')" title="点击刷新">-----</div>
+                    <input type="text" id="regCaptcha" placeholder="请输入验证码" maxlength="4" autocomplete="off">
+                    <div class="captcha-display" id="regCaptchaDisplay" onclick="refreshCaptcha('register')" title="点击刷新">----</div>
                 </div>
                 <div class="captcha-hint">点击图片可刷新验证码</div>
             </div>
@@ -214,8 +214,7 @@
         // 初始化：获取RSA公钥和验证码
         document.addEventListener('DOMContentLoaded', async () => {
             await loadPublicKey();
-            await refreshCaptcha('login');
-            await refreshCaptcha('register');
+            await loadInitialCaptcha();
         });
 
         // 获取RSA公钥
@@ -248,13 +247,25 @@
             return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
         }
 
-        // 刷新验证码
+        // 初始化时加载同一个验证码到两个表单（避免两次请求导致session不一致）
+        async function loadInitialCaptcha() {
+            try {
+                const resp = await fetch('/api/auth/captcha');
+                const data = await resp.json();
+                document.getElementById('loginCaptchaDisplay').textContent = data.captcha;
+                document.getElementById('regCaptchaDisplay').textContent = data.captcha;
+            } catch (e) {
+                console.error('加载验证码失败', e);
+            }
+        }
+
+        // 刷新验证码（同步更新两个表单的显示，保持与session一致）
         async function refreshCaptcha(tab) {
             try {
                 const resp = await fetch('/api/auth/captcha');
                 const data = await resp.json();
-                const displayId = tab === 'login' ? 'loginCaptchaDisplay' : 'regCaptchaDisplay';
-                document.getElementById(displayId).textContent = data.captcha;
+                document.getElementById('loginCaptchaDisplay').textContent = data.captcha;
+                document.getElementById('regCaptchaDisplay').textContent = data.captcha;
             } catch (e) {
                 console.error('加载验证码失败', e);
             }

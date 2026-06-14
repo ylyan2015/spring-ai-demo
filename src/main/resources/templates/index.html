@@ -24,6 +24,11 @@
                 <!-- 会话列表将动态加载 -->
             </div>
             
+            <div class="datetime-display" id="datetimeDisplay">
+                <div class="datetime-time" id="datetimeTime">--:--:--</div>
+                <div class="datetime-date" id="datetimeDate">----</div>
+                <div class="datetime-weather" id="datetimeWeather"></div>
+            </div>
             <div class="sidebar-footer">
                 <div class="user-info" id="userInfo">
                     <span class="user-name" id="userName"></span>
@@ -73,6 +78,30 @@
                             </div>
                         </div>
                         <button class="param-save-btn" id="paramSaveBtn" onclick="saveParamPreset()">保存预设</button>
+                    </div>
+                </div>
+
+                <!-- RAG 知识库面板 -->
+                <div class="rag-panel" id="ragPanel">
+                    <button class="rag-toggle-btn" id="ragToggleBtn" onclick="toggleRagPanel()">
+                        <span>📚 知识库 (RAG)</span>
+                        <svg id="ragArrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div class="rag-body" id="ragBody" style="display:none;">
+                        <div class="rag-upload-area" id="ragUploadArea">
+                            <input type="file" id="ragFileInput" accept=".txt,.md,.pdf,.doc,.docx" style="display:none" onchange="uploadRagDocument(this)">
+                            <button class="rag-upload-btn" onclick="document.getElementById('ragFileInput').click()">+ 上传文档</button>
+                            <span class="rag-hint">支持 TXT, MD, PDF 格式</span>
+                        </div>
+                        <div class="rag-doc-list" id="ragDocList">
+                            <!-- 文档列表将动态加载 -->
+                        </div>
+                        <label class="rag-enable-label">
+                            <input type="checkbox" id="ragEnableCheckbox" onchange="toggleRagMode()">
+                            <span>启用知识库增强</span>
+                        </label>
                     </div>
                 </div>
             </div>

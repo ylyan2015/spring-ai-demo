@@ -7,6 +7,7 @@ let clockTimer = null;
 let weatherTimer = null;
 let userCoords = { latitude: null, longitude: null }; // IP定位坐标
 let ragEnabled = false; // RAG 知识库增强开关
+let contextUsage = 0; // 上下文使用率
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -105,6 +106,8 @@ async function createNewConversation() {
         if (!response.ok) throw new Error('创建会话失败');
         const data = await response.json();
         currentSessionId = data.sessionId;
+        contextUsage = 0;
+        updateContextWarning();
         clearMessages();
         showWelcomeScreen();
         await loadConversations();
@@ -163,6 +166,8 @@ function renderConversationList() {
 // 选择会话
 async function selectConversation(sessionId) {
     currentSessionId = sessionId;
+    contextUsage = 0;
+    updateContextWarning(); // 清除旧的警告栏
     renderConversationList();
     await loadMessageHistory(sessionId);
 }
@@ -264,6 +269,14 @@ async function sendMessage() {
                 } else if (eventType === 'done') {
                     // 流结束，移除光标动画
                     assistantBubble.classList.remove('streaming');
+                    // 解析上下文使用率
+                    try {
+                        const doneInfo = JSON.parse(eventData);
+                        if (doneInfo.contextUsage != null) {
+                            contextUsage = doneInfo.contextUsage;
+                            updateContextWarning();
+                        }
+                    } catch(e) { /* 忽略解析错误 */ }
                 } else if (eventType === 'error') {
                     assistantBubble.innerHTML = `<span style="color:#ef4444">${eventData}</span>`;
                     assistantBubble.classList.remove('streaming');
@@ -312,35 +325,37 @@ function createStreamingBubble() {
     return bubble;
 }
 
-// 简单的 Markdown 渲染（处理代码块、加粗、换行等）
+// 配置 marked.js + highlight.js
+const renderer = {
+    code(text, lang) {
+        const language = (lang || '').trim();
+        let highlighted;
+        try {
+            if (language && hljs.getLanguage(language)) {
+                highlighted = hljs.highlight(text, { language }).value;
+            } else {
+                highlighted = hljs.highlightAuto(text).value;
+            }
+        } catch(e) {
+            highlighted = text;
+        }
+        const langClass = language ? ` class="language-${language}"` : '';
+        return `<pre><code${langClass}>${highlighted}</code></pre>`;
+    }
+};
+marked.use({ renderer, breaks: true, gfm: true });
+
+// Markdown 渲染（使用 marked.js）
 function renderMarkdown(text) {
-    // 转义 HTML
-    let html = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-    // 代码块 ```...```
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-        return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
-    });
-
-    // 行内代码 `...`
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    // 加粗 **...**
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // 斜体 *...*
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // 换行
-    html = html.replace(/\n/g, '<br>');
-
+    let html = marked.parse(text);
     // 添加流式光标
     html += '<span class="streaming-cursor"></span>';
-
     return html;
+}
+
+// 渲染已完成的 Markdown（无光标，用于历史消息）
+function renderFinalMarkdown(text) {
+    return marked.parse(text);
 }
 
 // 添加消息到UI
@@ -349,7 +364,11 @@ function addMessageToUI(role, content) {
     messageDiv.className = `message message-${role}`;
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.textContent = content;
+    if (role === 'assistant') {
+        bubble.innerHTML = renderFinalMarkdown(content);
+    } else {
+        bubble.textContent = content;
+    }
     const time = document.createElement('div');
     time.className = 'message-time';
     time.textContent = formatTime(new Date());
@@ -393,6 +412,15 @@ async function loadMessageHistory(sessionId) {
         } else {
             showWelcomeScreen();
         }
+        // 获取上下文使用率
+        try {
+            const usageResp = await fetch(`/api/chat/context-usage/${sessionId}`);
+            if (usageResp.ok) {
+                const usageData = await usageResp.json();
+                contextUsage = usageData.contextUsage || 0;
+                updateContextWarning();
+            }
+        } catch(e) { /* 忽略 */ }
     } catch (error) {
         console.error('加载历史记录错误:', error);
         showError('加载历史记录失败');
@@ -422,6 +450,57 @@ function hideWelcomeScreen() {
 }
 
 function scrollToBottom() { messagesContainer.scrollTop = messagesContainer.scrollHeight; }
+
+// ==================== 上下文管理 ====================
+
+// 更新上下文警告栏
+function updateContextWarning() {
+    let bar = document.getElementById('contextWarning');
+    if (contextUsage >= 70) {
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'contextWarning';
+            bar.className = 'context-warning';
+            messagesContainer.parentNode.insertBefore(bar, messagesContainer);
+        }
+        bar.innerHTML = `
+            <span class="context-info">
+                上下文使用 <strong>${contextUsage}%</strong>
+            </span>
+            <span class="context-actions">
+                <button class="ctx-btn ctx-compress" onclick="compressContext()">压缩上下文</button>
+                <button class="ctx-btn ctx-new" onclick="createNewConversation()">新建对话</button>
+            </span>
+        `;
+    } else if (bar) {
+        bar.remove();
+    }
+}
+
+// 压缩上下文
+async function compressContext() {
+    if (!currentSessionId) return;
+    const btn = document.querySelector('.ctx-compress');
+    if (btn) { btn.disabled = true; btn.textContent = '压缩中...'; }
+    try {
+        const response = await fetch(`/api/chat/compress/${currentSessionId}`, { method: 'POST' });
+        if (!handleAuthResponse(response)) return;
+        const data = await response.json();
+        if (data.success) {
+            showSuccess(data.message);
+            contextUsage = data.contextUsage;
+            updateContextWarning();
+            await loadMessageHistory(currentSessionId);
+        } else {
+            showError(data.message || '压缩失败');
+        }
+    } catch (e) {
+        console.error('压缩上下文失败:', e);
+        showError('压缩失败，请重试');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '压缩上下文'; }
+    }
+}
 
 function formatTime(date) {
     return `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;

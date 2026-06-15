@@ -154,7 +154,10 @@ public class ChatService {
         // 6. 是否第一条消息（用于自动生成标题）
         boolean isFirstMessage = (messageOrder == 0);
 
-        return new StreamResponse(finalSessionId, contentFlux, isFirstMessage, userMessage, messageOrder);
+        // 7. 计算上下文使用率
+        int contextUsagePercent = getContextUsagePercent(finalSessionId);
+
+        return new StreamResponse(finalSessionId, contentFlux, isFirstMessage, userMessage, messageOrder, contextUsagePercent);
     }
 
     /**
@@ -185,13 +188,15 @@ public class ChatService {
         private final boolean isFirstMessage;
         private final String userMessage;
         private final int messageOrder;
+        private final int contextUsagePercent;
 
-        public StreamResponse(String sessionId, Flux<String> contentFlux, boolean isFirstMessage, String userMessage, int messageOrder) {
+        public StreamResponse(String sessionId, Flux<String> contentFlux, boolean isFirstMessage, String userMessage, int messageOrder, int contextUsagePercent) {
             this.sessionId = sessionId;
             this.contentFlux = contentFlux;
             this.isFirstMessage = isFirstMessage;
             this.userMessage = userMessage;
             this.messageOrder = messageOrder;
+            this.contextUsagePercent = contextUsagePercent;
         }
 
         public String getSessionId() { return sessionId; }
@@ -199,6 +204,7 @@ public class ChatService {
         public boolean isFirstMessage() { return isFirstMessage; }
         public String getUserMessage() { return userMessage; }
         public int getMessageOrder() { return messageOrder; }
+        public int getContextUsagePercent() { return contextUsagePercent; }
     }
 
     /**
@@ -291,6 +297,84 @@ public class ChatService {
         }
 
         return aiResponse;
+    }
+
+    /**
+     * 获取会话上下文使用率（百分比）
+     */
+    public int getContextUsagePercent(String sessionId) {
+        int totalMessages = (int) messageRepository.countBySessionId(sessionId);
+        int maxMessages = maxContextMessages * 2;
+        return Math.min(100, (int) ((double) totalMessages / maxMessages * 100));
+    }
+
+    /**
+     * 压缩上下文：用AI将较早的对话总结为一条系统消息，然后删除原始旧消息
+     * 压缩后上下文使用率大幅降低，同时保留关键信息
+     */
+    @Transactional
+    public String compressContext(String sessionId) {
+        // 1. 验证会话归属
+        Long userId = getCurrentUserId();
+        Conversation conv = conversationRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new RuntimeException("会话不存在"));
+        if (!conv.getUserId().equals(userId)) {
+            throw new RuntimeException("无权操作该会话");
+        }
+
+        // 2. 获取所有消息
+        List<Message> allMessages = messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
+        int maxMessages = maxContextMessages * 2;
+        if (allMessages.size() <= 4) {
+            return "消息数量较少，无需压缩";
+        }
+
+        // 3. 将较早的消息（保留最近 maxMessages/2 条）作为压缩目标
+        int keepRecent = Math.max(maxMessages / 2, 4);
+        int splitIndex = Math.max(0, allMessages.size() - keepRecent);
+        List<Message> oldMessages = allMessages.subList(0, splitIndex);
+        List<Message> recentMessages = allMessages.subList(splitIndex, allMessages.size());
+
+        if (oldMessages.isEmpty()) {
+            return "没有需要压缩的旧消息";
+        }
+
+        // 4. 构建旧对话文本，交给AI做总结
+        StringBuilder oldText = new StringBuilder();
+        for (Message msg : oldMessages) {
+            String role = "user".equals(msg.getRole()) ? "用户" : "助手";
+            oldText.append(role).append(": ").append(msg.getContent()).append("\n");
+        }
+
+        String summary;
+        try {
+            ChatClient chatClient = modelService.getChatClient();
+            summary = chatClient.prompt()
+                    .user("请将以下对话内容用简洁的中文总结，保留关键信息和结论，不超过300字：\n\n" + oldText)
+                    .call()
+                    .content();
+        } catch (Exception e) {
+            throw new RuntimeException("AI总结失败: " + e.getMessage(), e);
+        }
+
+        // 5. 删除旧消息
+        for (Message msg : oldMessages) {
+            messageRepository.delete(msg);
+        }
+
+        // 6. 插入一条 system 摘要消息（order=0），并将剩余消息的 order 重新编号
+        Message summaryMsg = new Message(sessionId, "system",
+                "[对话历史摘要] " + summary, 0);
+        messageRepository.save(summaryMsg);
+
+        int order = 1;
+        for (Message msg : recentMessages) {
+            msg.setMessageOrder(order++);
+            messageRepository.save(msg);
+        }
+
+        System.out.println("✓ 上下文已压缩: 删除 " + oldMessages.size() + " 条旧消息，生成摘要");
+        return "上下文已压缩，" + oldMessages.size() + " 条旧消息已总结为摘要";
     }
 
     /**

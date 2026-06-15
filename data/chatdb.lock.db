@@ -1,6 +1,6 @@
 #FileLock
-#Sun Jun 14 20:14:15 CST 2026
-server=192.168.56.1\:51701
-hostName=windows10.microdone.cn
+#Mon Jun 15 22:59:39 CST 2026
+server=192.168.2.42\:1979
+hostName=192.168.2.42
 method=file
-id=19ec60dc9c4878963b0a7c0cb988bc8960b190f0487
+id=19ecbcb93a90eee7ca57ff093acfd372f20343bb955

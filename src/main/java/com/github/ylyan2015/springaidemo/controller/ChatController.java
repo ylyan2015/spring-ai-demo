@@ -67,9 +67,13 @@ public class ChatController {
                                 streamResponse.getUserMessage(),
                                 streamResponse.getMessageOrder()
                         );
+                        // 发送包含上下文使用率的 done 事件
+                        String doneData = String.format(
+                                "{\"contextUsage\":%d}",
+                                streamResponse.getContextUsagePercent());
                         return Flux.just(ServerSentEvent.<String>builder()
                                 .event("done")
-                                .data("[DONE]")
+                                .data(doneData)
                                 .build());
                     } catch (Exception e) {
                         return Flux.just(ServerSentEvent.<String>builder()
@@ -197,6 +201,39 @@ public class ChatController {
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("conversations", items);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 压缩会话上下文
+     * 用AI将较早的对话总结为一条摘要，释放上下文空间
+     */
+    @PostMapping("/compress/{sessionId}")
+    public ResponseEntity<Map<String, Object>> compressContext(@PathVariable String sessionId) {
+        try {
+            String result = chatService.compressContext(sessionId);
+            int newUsage = chatService.getContextUsagePercent(sessionId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", result);
+            response.put("contextUsage", newUsage);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    /**
+     * 获取会话上下文使用率
+     */
+    @GetMapping("/context-usage/{sessionId}")
+    public ResponseEntity<Map<String, Object>> getContextUsage(@PathVariable String sessionId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("contextUsage", chatService.getContextUsagePercent(sessionId));
         return ResponseEntity.ok(result);
     }
 

@@ -4,19 +4,18 @@
 
 ### 1. Start the Application
 
-Ensure Ollama service is started (if using offline mode), then run the application:
-
 ```bash
 mvn spring-boot:run
 ```
 
-**Note**: By default, H2 database (file persistence) and DeepSeek model are used. For switching, please refer to README-en.md.
+**Note**: By default, H2 database and DeepSeek model are used. For switching, refer to README-en.md.
 
 ### 2. Authentication Notes
 
-**Most chat endpoints require login first**. The following endpoints do not require authentication:
+**Most chat endpoints require login first**. No authentication required for:
 - `/api/auth/**` - All auth endpoints
 - `/api/model/**` - Model management endpoints
+- `/api/timezone` - Timezone endpoint
 - Static resources (CSS, JS, pages)
 
 ---
@@ -25,8 +24,6 @@ mvn spring-boot:run
 
 ### 1.1 Get RSA Public Key
 
-The frontend uses this public key to RSA-encrypt passwords before transmission.
-
 **Request:**
 ```bash
 curl http://localhost:8080/api/auth/public-key
@@ -34,40 +31,29 @@ curl http://localhost:8080/api/auth/public-key
 
 **Response:**
 ```json
-{
-  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..."
-}
+{ "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..." }
 ```
 
-> **Note**: The public key is Base64-encoded SPKI format. The frontend uses Web Crypto API with `RSA-OAEP` + `SHA-256` for encryption.
+> Base64-encoded SPKI format. Frontend uses Web Crypto API with `RSA-OAEP` + `SHA-256`.
 
 ---
 
 ### 1.2 Get Captcha
 
-Generates a 5-character random alphanumeric captcha displayed on the page for user input.
-
-**Request:**
 ```bash
 curl http://localhost:8080/api/auth/captcha
 ```
-
-**Response:**
 ```json
-{
-  "success": true,
-  "captcha": "aB3xK"
-}
+{ "success": true, "captcha": "aB3xK" }
 ```
 
-> **Note**: The captcha is bound to the Session and is single-use — it expires immediately after submission. Case-insensitive.
+> Single-use, case-insensitive.
 
 ---
 
 ### 1.3 User Registration
 
-**Request (password must be RSA-encrypted):**
-
+**Request (RSA-encrypted password):**
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
@@ -79,227 +65,153 @@ curl -X POST http://localhost:8080/api/auth/register \
   }'
 ```
 
-**Password Requirements**:
-- Must contain at least one uppercase letter
-- Must contain at least one lowercase letter
-- Must contain at least one digit
-- Length: 6-50 characters
-- Must be entered twice during registration and match
+**Password Requirements**: uppercase + lowercase + digits, 6-50 chars, must match confirmation.
 
 **Success Response:**
 ```json
-{
-  "success": true,
-  "message": "Registration successful",
-  "username": "testuser"
-}
+{ "success": true, "message": "Registration successful", "username": "testuser" }
 ```
-
-**Failure Response (example):**
-```json
-{
-  "success": false,
-  "message": "Passwords do not match"
-}
-```
-
-Common error messages:
-- `Captcha error` - Captcha is incorrect or expired
-- `Password must contain uppercase, lowercase letters and digits, 6-50 characters`
-- `Passwords do not match`
-- `Username already exists`
-- `Password decryption failed, please try again`
 
 ---
 
 ### 1.4 User Login
 
-**Request (password must be RSA-encrypted):**
-
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "<RSA-encrypted-password>",
-    "captcha": "aB3xK"
-  }'
+  -d '{ "username": "testuser", "password": "<RSA-encrypted-password>", "captcha": "aB3xK" }'
 ```
-
-**Success Response:**
 ```json
-{
-  "success": true,
-  "message": "Login successful",
-  "username": "testuser"
-}
-```
-
-**Failure Response:**
-```json
-{
-  "success": false,
-  "message": "Incorrect username or password"
-}
+{ "success": true, "message": "Login successful", "username": "testuser" }
 ```
 
 ---
 
-### 1.5 Get Current Logged-in User
+### 1.5 Get Current User
 
-**Request:**
 ```bash
 curl http://localhost:8080/api/auth/user
 ```
-
-**Logged-in Response:**
 ```json
-{
-  "loggedIn": true,
-  "username": "testuser"
-}
+{ "loggedIn": true, "username": "testuser" }
 ```
-
-**Not Logged-in Response:**
-```json
-{
-  "loggedIn": false
-}
-```
-
----
 
 ### 1.6 Logout
 
-**Request:**
 ```bash
 curl -X POST http://localhost:8080/api/auth/logout
 ```
-
-**Response:**
 ```json
-{
-  "success": true,
-  "message": "Logged out successfully"
-}
+{ "success": true, "message": "Logged out successfully" }
 ```
 
 ---
 
 ## II. Chat Endpoints (Login Required)
 
-> **Note**: The following endpoints require login. Accessing them without login will return 401/403 status codes.
+### 2.1 Stream Message (SSE) ⭐ Recommended
 
-### 2.1 Create New Session
-
-The session will be automatically bound to the current logged-in user.
+Real-time streaming AI responses using Server-Sent Events.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8080/api/chat/conversation
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "sessionId": "your-session-id",
+    "message": "What is Spring AI?",
+    "ragEnabled": true
+  }'
 ```
 
-**Response:**
+**Request Parameters:**
+- `sessionId`: Session ID (optional, auto-creates if omitted)
+- `message`: User message
+- `ragEnabled`: Enable RAG knowledge base context (default: false)
+
+**SSE Event Stream:**
+```
+event: session
+data: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+event: message
+data: Spring
+
+event: message
+data: AI is
+
+event: done
+data: {"contextUsage":35}
+```
+
+**Event Types:**
+- `session` - Sent at stream start, contains session ID
+- `message` - Each AI response chunk (token-by-token)
+- `done` - Stream complete, includes `contextUsage` percentage
+- `error` - Error occurred, contains error message
+
+---
+
+### 2.2 Send Message (POST - Non-streaming)
+
+```bash
+curl -X POST http://localhost:8080/api/chat/send \
+  -H "Content-Type: application/json" \
+  -d '{ "sessionId": "your-session-id", "message": "Hello", "ragEnabled": false }'
+```
 ```json
-{
-  "success": true,
-  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-}
+{ "success": true, "sessionId": "your-session-id", "response": "Hello! I am an AI assistant..." }
 ```
 
 ---
 
-### 2.2 Get All Sessions for Current User
+### 2.3 Send Message (GET - Legacy)
 
-Returns only the current logged-in user's session list, sorted by update time descending.
+```bash
+curl "http://localhost:8080/api/chat/send?message=Hello&sessionId=your-session-id"
+```
 
-**Request:**
+---
+
+### 2.4 Create New Session
+
+```bash
+curl -X POST http://localhost:8080/api/chat/conversation
+```
+```json
+{ "success": true, "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+```
+
+---
+
+### 2.5 Get All Sessions
+
 ```bash
 curl http://localhost:8080/api/chat/conversations
 ```
-
-**Response:**
 ```json
 {
   "success": true,
   "conversations": [
-    {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "title": "What is Spring AI?...",
-      "updatedAt": "2026-06-10T10:30:05"
-    },
-    {
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-      "title": "New Chat",
-      "updatedAt": "2026-06-10T09:15:00"
-    }
+    { "id": "a1b2c3d4-...", "title": "What is Spring AI?...", "updatedAt": "2026-06-15T10:30:05" }
   ]
 }
 ```
 
 ---
 
-### 2.3 Send Message (POST Method - Recommended)
+### 2.6 Get Session History
 
-**Request:**
 ```bash
-curl -X POST http://localhost:8080/api/chat/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sessionId": "your-session-id-here",
-    "message": "Hello, please introduce yourself"
-  }'
+curl http://localhost:8080/api/chat/history/your-session-id
 ```
-
-**Response:**
 ```json
 {
-  "success": true,
-  "sessionId": "your-session-id-here",
-  "response": "Hello! I am an AI assistant..."
-}
-```
-
----
-
-### 2.4 Send Message (GET Method - Legacy Compatibility)
-
-**Request:**
-```bash
-curl "http://localhost:8080/api/chat/send?message=Hello&sessionId=your-session-id-here"
-```
-
----
-
-### 2.5 Get Session History
-
-**Request:**
-```bash
-curl http://localhost:8080/api/chat/history/your-session-id-here
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "sessionId": "your-session-id-here",
+  "success": true, "sessionId": "your-session-id",
   "messages": [
-    {
-      "id": 1,
-      "sessionId": "your-session-id-here",
-      "role": "user",
-      "content": "Hello, please introduce yourself",
-      "messageOrder": 0,
-      "createdAt": "2026-06-10T10:30:00"
-    },
-    {
-      "id": 2,
-      "sessionId": "your-session-id-here",
-      "role": "assistant",
-      "content": "Hello! I am an AI assistant...",
-      "messageOrder": 1,
-      "createdAt": "2026-06-10T10:30:05"
-    }
+    { "id": 1, "role": "user", "content": "Hello", "messageOrder": 0 },
+    { "id": 2, "role": "assistant", "content": "Hello!...", "messageOrder": 1 }
   ],
   "count": 2
 }
@@ -307,121 +219,219 @@ curl http://localhost:8080/api/chat/history/your-session-id-here
 
 ---
 
-### 2.6 Delete Session (Owner Only)
+### 2.7 Delete Session (Owner Only)
 
-Users can only delete sessions they created. Attempting to delete another user's session will return an error.
-
-**Request:**
 ```bash
-curl -X DELETE http://localhost:8080/api/chat/conversation/your-session-id-here
+curl -X DELETE http://localhost:8080/api/chat/conversation/your-session-id
+```
+```json
+{ "success": true, "message": "Session deleted" }
 ```
 
-**Success Response:**
+---
+
+### 2.8 Compress Context
+
+AI summarizes older messages into a summary to free up context space.
+
+```bash
+curl -X POST http://localhost:8080/api/chat/compress/your-session-id
+```
 ```json
 {
   "success": true,
-  "message": "Session deleted"
-}
-```
-
-**Failure Response (not owner):**
-```json
-{
-  "success": false,
-  "message": "No permission to delete this session"
+  "message": "Context compressed, 8 old messages summarized",
+  "contextUsage": 25
 }
 ```
 
 ---
 
-## III. Model Management Endpoints (No Login Required)
+### 2.9 Get Context Usage
 
-### 3.1 Get Current Model
-
-**Request:**
 ```bash
-curl http://localhost:8080/api/model/current
+curl http://localhost:8080/api/chat/context-usage/your-session-id
+```
+```json
+{ "success": true, "contextUsage": 65 }
 ```
 
-**Response:**
+---
+
+## III. Knowledge Base Endpoints (Login Required)
+
+### 3.1 Upload Document
+
+Supports TXT, PDF, MD formats. Max 10MB.
+
+```bash
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "file=@/path/to/document.pdf"
+```
 ```json
 {
   "success": true,
-  "model": "ollama",
-  "modelName": "Offline Mode"
+  "message": "Document uploaded successfully",
+  "document": {
+    "docId": "doc-1",
+    "fileName": "document.pdf",
+    "chunkCount": 15,
+    "fileSize": 102400,
+    "uploadedAt": "2026-06-15T10:30:00"
+  }
 }
 ```
 
-### 3.2 Get Available Models List
+> Documents are auto-parsed by Apache Tika → chunked by TokenTextSplitter → vectorized by EmbeddingModel → stored in VectorStore.
 
-**Request:**
+---
+
+### 3.2 List Documents
+
+```bash
+curl http://localhost:8080/api/documents/list
+```
+```json
+{
+  "success": true,
+  "documents": [
+    { "docId": "doc-1", "fileName": "doc.pdf", "chunkCount": 15, "fileSize": 102400 }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### 3.3 Delete Document
+
+In persistent mode, deletes from both vector store and database.
+
+```bash
+curl -X DELETE http://localhost:8080/api/documents/doc-1
+```
+```json
+{ "success": true, "message": "Document deleted" }
+```
+
+---
+
+## IV. Model Management Endpoints
+
+### 4.1 Get Current Model
+
+```bash
+curl http://localhost:8080/api/model/current
+```
+```json
+{ "success": true, "model": "deepseek", "modelName": "DeepSeek V3" }
+```
+
+### 4.2 Get Available Models
+
 ```bash
 curl http://localhost:8080/api/model/available
 ```
-
-**Response:**
 ```json
 {
   "success": true,
   "models": [
-    {
-      "key": "ollama",
-      "name": "Offline Mode",
-      "description": "Locally deployed, free to use, privacy-safe",
-      "type": "offline"
-    },
-    {
-      "key": "deepseek",
-      "name": "DeepSeek V4 Pro",
-      "description": "Online expert mode with stronger reasoning capabilities",
-      "type": "online"
-    }
+    { "key": "ollama", "name": "Offline Mode", "description": "Locally deployed, free, privacy-safe", "type": "offline" },
+    { "key": "deepseek", "name": "DeepSeek V3", "description": "Online expert mode", "type": "online" },
+    { "key": "openai", "name": "OpenAI GPT", "description": "OpenAI official models", "type": "online" }
   ]
 }
 ```
 
-### 3.3 Switch Model
+### 4.3 Switch Model
 
-**Request:**
 ```bash
 curl -X POST http://localhost:8080/api/model/switch \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek"
-  }'
+  -d '{ "model": "ollama" }'
 ```
-
-**Response:**
 ```json
-{
-  "success": true,
-  "message": "Model switched to: DeepSeek V4 Pro",
-  "model": "deepseek",
-  "modelName": "DeepSeek V4 Pro"
-}
+{ "success": true, "message": "Model switched to: Offline Mode", "model": "ollama" }
 ```
 
 ---
 
-## IV. Complete Testing Workflow
+### 4.4 Get Model Parameter Presets
 
-### Step 1: Get RSA Public Key
+Get user's custom parameters (temperature, topP, topK, maxTokens) for a model.
+
+**Get preset for a model:**
+```bash
+curl http://localhost:8080/api/model/params/ollama
+```
+```json
+{
+  "success": true,
+  "preset": {
+    "id": 1, "userId": 1, "modelKey": "ollama",
+    "temperature": 0.7, "maxTokens": 2048, "topP": 0.9, "topK": 40
+  }
+}
+```
+
+**Get all presets:**
+```bash
+curl http://localhost:8080/api/model/params
+```
+
+### 4.5 Save/Update Parameter Preset
+
+```bash
+curl -X POST http://localhost:8080/api/model/params/deepseek \
+  -H "Content-Type: application/json" \
+  -d '{ "temperature": 0.8, "maxTokens": 4096, "topP": 0.95 }'
+```
+```json
+{
+  "success": true,
+  "message": "Parameters saved",
+  "preset": { "id": 2, "userId": 1, "modelKey": "deepseek", "temperature": 0.8, "maxTokens": 4096, "topP": 0.95 }
+}
+```
+
+> Presets are auto-applied to all subsequent conversations with that model.
+
+---
+
+## V. Timezone Endpoint
+
+### 5.1 Get IP Timezone and Location
+
+Auto-detects client timezone and coordinates based on IP.
+
+```bash
+curl http://localhost:8080/api/timezone
+```
+```json
+{
+  "success": true,
+  "timezone": "America/New_York",
+  "ip": "203.0.113.1",
+  "latitude": 40.7128,
+  "longitude": -74.006
+}
+```
+
+> Local/private IPs use server system default timezone. Results cached for 24 hours.
+
+---
+
+## VI. Complete Testing Workflow
+
+### Step 1: Get RSA public key and captcha
 ```bash
 curl http://localhost:8080/api/auth/public-key
-# Save the publicKey value for encrypting passwords later
-```
-
-### Step 2: Get Captcha
-```bash
 curl http://localhost:8080/api/auth/captcha
-# Record the captcha value
 ```
 
-### Step 3: Register User (requires RSA-encrypted password, browser console is more convenient)
+### Step 2: Register and login
 
-> **Tip**: Since passwords need RSA encryption, it's recommended to use the browser console (F12) or Postman's Pre-request Script to encrypt passwords.
->
-> Browser console encryption example:
+> **Tip**: Use browser console (F12) for RSA encryption:
 > ```javascript
 > async function encryptPassword(password, publicKeyBase64) {
 >     const binaryDer = atob(publicKeyBase64);
@@ -435,224 +445,169 @@ curl http://localhost:8080/api/auth/captcha
 > }
 > ```
 
-### Step 4: Create Session and Chat
+### Step 3: Create session and stream chat
 ```bash
-# Create session (must be logged in)
-SESSION_ID=$(curl -X POST http://localhost:8080/api/chat/conversation | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
-echo "Session ID: $SESSION_ID"
+# Create session
+SESSION_ID=$(curl -s -X POST http://localhost:8080/api/chat/conversation | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
 
-# Send message
-curl -X POST http://localhost:8080/api/chat/send \
+# Stream chat (SSE)
+curl -N -X POST http://localhost:8080/api/chat/stream \
   -H "Content-Type: application/json" \
-  -d "{
-    \"sessionId\": \"$SESSION_ID\",
-    \"message\": \"What is Spring AI?\"
-  }"
+  -H "Accept: text/event-stream" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"What is Spring AI?\",\"ragEnabled\":false}"
 
-# View all sessions for current user
-curl http://localhost:8080/api/chat/conversations
+# Check context usage
+curl http://localhost:8080/api/chat/context-usage/$SESSION_ID
 
-# View conversation history
-curl http://localhost:8080/api/chat/history/$SESSION_ID | python3 -m json.tool
+# Compress context (when usage is high)
+curl -X POST http://localhost:8080/api/chat/compress/$SESSION_ID
+```
 
-# Delete session (owner only)
-curl -X DELETE http://localhost:8080/api/chat/conversation/$SESSION_ID
+### Step 4: Upload document and use RAG
+```bash
+# Upload document
+curl -X POST http://localhost:8080/api/documents/upload -F "file=@./test-doc.txt"
+
+# List documents
+curl http://localhost:8080/api/documents/list
+
+# Chat with RAG enabled
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"Answer based on knowledge base\",\"ragEnabled\":true}"
+
+# Delete document
+curl -X DELETE http://localhost:8080/api/documents/doc-1
 ```
 
 ---
 
-## V. Testing with Postman
+## VII. Testing with Postman
 
 **Environment Variables:**
 - `base_url`: `http://localhost:8080`
-- `session_id`: Obtained from create session response
+- `session_id`: From create session response
 
 **Request List:**
 
-1. **Get Public Key**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/public-key`
-
-2. **Get Captcha**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/captcha`
-
-3. **Register** (requires Pre-request Script to encrypt password)
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/register`
-   - Body (JSON):
-     ```json
-     {
-       "username": "testuser",
-       "password": "{{encrypted_password}}",
-       "confirmPassword": "{{encrypted_confirm_password}}",
-       "captcha": "captcha-value"
-     }
-     ```
-
-4. **Login** (requires Pre-request Script to encrypt password)
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/login`
-   - Body (JSON):
-     ```json
-     {
-       "username": "testuser",
-       "password": "{{encrypted_password}}",
-       "captcha": "captcha-value"
-     }
-     ```
-
-5. **Get Current User**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/user`
-
-6. **Logout**
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/logout`
-
-7. **Create Conversation**
-   - Method: POST
-   - URL: `{{base_url}}/api/chat/conversation`
-
-8. **List User Conversations**
-   - Method: GET
-   - URL: `{{base_url}}/api/chat/conversations`
-
-9. **Send Message**
-   - Method: POST
-   - URL: `{{base_url}}/api/chat/send`
-   - Body (JSON):
-     ```json
-     {
-       "sessionId": "{{session_id}}",
-       "message": "Hello"
-     }
-     ```
-
-10. **Get History**
-    - Method: GET
-    - URL: `{{base_url}}/api/chat/history/{{session_id}}`
-
-11. **Delete Conversation**
-    - Method: DELETE
-    - URL: `{{base_url}}/api/chat/conversation/{{session_id}}`
-
-12. **Get Current Model**
-    - Method: GET
-    - URL: `{{base_url}}/api/model/current`
-
-13. **Switch Model**
-    - Method: POST
-    - URL: `{{base_url}}/api/model/switch`
-    - Body (JSON): `{"model": "deepseek"}`
+| # | Name | Method | URL | Body |
+|---|------|--------|-----|------|
+| 1 | Get Public Key | GET | `{{base_url}}/api/auth/public-key` | - |
+| 2 | Get Captcha | GET | `{{base_url}}/api/auth/captcha` | - |
+| 3 | Register | POST | `{{base_url}}/api/auth/register` | JSON (encrypted password) |
+| 4 | Login | POST | `{{base_url}}/api/auth/login` | JSON (encrypted password) |
+| 5 | Get User | GET | `{{base_url}}/api/auth/user` | - |
+| 6 | Logout | POST | `{{base_url}}/api/auth/logout` | - |
+| 7 | Create Session | POST | `{{base_url}}/api/chat/conversation` | - |
+| 8 | List Sessions | GET | `{{base_url}}/api/chat/conversations` | - |
+| 9 | Stream Chat | POST | `{{base_url}}/api/chat/stream` | `{"sessionId":"{{session_id}}","message":"Hello","ragEnabled":false}` |
+| 10 | Send Message | POST | `{{base_url}}/api/chat/send` | `{"sessionId":"{{session_id}}","message":"Hello"}` |
+| 11 | Get History | GET | `{{base_url}}/api/chat/history/{{session_id}}` | - |
+| 12 | Compress Context | POST | `{{base_url}}/api/chat/compress/{{session_id}}` | - |
+| 13 | Context Usage | GET | `{{base_url}}/api/chat/context-usage/{{session_id}}` | - |
+| 14 | Delete Session | DELETE | `{{base_url}}/api/chat/conversation/{{session_id}}` | - |
+| 15 | Upload Document | POST | `{{base_url}}/api/documents/upload` | form-data: file |
+| 16 | List Documents | GET | `{{base_url}}/api/documents/list` | - |
+| 17 | Delete Document | DELETE | `{{base_url}}/api/documents/doc-1` | - |
+| 18 | Current Model | GET | `{{base_url}}/api/model/current` | - |
+| 19 | Switch Model | POST | `{{base_url}}/api/model/switch` | `{"model":"deepseek"}` |
+| 20 | Get Presets | GET | `{{base_url}}/api/model/params` | - |
+| 21 | Save Preset | POST | `{{base_url}}/api/model/params/deepseek` | `{"temperature":0.8,"maxTokens":4096}` |
+| 22 | Get Timezone | GET | `{{base_url}}/api/timezone` | - |
 
 ---
 
-## VI. Access H2 Database Console
-
-You can access the H2 database console through your browser to view stored data:
+## VIII. Access H2 Database Console
 
 - URL: http://localhost:8080/h2-console
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
 - Username: `sa`
 - Password: (leave empty)
 
-In the console, you can query:
 ```sql
--- View all users (passwords are BCrypt hashes, plaintext cannot be recovered)
+-- View all users
 SELECT id, username, created_at FROM users;
 
--- View all sessions (including user ID binding)
+-- View all sessions
 SELECT id, session_id, user_id, title, created_at FROM conversations;
 
--- View all sessions for a specific user
-SELECT * FROM conversations WHERE user_id = 1 ORDER BY updated_at DESC;
-
--- View all messages for a specific session
+-- View messages for a session
 SELECT * FROM messages WHERE session_id = 'your-session-id' ORDER BY message_order;
 
--- Count messages per session
-SELECT session_id, COUNT(*) as message_count
-FROM messages
-GROUP BY session_id;
+-- View RAG document metadata (persistent mode)
+SELECT * FROM rag_document;
+
+-- View model parameter presets
+SELECT * FROM model_param_presets;
 ```
 
 ---
 
-## VII. Configuration Guide
+## IX. Configuration Guide
 
-### 7.1 Model Configuration
-
-You can switch the default model in `application.yml`:
+### 9.1 Model Configuration
 
 ```yaml
 spring:
   profiles:
-    active: ollama,h2  # Options: ollama, openai, deepseek
+    active: deepseek,openai,h2  # Combine: ollama/openai/deepseek + h2/postgresql
 ```
 
-Or switch directly through the web interface (recommended):
-1. Open http://localhost:8080
-2. Select model at the bottom of the left sidebar
-3. Changes take effect immediately
+### 9.2 RAG Configuration
 
-### 7.2 Context Length Configuration
+```yaml
+rag:
+  embedding-model: ollama    # embedding: ollama or openai
+  store-type: memory         # memory (in-memory) or pgvector (persistent)
+  pgvector:
+    dimensions: 768          # nomic-embed-text dimensions
+    initialize-schema: true  # auto-create tables
+```
 
-You can adjust the following configuration in `application.yml`:
+### 9.3 Context Length
 
 ```yaml
 chat:
-  max-context-messages: 10  # Retain the last 10 rounds of conversation as context
+  max-context-messages: 10   # Retain last 10 conversation rounds
 ```
 
-- Increase this value to allow AI to remember longer conversation history
-- Decrease this value to reduce token consumption and improve response speed
+---
+
+## X. Important Notes
+
+1. **Login Requirement**: Chat and document endpoints require login; returns 401/403 if unauthenticated
+2. **Session Ownership**: Each session bound to its creator; users can only manage their own
+3. **Password Security**: RSA-encrypted transmission, BCrypt hash storage
+4. **Captcha**: 5-char random alphanumeric, single-use, case-insensitive
+5. **SSE Streaming**: Use `POST /api/chat/stream` for real-time streaming responses
+6. **RAG Knowledge Base**: Upload documents, then set `ragEnabled: true` in chat requests
+7. **Context Limit**: Default 10 conversation rounds; use compression to free space
+8. **Model Presets**: Saved per-user per-model, auto-applied during conversations
+9. **File Upload**: Max 10MB, supports TXT/PDF/MD formats
+10. **Database Persistence**: H2 file mode stored in `./data/chatdb.mv.db`
 
 ---
 
-## VIII. Important Notes
-
-1. **Login Requirement**: Chat-related endpoints require login first; unauthenticated requests return 401/403
-2. **Session Ownership**: Each session is bound to the user who created it; users can only view and delete their own sessions
-3. **Password Security**: Passwords are transmitted with RSA encryption and stored as BCrypt hashes; no plaintext passwords exist in the database
-4. **Captcha**: 5-character random alphanumeric, single-use, case-insensitive
-5. **Session ID Management**: Clients need to save sessionId to maintain conversation context
-6. **Context Limit**: By default, the last 10 rounds of conversation are retained, excess history will be truncated
-7. **Auto Title Generation**: The first message automatically generates a session title (first 20 characters)
-8. **Database Persistence**: H2 uses file persistence mode, data is stored in `./data/chatdb.mv.db` file and will not be lost after application restart
-
----
-
-## IX. FAQ
+## XI. FAQ
 
 **Q: Why do chat endpoints return 401?**
-A: You need to login first. Call `/api/auth/login` first and ensure cookies are saved.
+A: Login first via `/api/auth/login` and ensure cookies are saved.
 
-**Q: Why doesn't the AI remember previous conversations?**
-A: Ensure you're using the same sessionId. If no sessionId is provided, a new session is created each time.
+**Q: How to consume SSE stream in frontend?**
+A: Use `fetch` + `ReadableStream` (recommended for POST), or `EventSource` (GET only).
 
-**Q: How to clear conversation history?**
-A: Use the delete session endpoint `DELETE /api/chat/conversation/{sessionId}`. You can only delete your own sessions.
-
-**Q: Can I modify the context length?**
-A: Yes, modify the `chat.max-context-messages` value in application.yml.
+**Q: RAG context enhancement not working?**
+A: Ensure documents are uploaded, `ragEnabled` is `true`, and the embedding model is available.
 
 **Q: How to switch AI models?**
-A: There are three ways:
-   1. **Web Interface** (Recommended): Select model at the bottom of the left sidebar, takes effect immediately
-   2. **API Call**: POST `/api/model/switch`, pass `{"model": "deepseek"}`
-   3. **Configuration File**: Modify `spring.profiles.active` in `application.yml`
+A: Web UI (recommended), API `POST /api/model/switch`, or config file.
 
-**Q: Do I need to restart the application after switching models?**
-A: No, switching models via web interface or API takes effect immediately.
+**Q: Need to restart after switching models?**
+A: No, switching takes effect immediately via Web UI or API.
 
-**Q: Which AI models are supported?**
-A: Currently supports:
-   - **Offline Mode**: Ollama local models (qwen2.5, llama3, mistral, etc.)
-   - **Online Mode**: DeepSeek V4 Pro (requires API Key)
+**Q: How do model parameter presets work?**
+A: Once saved, custom parameters auto-apply to all conversations with that model for the user.
 
 **Q: Is the RSA public key the same every time?**
-A: No. The RSA key pair is regenerated each time the application starts, so you need to re-fetch the public key after restarting the application.
-
-**Q: What if I forget my password?**
-A: The current version does not support password reset. You can delete the user record directly from the database and re-register: `DELETE FROM users WHERE username = 'your-username';`
+A: No, the RSA key pair is regenerated on each application startup.

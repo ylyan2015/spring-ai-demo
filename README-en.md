@@ -1,10 +1,10 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user registration and login system.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, and more.
 
 ## Project Overview
 
-This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system where chat history is bound to users, ensuring data privacy and security.
+This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, ensuring data privacy and security.
 
 ### ✨ Core Features
 
@@ -13,11 +13,18 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **Multi-turn Conversation Support** - Automatically maintains conversation context, AI remembers previous chat content
 - ✅ **Session Management** - Supports creating, querying, and deleting multiple independent sessions
 - ✅ **Chat Bound to Users** - Each user's chat history is isolated, only viewable and deletable by the owner
-- ✅ **History Persistence** - Uses PostgreSQL/H2 database to store conversation history for easy reference
+- ✅ **History Persistence** - Uses PostgreSQL/H2 database to store conversation history
 - ✅ **Context Memory** - Configurable context window, retains the last N rounds of conversation
+- ✅ **Context Management** - Context usage monitoring, AI-powered compression to extend conversation lifespan
+- ✅ **SSE Streaming Output** - Server-Sent Events for real-time streaming AI responses, token-by-token display
+- ✅ **RAG Knowledge Base** - Upload documents (TXT/PDF/MD, etc.), auto-parse, chunk, vectorize, and inject relevant context during chat
+- ✅ **RAG Persistence** - Supports memory mode (testing) and PgVector persistent mode (production), seamless switching
+- ✅ **Model Parameter Presets** - Each user can customize temperature, topP, topK, maxTokens per model
+- ✅ **IP-based Timezone Detection** - Automatically detects client timezone and coordinates for localized weather display
 - ✅ **RESTful API** - Provides complete REST API interfaces
-- ✅ **Web Interface** - Beautiful chat interface with session list and real-time conversation
+- ✅ **Web Interface** - Beautiful chat interface with session list, real-time conversation, Markdown rendering
 - ✅ **Model Switching** - Directly switch between offline mode and online expert mode in the web interface
+- ✅ **Spring Boot Actuator** - Built-in health checks, metrics monitoring, and operational endpoints
 
 ## Technology Stack
 
@@ -27,21 +34,26 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **Spring Security** - Security authentication framework
 - **Spring Data JPA** - Data persistence
 - **Thymeleaf** - Template engine
-- **PostgreSQL/H2 Database** - Database (switchable)
+- **PostgreSQL + PgVector** - Database + persistent vector storage
+- **H2 Database** - Lightweight embedded database (development mode)
 - **AI Models**: Ollama / OpenAI / DeepSeek (switchable)
+- **Apache Tika** - Document parsing (RAG: supports TXT/PDF/MD and more)
 - **RSA + BCrypt** - Password encryption scheme
+- **Lombok** - Code simplification
+- **Spring Boot Actuator** - Operations monitoring
 - **Maven** - Build tool
 
 ## Prerequisites
 
-Before running this project, please ensure the following software is installed:
+Before running this project, please ensure:
 
 1. **JDK 17** or higher
 2. **Maven 3.6+**
 3. **AI Model Service** (choose at least one):
-   - **Ollama** (local model) - Download and install from [https://ollama.com](https://ollama.com)
-   - **OpenAI API Key** - Register an OpenAI account to obtain
-   - **DeepSeek API Key** - Register a DeepSeek account to obtain
+   - **Ollama** (local model) - Download from [https://ollama.com](https://ollama.com)
+   - **OpenAI API Key** - Register at OpenAI
+   - **DeepSeek API Key** - Register at DeepSeek
+4. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
 ## Quick Start
 
@@ -54,37 +66,31 @@ cd spring-ai-demo
 
 ### 2. Prepare AI Model Service
 
-Configure according to your chosen model type:
-
 #### Option A: Using Ollama (Local Model)
 ```bash
 # Start Ollama service
 ollama serve
 
-# Pull model in another terminal
+# Pull models in another terminal
 ollama pull qwen2.5:7b-instruct
-# Or other models: ollama pull llama3, ollama pull mistral, etc.
+# RAG embedding model (optional)
+ollama pull nomic-embed-text
 ```
 
 #### Option B: Using OpenAI
-After obtaining the API Key, set the environment variable:
 ```bash
 export OPENAI_API_KEY=sk-your-api-key-here
 ```
 
 #### Option C: Using DeepSeek
-After obtaining the API Key, set the environment variable:
 ```bash
 export DEEPSEEK_API_KEY=your-api-key-here
 ```
 
-### 3. Build and Run the Application
+### 3. Build and Run
 
 ```bash
-# Build the project using Maven
 mvn clean install
-
-# Run the application
 mvn spring-boot:run
 ```
 
@@ -92,76 +98,60 @@ Or directly run the main class `SpringAiDemoApplication`.
 
 ### 4. Use Web Interface (Recommended)
 
-After the application starts, access directly in your browser:
+After startup, access in your browser:
 
 ```
 http://localhost:8080
 ```
 
-The system will automatically redirect to the login/registration page. Please register an account for first-time use.
-
 #### Registration & Login
 
-1. **Register an Account**:
-   - Click the "Register" tab
-   - Enter username
-   - Enter password (must contain uppercase, lowercase letters and digits, 6-50 characters)
-   - Re-enter password for confirmation
-   - Enter the 5-character random captcha displayed on the page
-   - Click the "Register" button
+1. **Register**: Enter username, password (uppercase + lowercase + digits, 6-50 chars), confirm password, and 5-char captcha
+2. **Login**: Enter username, password, and captcha
 
-2. **Login**:
-   - Enter username and password
-   - Enter the 5-character random captcha displayed on the page
-   - Click the "Login" button
-
-> **Security Note**: Passwords are encrypted using RSA asymmetric encryption before transmission. The server stores password hashes using the BCrypt algorithm. Even if the database is compromised, plaintext passwords cannot be recovered.
+> **Security Note**: Passwords are RSA-encrypted before transmission (RSA-OAEP + SHA-256). Server stores BCrypt hashes.
 
 #### Chat Features
 
-The web interface provides the following features:
-- 👤 **User Info** - Current username displayed at bottom-left, with logout support
-- 📝 **Session Management** - All sessions for the current user displayed in the left sidebar, click to switch
-- ➕ **New Conversation** - Click "New Chat" button to create a new session
-- 💬 **Real-time Chat** - Input and send messages, supports Enter to send, Shift+Enter for new line
-- 📜 **History** - Automatically loads current session's message history
-- 🗑️ **Delete Session** - Users can only delete their own sessions
-- 🎨 **Friendly Interface** - Clear message bubbles distinguishing user and AI messages
-- 🔄 **Model Switching** - Directly switch AI models at the bottom of the sidebar
+- 👤 **User Info** - Current username at bottom-left, with logout support
+- 📝 **Session Management** - All sessions in left sidebar, click to switch
+- ➕ **New Conversation** - Click "New Chat" to create
+- 💬 **Streaming Chat** - SSE real-time streaming AI output, token-by-token
+- 📜 **History** - Auto-loads current session messages
+- 🗑️ **Delete Session** - Owner-only deletion
+- 🎨 **Markdown Rendering** - Code highlighting, tables, lists, etc.
+- 🔄 **Model Switching** - Switch AI models at bottom of sidebar
+- 📊 **Context Monitor** - Real-time context usage display with AI compression
+
+#### RAG Knowledge Base
+
+- 📄 **Document Upload** - TXT, PDF, MD formats, max 10MB
+- 📋 **Document List** - View uploaded documents and chunk counts
+- 🗑️ **Document Delete** - Remove documents and their vectors
+- 🔀 **Context Toggle** - Enable/disable RAG context injection
 
 ### 5. Test with API
 
-If you want to test via API, please register and login first:
-
-#### Get RSA Public Key
 ```bash
+# Get RSA public key
 curl http://localhost:8080/api/auth/public-key
-```
 
-#### Get Captcha
-```bash
+# Get captcha
 curl http://localhost:8080/api/auth/captcha
-```
 
-#### Register User
-```bash
-# Password must be encrypted with RSA public key before transmission, see API_TEST-en.md for details
-curl -X POST http://localhost:8080/api/auth/register \
+# Streaming chat (SSE)
+curl -X POST http://localhost:8080/api/chat/stream \
   -H "Content-Type: application/json" \
-  -d '{"username":"testuser","password":"<RSA-encrypted-password>","confirmPassword":"<RSA-encrypted-password>","captcha":"captcha-code"}'
-```
+  -H "Accept: text/event-stream" \
+  -d '{"sessionId":"your-session-id","message":"Hello","ragEnabled":false}'
 
-#### Send Message (requires login)
-```bash
+# Non-streaming chat
 curl -X POST http://localhost:8080/api/chat/send \
   -H "Content-Type: application/json" \
-  -d '{
-    "sessionId": "your-session-id",
-    "message": "Hello, please introduce yourself"
-  }'
+  -d '{"sessionId":"your-session-id","message":"Hello"}'
 ```
 
-**For detailed API documentation, please refer to:** [API_TEST-en.md](API_TEST-en.md)
+**For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
 ## Project Structure
 
@@ -170,216 +160,127 @@ spring-ai-demo/
 ├── src/main/java/com/github/ylyan2015/springaidemo/
 │   ├── SpringAiDemoApplication.java    # Main application class
 │   ├── config/
-│   │   ├── AiModelConfig.java          # AI model configuration
+│   │   ├── AiModelConfig.java          # AI model config (dual-mode vector store)
 │   │   ├── RsaKeyPairGenerator.java    # RSA key pair generator
 │   │   └── SecurityConfig.java         # Spring Security configuration
 │   ├── controller/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
-│   │   ├── ChatController.java         # Chat controller (REST API)
-│   │   ├── ModelController.java        # Model management controller
-│   │   └── PageController.java         # Page controller (Web routing)
+│   │   ├── ChatController.java         # Chat controller (REST API + SSE)
+│   │   ├── DocumentController.java     # Knowledge base document controller
+│   │   ├── ModelController.java        # Model management (switch/param presets)
+│   │   ├── ModelService.java           # Model service (dynamic switch/presets)
+│   │   ├── PageController.java         # Page controller (Web routing)
+│   │   └── TimeZoneController.java     # Timezone controller (IP geolocation)
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
 │   │   ├── CaptchaService.java         # Captcha service
-│   │   └── ChatService.java            # Chat service (business logic)
+│   │   ├── ChatService.java            # Chat service (business logic/compression)
+│   │   └── RagService.java             # RAG service (parse/vectorize/search)
 │   ├── entity/
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
 │   │   ├── Message.java                # Message entity
+│   │   ├── ModelParamPreset.java       # Model parameter preset entity
+│   │   ├── RagDocument.java            # RAG document metadata entity (persistent)
 │   │   └── User.java                   # User entity
 │   └── repository/
-│       ├── ConversationRepository.java # Conversation data access
-│       ├── MessageRepository.java      # Message data access
-│       └── UserRepository.java         # User data access
+│       ├── ConversationRepository.java
+│       ├── MessageRepository.java
+│       ├── ModelParamPresetRepository.java
+│       ├── RagDocumentRepository.java
+│       └── UserRepository.java
 ├── src/main/resources/
-│   ├── static/
-│   │   ├── css/
-│   │   │   └── chat.css                # Chat interface styles
-│   │   └── js/
-│   │       └── chat.js                 # Frontend interaction logic
-│   ├── templates/
-│   │   ├── index.html                  # Main chat page template
-│   │   └── login.html                  # Login/register page template
-│   └── application.yml                 # Application configuration file
-├── pom.xml                             # Maven configuration file
+│   ├── static/css/chat.css             # Chat interface styles
+│   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown)
+│   ├── templates/index.html            # Main chat page template
+│   ├── templates/login.html            # Login/register page template
+│   ├── application.yml                 # Main configuration
+│   ├── application-h2.yml              # H2 database config
+│   ├── application-postgresql.yml      # PostgreSQL + PgVector config
+│   ├── application-ollama.yml          # Ollama model config
+│   ├── application-openai.yml          # OpenAI model config
+│   └── application-deepseek.yml        # DeepSeek model config
+├── pom.xml                             # Maven configuration
 ├── README.md / README-en.md            # Project documentation (Chinese/English)
 └── API_TEST.md / API_TEST-en.md        # API testing guide (Chinese/English)
-```
-
-## User Authentication Flow
-
-```
-Registration/Login Flow:
-1. Frontend fetches RSA public key (/api/auth/public-key)
-2. Frontend fetches captcha (/api/auth/captcha), displays 5 random alphanumeric characters
-3. User fills in the form (registration requires entering password twice, must match)
-4. Frontend encrypts password with RSA public key (Web Crypto API)
-5. Frontend sends encrypted password + username + captcha to backend
-6. Backend validates captcha → RSA decrypts password → validates password strength → BCrypt encrypts for storage
-7. On successful login/registration, HttpSession is established
 ```
 
 ## Configuration Guide
 
 ### Web Interface Model Switching (Recommended)
 
-After the application starts, you can directly switch AI models in the web interface:
-
 1. Open http://localhost:8080
-2. Find the "Model" dropdown menu at the bottom of the left sidebar
-3. Select the desired model:
-   - **Offline Mode** - Uses local Ollama model, free, privacy-safe
-   - **DeepSeek V4 Pro** - Online expert mode with stronger reasoning capabilities
+2. Select model from dropdown at bottom of sidebar:
+   - **Offline Mode** - Local Ollama model, free, privacy-safe
+   - **DeepSeek V3** - Online expert mode
+   - **OpenAI GPT** - OpenAI official models
 
-Changes take effect immediately without restarting the application. A green notification appears in the top-right corner upon successful switching.
-
-### Configuration File Model Switching
-
-This project supports multiple AI models that can be easily switched via Spring Profile:
-
-#### Supported Models
-
-1. **Ollama** (Local Model) - `application-ollama.yml`
-   - Models: qwen2.5:7b-instruct, llama3, mistral, gemma2, etc.
-   - Advantages: Free, privacy-safe, available offline
-
-2. **OpenAI** - `application-openai.yml`
-   - Models: gpt-3.5-turbo, gpt-4, gpt-4-turbo, etc.
-   - Requires API Key
-
-3. **DeepSeek** - `application-deepseek.yml`
-   - Models: deepseek-chat, deepseek-coder
-   - Uses OpenAI-compatible API
-   - Requires API Key
-
-#### Switching Methods
-
-**Method 1: Modify application.yml**
+### Configuration File Switching
 
 ```yaml
 spring:
   profiles:
-    active: ollama  # Options: ollama, openai, deepseek
+    active: deepseek,openai,h2  # Combine model + database profiles
 ```
 
-**Method 2: Specify at Startup**
+**Supported profiles:**
+- Models: `ollama`, `openai`, `deepseek`
+- Databases: `h2`, `postgresql`
 
-```bash
-# Use Ollama
-mvn spring-boot:run -Dspring-boot.run.profiles=ollama
-
-# Use OpenAI
-mvn spring-boot:run -Dspring-boot.run.profiles=openai
-
-# Use DeepSeek
-mvn spring-boot:run -Dspring-boot.run.profiles=deepseek
-```
-
-**Method 3: Environment Variable**
-
-```bash
-export SPRING_PROFILES_ACTIVE=openai
-mvn spring-boot:run
-```
-
-### Database Mode Switching
-
-This project supports both PostgreSQL and H2 database modes, which can be switched as follows:
-
-#### Method 1: Modify application.yml
-
-Modify the `spring.profiles.active` value in `application.yml` (combined with model configuration):
+### RAG Knowledge Base Configuration
 
 ```yaml
-spring:
-  profiles:
-    active: ollama,h2  # Use Ollama model + H2 database
-    # active: openai,postgresql  # Use OpenAI + PostgreSQL
+rag:
+  embedding-model: ollama    # Embedding provider: ollama (local) or openai
+  store-type: memory         # Vector store: memory (testing) or pgvector (production)
 ```
 
-**Note**: Multiple profiles can be specified simultaneously, separated by commas. The first is the model type, the second is the database type.
+#### RAG Storage Modes
 
-#### Method 2: Specify at Startup
+| Mode | Config Value | Use Case | Data Persistence |
+|------|-------------|----------|-----------------|
+| Memory | `memory` (default) | Dev/testing | Cleared on restart |
+| PgVector | `pgvector` | Production | Survives restarts |
+
+**Switch to PgVector persistent mode:**
+
+1. Ensure PostgreSQL has pgvector extension installed
+2. Activate `postgresql` profile (auto-sets `rag.store-type: pgvector`)
+3. Configure embedding dimensions (default 768 for nomic-embed-text)
 
 ```bash
-# Use PostgreSQL
-mvn spring-boot:run -Dspring-boot.run.profiles=ollama,postgresql
-
-# Use H2
-mvn spring-boot:run -Dspring-boot.run.profiles=ollama,h2
-
-# Use OpenAI + PostgreSQL
-mvn spring-boot:run -Dspring-boot.run.profiles=openai,postgresql
+# Quick start PgVector via Docker
+docker run -it --rm --name postgres -p 5432:5432 \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres pgvector/pgvector
 ```
-
-#### Method 3: Via Environment Variable
-
-```bash
-export SPRING_PROFILES_ACTIVE=deepseek,postgresql
-mvn spring-boot:run
-```
-
-### PostgreSQL Configuration
-
-If using PostgreSQL, ensure:
-
-1. PostgreSQL service is installed and running
-2. Create database: `CREATE DATABASE chatdb;`
-3. Configure correct username and password in `application-postgresql.yml`
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/chatdb
-    driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: postgres  # Change to your password
-```
-
-### H2 Configuration
-
-H2 uses file persistence mode, data will be saved in `./data/chatdb.mv.db` file:
-
-- **Data Storage Location**: `data` folder in project root directory
-- **H2 Console**: Access http://localhost:8080/h2-console
-- **JDBC URL**: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
-- **Username**: `sa`
-- **Password**: (leave empty)
-
-**Advantages**:
-- ✅ Data persistence, data not lost after application restart
-- ✅ No need to install additional database services
-- ✅ Suitable for development and small projects
 
 ### Complete Configuration Examples
 
-#### Example 1: Ollama + H2 (Default Configuration)
+#### Example 1: Ollama + H2 (Local Development)
 ```yaml
 spring:
   profiles:
     active: ollama,h2
+rag:
+  store-type: memory
 ```
 
-#### Example 2: OpenAI + PostgreSQL
+#### Example 2: DeepSeek + OpenAI + H2 (Online Development)
 ```yaml
 spring:
   profiles:
-    active: openai,postgresql
+    active: deepseek,openai,h2
 ```
 
-#### Example 3: DeepSeek + H2
+#### Example 3: DeepSeek + PostgreSQL (Production)
 ```yaml
 spring:
   profiles:
-    active: deepseek,h2
+    active: deepseek,openai,postgresql
+rag:
+  store-type: pgvector
+  pgvector:
+    dimensions: 768
 ```
-
-You can modify as needed:
-- **Model Configuration**: Modify in corresponding `application-{model}.yml` file
-  - Ollama: `base-url`, `model`
-  - OpenAI: `api-key`, `model`
-  - DeepSeek: `base-url`, `api-key`, `model`
-- `max-context-messages`: Context memory length, controls how many rounds of conversation AI can remember
-- `port`: Application running port
 
 ## API Endpoints Overview
 
@@ -388,7 +289,7 @@ You can modify as needed:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/auth/public-key` | GET | Get RSA public key |
-| `/api/auth/captcha` | GET | Get 5-character random captcha |
+| `/api/auth/captcha` | GET | Get 5-char random captcha |
 | `/api/auth/register` | POST | User registration |
 | `/api/auth/login` | POST | User login |
 | `/api/auth/logout` | POST | Logout |
@@ -398,136 +299,86 @@ You can modify as needed:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/api/chat/stream` | POST | Stream message (SSE) |
+| `/api/chat/send` | POST | Send message (non-streaming) |
+| `/api/chat/send` | GET | Send message (legacy) |
 | `/api/chat/conversation` | POST | Create new session |
-| `/api/chat/conversations` | GET | Get all sessions for current user |
-| `/api/chat/send` | POST | Send message |
+| `/api/chat/conversations` | GET | Get all sessions |
 | `/api/chat/history/{sessionId}` | GET | Get conversation history |
 | `/api/chat/conversation/{sessionId}` | DELETE | Delete session (owner only) |
+| `/api/chat/compress/{sessionId}` | POST | Compress context (AI summary) |
+| `/api/chat/context-usage/{sessionId}` | GET | Get context usage |
+
+### Knowledge Base Endpoints (Login Required)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/documents/upload` | POST | Upload document to knowledge base |
+| `/api/documents/list` | GET | List all uploaded documents |
+| `/api/documents/{docId}` | DELETE | Delete a document |
 
 ### Model Management Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/model/current` | GET | Get current model |
-| `/api/model/available` | GET | Get available models list |
+| `/api/model/available` | GET | Get available models |
 | `/api/model/switch` | POST | Switch model |
+| `/api/model/params` | GET | Get all param presets |
+| `/api/model/params/{modelKey}` | GET | Get param preset for model |
+| `/api/model/params/{modelKey}` | POST | Save/update param preset |
 
-**For detailed API documentation and examples, please refer to:** [API_TEST-en.md](API_TEST-en.md)
+### Timezone Endpoint
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/timezone` | GET | Get timezone and coordinates by IP |
+
+**For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
 ## Development Guide
 
-### How Multi-turn Conversations Work
+### Multi-turn Conversation Flow
 
-1. **User Login**: Session is established after user registers/logs in
-2. **Session Creation**: Each conversation session has a unique ID (UUID), bound to the current user
-3. **Message Storage**: Both user messages and AI replies are saved to the database
-4. **Context Building**: When sending a new message, automatically retrieves the last N rounds of conversation history
-5. **AI Call**: Sends complete conversation history to the AI model for context memory
-6. **Result Saving**: AI replies are also saved to the database for future use
+1. **User Login** → Session established
+2. **Session Creation** → UUID-based, bound to user
+3. **Message Storage** → Both user/AI messages persisted
+4. **Context Building** → Last N rounds auto-retrieved
+5. **RAG Enhancement** → Relevant knowledge base chunks injected (if enabled)
+6. **AI Call** → Full history sent to model (streaming/non-streaming)
+7. **Result Saving** → AI response persisted for future use
 
-### Adding New AI Features
+### Context Management
 
-You can refer to the implementation in `ChatService`:
+- **Usage Monitoring**: Real-time context usage percentage
+- **AI Compression**: Summarizes older messages to free context space
+- **Configurable Window**: `chat.max-context-messages` controls retention
 
-```java
-@Service
-public class MyService {
-    private final ChatClient chatClient;
-    
-    public String processMessage(String userMessage) {
-        List<Message> messages = Arrays.asList(
-            new SystemMessage("You are a professional assistant"),
-            new UserMessage(userMessage)
-        );
-        
-        return chatClient.prompt()
-                .messages(messages)
-                .call()
-                .content();
-    }
-}
-```
+### RAG Workflow
+
+1. **Upload** → User uploads document via API or Web UI
+2. **Parse & Chunk** → Apache Tika parses → TokenTextSplitter chunks
+3. **Vectorize & Store** → EmbeddingModel generates vectors → Stored in VectorStore
+4. **Search** → Top-K relevant chunks retrieved for user query
+5. **Inject** → Retrieved chunks prepended as SystemMessage
 
 ## FAQ
 
-### 1. Connection to Ollama Failed
+### 1. Ollama Connection Failed
+Ensure `ollama serve` is running and models are pulled.
 
-Ensure Ollama service is running:
-```bash
-ollama serve
-```
+### 2. API Call Failed
+Check API Key, network connection, and account balance.
 
-And confirm the specified model is downloaded:
-```bash
-ollama pull qwen2.5:7b-instruct
-```
+### 3. AI Doesn't Remember Conversations
+Ensure consistent `sessionId` usage across requests.
 
-### 2. OpenAI/DeepSeek API Call Failed
+### 4. RAG Document Upload Failed
+- Confirm file size ≤ 10MB
+- Ensure embedding model is available: `ollama pull nomic-embed-text`
 
-- Check if API Key is correctly set
-- Confirm network connection is normal
-- Check if account balance is sufficient
-
-### 3. Model Switching Failed
-
-- Ensure the corresponding model service is configured (Ollama service started or API Key correct)
-- Check network connection (online models require internet)
-- Check console logs for detailed error information
-
-### 4. Port Conflict
-
-If port 8080 is occupied, you can modify the port number in `application.yml`.
-
-### 5. AI Doesn't Remember Previous Conversations
-
-Ensure you're using the same `sessionId`. If no sessionId is provided, a new session is created each time.
-
-### 6. How to Switch Models?
-
-#### Method 1: Web Interface Switching (Recommended)
-
-Switch directly in the web interface without restarting the application:
-1. Open http://localhost:8080
-2. Select model at the bottom of the left sidebar
-3. Changes take effect immediately
-
-#### Method 2: Configuration File Switching
-
-Refer to the "Configuration File Model Switching" section above. You can switch by modifying configuration files, command-line parameters, or environment variables.
-
-### 7. How to View Data in Database?
-
-#### H2 Database
-
-Access H2 Console: http://localhost:8080/h2-console
-- JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
-- Username: `sa`
-- Password: (leave empty)
-
-**Note**: H2 uses file persistence mode, data is stored in `./data/chatdb.mv.db` file and will not be lost after application restart.
-
-#### PostgreSQL Database
-
-Connect using any PostgreSQL client tool:
-- Host: `localhost`
-- Port: `5432`
-- Database: `chatdb`
-- Username: `postgres`
-- Password: `postgres` (or your configured password)
-
-Recommended tools:
-- pgAdmin
-- DBeaver
-- DataGrip
-- psql command-line tool
-
-### 8. Getting "Captcha Error" During Registration?
-
-The captcha is case-insensitive, but make sure to enter it promptly after fetching. Captchas are single-use and expire after submission; please refresh to get a new one.
-
-### 9. What If I Forget My Password?
-
-The current version does not support password reset. You can delete the user record directly from the database and re-register:
+### 5. Forgot Password
+Delete user from database and re-register:
 ```sql
 DELETE FROM users WHERE username = 'your-username';
 ```
@@ -545,4 +396,4 @@ This project is for learning and demonstration purposes only.
 
 ## Author
 
-Yan Yulin
+ylyan2015

@@ -4,19 +4,18 @@
 
 ### 1. 启动应用
 
-确保 Ollama 服务已启动（如果使用离线模式），然后运行应用：
-
 ```bash
 mvn spring-boot:run
 ```
 
-**注意**：默认使用 H2 数据库（文件持久化）和 DeepSeek 模型。如需切换，请参考 README.md。
+**注意**：默认使用 H2 数据库和 DeepSeek 模型。如需切换，请参考 README.md。
 
 ### 2. 认证说明
 
 **大部分聊天接口需要先登录**。以下接口无需登录：
 - `/api/auth/**` - 所有认证接口
 - `/api/model/**` - 模型管理接口
+- `/api/timezone` - 时区接口
 - 静态资源（CSS、JS、页面）
 
 ---
@@ -24,8 +23,6 @@ mvn spring-boot:run
 ## 一、用户认证接口
 
 ### 1.1 获取 RSA 公钥
-
-前端使用此公钥对密码进行 RSA 加密后再传输。
 
 **请求：**
 ```bash
@@ -39,13 +36,11 @@ curl http://localhost:8080/api/auth/public-key
 }
 ```
 
-> **说明**：公钥为 Base64 编码的 SPKI 格式，前端使用 Web Crypto API 的 `RSA-OAEP` + `SHA-256` 进行加密。
+> **说明**：Base64 编码的 SPKI 格式，前端使用 Web Crypto API 的 `RSA-OAEP` + `SHA-256` 加密。
 
 ---
 
 ### 1.2 获取验证码
-
-生成5位随机字母数字验证码，显示在页面上供用户输入。
 
 **请求：**
 ```bash
@@ -60,14 +55,13 @@ curl http://localhost:8080/api/auth/captcha
 }
 ```
 
-> **说明**：验证码与 Session 绑定，一次性使用，提交后立即失效。不区分大小写。
+> 验证码一次性使用，不区分大小写。
 
 ---
 
 ### 1.3 用户注册
 
 **请求（密码需 RSA 加密后传输）：**
-
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
@@ -79,175 +73,110 @@ curl -X POST http://localhost:8080/api/auth/register \
   }'
 ```
 
-**密码要求**：
-- 必须包含至少一个大写字母
-- 必须包含至少一个小写字母
-- 必须包含至少一个数字
-- 长度 6-50 位
-- 注册时需输入两遍且一致
+**密码要求**：大写字母 + 小写字母 + 数字，6-50位，注册时需输入两遍且一致。
 
 **成功响应：**
 ```json
-{
-  "success": true,
-  "message": "注册成功",
-  "username": "testuser"
-}
+{ "success": true, "message": "注册成功", "username": "testuser" }
 ```
-
-**失败响应（示例）：**
-```json
-{
-  "success": false,
-  "message": "两次输入的密码不一致"
-}
-```
-
-常见错误信息：
-- `验证码错误` - 验证码不正确或已过期
-- `密码必须包含大写字母、小写字母和数字，长度6-50位`
-- `两次输入的密码不一致`
-- `用户名已存在`
-- `密码解密失败，请重试`
 
 ---
 
 ### 1.4 用户登录
 
-**请求（密码需 RSA 加密后传输）：**
-
+**请求：**
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "<RSA加密后的密码>",
-    "captcha": "aB3xK"
-  }'
+  -d '{ "username": "testuser", "password": "<RSA加密后的密码>", "captcha": "aB3xK" }'
 ```
 
 **成功响应：**
 ```json
-{
-  "success": true,
-  "message": "登录成功",
-  "username": "testuser"
-}
-```
-
-**失败响应：**
-```json
-{
-  "success": false,
-  "message": "用户名或密码错误"
-}
+{ "success": true, "message": "登录成功", "username": "testuser" }
 ```
 
 ---
 
 ### 1.5 获取当前登录用户
 
-**请求：**
 ```bash
 curl http://localhost:8080/api/auth/user
 ```
-
-**已登录响应：**
 ```json
-{
-  "loggedIn": true,
-  "username": "testuser"
-}
+{ "loggedIn": true, "username": "testuser" }
 ```
-
-**未登录响应：**
-```json
-{
-  "loggedIn": false
-}
-```
-
----
 
 ### 1.6 退出登录
 
-**请求：**
 ```bash
 curl -X POST http://localhost:8080/api/auth/logout
 ```
-
-**响应：**
 ```json
-{
-  "success": true,
-  "message": "已退出登录"
-}
+{ "success": true, "message": "已退出登录" }
 ```
 
 ---
 
 ## 二、聊天接口（需要登录）
 
-> **注意**：以下接口需要先登录。未登录时访问会返回 401/403 状态码。
+### 2.1 流式发送消息（SSE）⭐ 推荐
 
-### 2.1 创建新会话
-
-会话将自动绑定到当前登录用户。
+使用 Server-Sent Events 实时流式返回 AI 回复，逐字显示。
 
 **请求：**
 ```bash
-curl -X POST http://localhost:8080/api/chat/conversation
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "sessionId": "your-session-id",
+    "message": "什么是Spring AI？",
+    "ragEnabled": true
+  }'
 ```
 
-**响应：**
-```json
-{
-  "success": true,
-  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-}
+**请求参数：**
+- `sessionId`：会话ID（可选，不传则自动创建新会话）
+- `message`：用户消息
+- `ragEnabled`：是否启用 RAG 知识库上下文（默认 false）
+
+**SSE 事件流：**
 ```
+event: session
+data: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+event: message
+data: Spring
+
+event: message
+data: AI
+
+event: message
+data: 是一个
+
+event: done
+data: {"contextUsage":35}
+```
+
+**事件类型说明：**
+- `session` - 流开始时发送，包含会话ID
+- `message` - 每个 AI 回复片段（逐字/逐句）
+- `done` - 流结束，包含上下文使用率 `contextUsage`
+- `error` - 出错时发送，包含错误信息
 
 ---
 
-### 2.2 获取当前用户的所有会话
-
-仅返回当前登录用户的会话列表，按更新时间降序排列。
-
-**请求：**
-```bash
-curl http://localhost:8080/api/chat/conversations
-```
-
-**响应：**
-```json
-{
-  "success": true,
-  "conversations": [
-    {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "title": "什么是Spring AI？...",
-      "updatedAt": "2026-06-10T10:30:05"
-    },
-    {
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-      "title": "新对话",
-      "updatedAt": "2026-06-10T09:15:00"
-    }
-  ]
-}
-```
-
----
-
-### 2.3 发送消息（POST方式 - 推荐）
+### 2.2 发送消息（POST - 非流式）
 
 **请求：**
 ```bash
 curl -X POST http://localhost:8080/api/chat/send \
   -H "Content-Type: application/json" \
   -d '{
-    "sessionId": "your-session-id-here",
-    "message": "你好，请介绍一下自己"
+    "sessionId": "your-session-id",
+    "message": "你好，请介绍一下自己",
+    "ragEnabled": false
   }'
 ```
 
@@ -255,51 +184,60 @@ curl -X POST http://localhost:8080/api/chat/send \
 ```json
 {
   "success": true,
-  "sessionId": "your-session-id-here",
+  "sessionId": "your-session-id",
   "response": "你好！我是一个AI助手..."
 }
 ```
 
 ---
 
-### 2.4 发送消息（GET方式 - 兼容旧接口）
+### 2.3 发送消息（GET - 兼容旧接口）
 
-**请求：**
 ```bash
-curl "http://localhost:8080/api/chat/send?message=你好&sessionId=your-session-id-here"
+curl "http://localhost:8080/api/chat/send?message=你好&sessionId=your-session-id"
 ```
 
 ---
 
-### 2.5 获取会话历史
+### 2.4 创建新会话
 
-**请求：**
 ```bash
-curl http://localhost:8080/api/chat/history/your-session-id-here
+curl -X POST http://localhost:8080/api/chat/conversation
+```
+```json
+{ "success": true, "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
 ```
 
-**响应：**
+---
+
+### 2.5 获取当前用户的所有会话
+
+```bash
+curl http://localhost:8080/api/chat/conversations
+```
 ```json
 {
   "success": true,
-  "sessionId": "your-session-id-here",
+  "conversations": [
+    { "id": "a1b2c3d4-...", "title": "什么是Spring AI？...", "updatedAt": "2026-06-15T10:30:05" }
+  ]
+}
+```
+
+---
+
+### 2.6 获取会话历史
+
+```bash
+curl http://localhost:8080/api/chat/history/your-session-id
+```
+```json
+{
+  "success": true,
+  "sessionId": "your-session-id",
   "messages": [
-    {
-      "id": 1,
-      "sessionId": "your-session-id-here",
-      "role": "user",
-      "content": "你好，请介绍一下自己",
-      "messageOrder": 0,
-      "createdAt": "2026-06-10T10:30:00"
-    },
-    {
-      "id": 2,
-      "sessionId": "your-session-id-here",
-      "role": "assistant",
-      "content": "你好！我是一个AI助手...",
-      "messageOrder": 1,
-      "createdAt": "2026-06-10T10:30:05"
-    }
+    { "id": 1, "role": "user", "content": "你好", "messageOrder": 0, "createdAt": "..." },
+    { "id": 2, "role": "assistant", "content": "你好！...", "messageOrder": 1, "createdAt": "..." }
   ],
   "count": 2
 }
@@ -307,121 +245,230 @@ curl http://localhost:8080/api/chat/history/your-session-id-here
 
 ---
 
-### 2.6 删除会话（仅允许拥有者删除）
+### 2.7 删除会话（仅拥有者）
 
-用户只能删除自己创建的会话，尝试删除他人会话会返回错误。
+```bash
+curl -X DELETE http://localhost:8080/api/chat/conversation/your-session-id
+```
+```json
+{ "success": true, "message": "会话已删除" }
+```
+
+---
+
+### 2.8 压缩上下文
+
+用 AI 将较早的对话总结为摘要，释放上下文空间。
 
 **请求：**
 ```bash
-curl -X DELETE http://localhost:8080/api/chat/conversation/your-session-id-here
+curl -X POST http://localhost:8080/api/chat/compress/your-session-id
 ```
 
-**成功响应：**
+**响应：**
 ```json
 {
   "success": true,
-  "message": "会话已删除"
-}
-```
-
-**失败响应（非本人会话）：**
-```json
-{
-  "success": false,
-  "message": "无权删除该会话"
+  "message": "上下文已压缩，8 条旧消息已总结为摘要",
+  "contextUsage": 25
 }
 ```
 
 ---
 
-## 三、模型管理接口（无需登录）
+### 2.9 获取上下文使用率
 
-### 3.1 获取当前模型
-
-**请求：**
 ```bash
-curl http://localhost:8080/api/model/current
+curl http://localhost:8080/api/chat/context-usage/your-session-id
+```
+```json
+{ "success": true, "contextUsage": 65 }
+```
+
+---
+
+## 三、知识库文档接口（需要登录）
+
+### 3.1 上传文档到知识库
+
+支持 TXT、PDF、MD 等格式，最大 10MB。
+
+**请求（multipart/form-data）：**
+```bash
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "file=@/path/to/document.pdf"
 ```
 
 **响应：**
 ```json
 {
   "success": true,
-  "model": "ollama",
-  "modelName": "离线模式"
+  "message": "文档上传成功",
+  "document": {
+    "docId": "doc-1",
+    "fileName": "document.pdf",
+    "chunkCount": 15,
+    "fileSize": 102400,
+    "uploadedAt": "2026-06-15T10:30:00"
+  }
 }
 ```
 
-### 3.2 获取可用模型列表
+> **说明**：文档上传后自动经过 Apache Tika 解析 → TokenTextSplitter 分块 → EmbeddingModel 向量化 → 存入 VectorStore。
 
-**请求：**
+---
+
+### 3.2 获取文档列表
+
+```bash
+curl http://localhost:8080/api/documents/list
+```
+```json
+{
+  "success": true,
+  "documents": [
+    { "docId": "doc-1", "fileName": "doc.pdf", "chunkCount": 15, "fileSize": 102400, "uploadedAt": "..." }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### 3.3 删除文档
+
+持久化模式下会同时从向量库和数据库中删除。
+
+```bash
+curl -X DELETE http://localhost:8080/api/documents/doc-1
+```
+```json
+{ "success": true, "message": "文档已删除" }
+```
+
+---
+
+## 四、模型管理接口
+
+### 4.1 获取当前模型
+
+```bash
+curl http://localhost:8080/api/model/current
+```
+```json
+{ "success": true, "model": "deepseek", "modelName": "DeepSeek V3" }
+```
+
+### 4.2 获取可用模型列表
+
 ```bash
 curl http://localhost:8080/api/model/available
 ```
-
-**响应：**
 ```json
 {
   "success": true,
   "models": [
-    {
-      "key": "ollama",
-      "name": "离线模式",
-      "description": "本地部署，免费使用，隐私安全",
-      "type": "offline"
-    },
-    {
-      "key": "deepseek",
-      "name": "DeepSeek V4 Pro",
-      "description": "在线专家模式，更强的推理能力",
-      "type": "online"
-    }
+    { "key": "ollama", "name": "离线模式", "description": "本地部署，免费使用，隐私安全", "type": "offline" },
+    { "key": "deepseek", "name": "DeepSeek V3", "description": "在线专家模式，更强的推理能力", "type": "online" },
+    { "key": "openai", "name": "OpenAI GPT", "description": "OpenAI 官方模型，稳定可靠", "type": "online" }
   ]
 }
 ```
 
-### 3.3 切换模型
+### 4.3 切换模型
 
-**请求：**
 ```bash
 curl -X POST http://localhost:8080/api/model/switch \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek"
-  }'
+  -d '{ "model": "ollama" }'
 ```
-
-**响应：**
 ```json
-{
-  "success": true,
-  "message": "模型已切换到: DeepSeek V4 Pro",
-  "model": "deepseek",
-  "modelName": "DeepSeek V4 Pro"
-}
+{ "success": true, "message": "模型已切换到: 离线模式", "model": "ollama", "modelName": "离线模式" }
 ```
 
 ---
 
-## 四、完整测试流程
+### 4.4 获取模型参数预设
 
-### 步骤1：获取 RSA 公钥
+获取当前用户对某模型的自定义参数（temperature、topP、topK、maxTokens）。
+
+**获取某模型的参数：**
+```bash
+curl http://localhost:8080/api/model/params/ollama
+```
+```json
+{
+  "success": true,
+  "preset": {
+    "id": 1, "userId": 1, "modelKey": "ollama",
+    "temperature": 0.7, "maxTokens": 2048, "topP": 0.9, "topK": 40,
+    "updatedAt": "2026-06-15T10:00:00"
+  }
+}
+```
+
+**获取所有模型的参数：**
+```bash
+curl http://localhost:8080/api/model/params
+```
+
+### 4.5 保存/更新模型参数预设
+
+```bash
+curl -X POST http://localhost:8080/api/model/params/deepseek \
+  -H "Content-Type: application/json" \
+  -d '{
+    "temperature": 0.8,
+    "maxTokens": 4096,
+    "topP": 0.95
+  }'
+```
+```json
+{
+  "success": true,
+  "message": "参数已保存",
+  "preset": { "id": 2, "userId": 1, "modelKey": "deepseek", "temperature": 0.8, "maxTokens": 4096, "topP": 0.95, "topK": null }
+}
+```
+
+> **说明**：参数预设保存后，后续该模型的所有对话将自动应用这些参数。
+
+---
+
+## 五、时区接口
+
+### 5.1 获取IP时区和位置信息
+
+根据客户端 IP 自动获取时区和经纬度。
+
+```bash
+curl http://localhost:8080/api/timezone
+```
+```json
+{
+  "success": true,
+  "timezone": "Asia/Shanghai",
+  "ip": "203.0.113.1",
+  "latitude": 31.2222,
+  "longitude": 121.4581
+}
+```
+
+> **说明**：本地/私有 IP 使用服务器系统默认时区。结果缓存 24 小时。
+
+---
+
+## 六、完整测试流程
+
+### 步骤1：获取 RSA 公钥和验证码
 ```bash
 curl http://localhost:8080/api/auth/public-key
-# 保存 publicKey 值，用于后续加密密码
-```
-
-### 步骤2：获取验证码
-```bash
 curl http://localhost:8080/api/auth/captcha
-# 记录 captcha 值
 ```
 
-### 步骤3：注册用户（需 RSA 加密密码，这里使用浏览器控制台更方便）
+### 步骤2：注册并登录
 
-> **提示**：由于密码需要 RSA 加密，建议使用浏览器控制台（F12）或 Postman 的 Pre-request Script 来加密密码。
->
-> 浏览器控制台加密示例：
+> **提示**：密码需要 RSA 加密，建议使用浏览器控制台（F12）：
 > ```javascript
 > async function encryptPassword(password, publicKeyBase64) {
 >     const binaryDer = atob(publicKeyBase64);
@@ -435,33 +482,46 @@ curl http://localhost:8080/api/auth/captcha
 > }
 > ```
 
-### 步骤4：创建会话并聊天
+### 步骤3：创建会话并流式聊天
 ```bash
-# 创建会话（需已登录）
-SESSION_ID=$(curl -X POST http://localhost:8080/api/chat/conversation | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
-echo "Session ID: $SESSION_ID"
+# 创建会话
+SESSION_ID=$(curl -s -X POST http://localhost:8080/api/chat/conversation | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
 
-# 发送消息
-curl -X POST http://localhost:8080/api/chat/send \
+# 流式聊天（SSE）
+curl -N -X POST http://localhost:8080/api/chat/stream \
   -H "Content-Type: application/json" \
-  -d "{
-    \"sessionId\": \"$SESSION_ID\",
-    \"message\": \"什么是Spring AI？\"
-  }"
+  -H "Accept: text/event-stream" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"什么是Spring AI？\",\"ragEnabled\":false}"
 
-# 查看当前用户的所有会话
-curl http://localhost:8080/api/chat/conversations
+# 查看上下文使用率
+curl http://localhost:8080/api/chat/context-usage/$SESSION_ID
 
-# 查看对话历史
-curl http://localhost:8080/api/chat/history/$SESSION_ID | python3 -m json.tool
+# 压缩上下文（当使用率过高时）
+curl -X POST http://localhost:8080/api/chat/compress/$SESSION_ID
+```
 
-# 删除会话（仅本人可删）
-curl -X DELETE http://localhost:8080/api/chat/conversation/$SESSION_ID
+### 步骤4：上传文档并使用 RAG
+```bash
+# 上传文档
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "file=@./test-document.txt"
+
+# 查看文档列表
+curl http://localhost:8080/api/documents/list
+
+# 开启 RAG 聊天
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"根据知识库回答问题\",\"ragEnabled\":true}"
+
+# 删除文档
+curl -X DELETE http://localhost:8080/api/documents/doc-1
 ```
 
 ---
 
-## 五、使用 Postman 测试
+## 七、使用 Postman 测试
 
 **环境变量：**
 - `base_url`: `http://localhost:8080`
@@ -469,190 +529,123 @@ curl -X DELETE http://localhost:8080/api/chat/conversation/$SESSION_ID
 
 **请求列表：**
 
-1. **Get Public Key**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/public-key`
-
-2. **Get Captcha**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/captcha`
-
-3. **Register** (需 Pre-request Script 加密密码)
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/register`
-   - Body (JSON):
-     ```json
-     {
-       "username": "testuser",
-       "password": "{{encrypted_password}}",
-       "confirmPassword": "{{encrypted_confirm_password}}",
-       "captcha": "captcha-value"
-     }
-     ```
-
-4. **Login** (需 Pre-request Script 加密密码)
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/login`
-   - Body (JSON):
-     ```json
-     {
-       "username": "testuser",
-       "password": "{{encrypted_password}}",
-       "captcha": "captcha-value"
-     }
-     ```
-
-5. **Get Current User**
-   - Method: GET
-   - URL: `{{base_url}}/api/auth/user`
-
-6. **Logout**
-   - Method: POST
-   - URL: `{{base_url}}/api/auth/logout`
-
-7. **Create Conversation**
-   - Method: POST
-   - URL: `{{base_url}}/api/chat/conversation`
-
-8. **List User Conversations**
-   - Method: GET
-   - URL: `{{base_url}}/api/chat/conversations`
-
-9. **Send Message**
-   - Method: POST
-   - URL: `{{base_url}}/api/chat/send`
-   - Body (JSON):
-     ```json
-     {
-       "sessionId": "{{session_id}}",
-       "message": "你好"
-     }
-     ```
-
-10. **Get History**
-    - Method: GET
-    - URL: `{{base_url}}/api/chat/history/{{session_id}}`
-
-11. **Delete Conversation**
-    - Method: DELETE
-    - URL: `{{base_url}}/api/chat/conversation/{{session_id}}`
-
-12. **Get Current Model**
-    - Method: GET
-    - URL: `{{base_url}}/api/model/current`
-
-13. **Switch Model**
-    - Method: POST
-    - URL: `{{base_url}}/api/model/switch`
-    - Body (JSON): `{"model": "deepseek"}`
+| # | 名称 | 方法 | URL | Body |
+|---|------|------|-----|------|
+| 1 | Get Public Key | GET | `{{base_url}}/api/auth/public-key` | - |
+| 2 | Get Captcha | GET | `{{base_url}}/api/auth/captcha` | - |
+| 3 | Register | POST | `{{base_url}}/api/auth/register` | JSON (需加密密码) |
+| 4 | Login | POST | `{{base_url}}/api/auth/login` | JSON (需加密密码) |
+| 5 | Get User | GET | `{{base_url}}/api/auth/user` | - |
+| 6 | Logout | POST | `{{base_url}}/api/auth/logout` | - |
+| 7 | Create Session | POST | `{{base_url}}/api/chat/conversation` | - |
+| 8 | List Sessions | GET | `{{base_url}}/api/chat/conversations` | - |
+| 9 | Stream Chat | POST | `{{base_url}}/api/chat/stream` | `{"sessionId":"{{session_id}}","message":"你好","ragEnabled":false}` |
+| 10 | Send Message | POST | `{{base_url}}/api/chat/send` | `{"sessionId":"{{session_id}}","message":"你好"}` |
+| 11 | Get History | GET | `{{base_url}}/api/chat/history/{{session_id}}` | - |
+| 12 | Compress Context | POST | `{{base_url}}/api/chat/compress/{{session_id}}` | - |
+| 13 | Context Usage | GET | `{{base_url}}/api/chat/context-usage/{{session_id}}` | - |
+| 14 | Delete Session | DELETE | `{{base_url}}/api/chat/conversation/{{session_id}}` | - |
+| 15 | Upload Document | POST | `{{base_url}}/api/documents/upload` | form-data: file |
+| 16 | List Documents | GET | `{{base_url}}/api/documents/list` | - |
+| 17 | Delete Document | DELETE | `{{base_url}}/api/documents/doc-1` | - |
+| 18 | Current Model | GET | `{{base_url}}/api/model/current` | - |
+| 19 | Switch Model | POST | `{{base_url}}/api/model/switch` | `{"model":"deepseek"}` |
+| 20 | Get Presets | GET | `{{base_url}}/api/model/params` | - |
+| 21 | Save Preset | POST | `{{base_url}}/api/model/params/deepseek` | `{"temperature":0.8,"maxTokens":4096}` |
+| 22 | Get Timezone | GET | `{{base_url}}/api/timezone` | - |
 
 ---
 
-## 六、访问 H2 数据库控制台
-
-你可以通过浏览器访问 H2 数据库控制台来查看存储的数据：
+## 八、访问 H2 数据库控制台
 
 - URL: http://localhost:8080/h2-console
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
 - Username: `sa`
 - Password: (留空)
 
-在控制台中，你可以查询：
 ```sql
--- 查看所有用户（密码为BCrypt哈希，无法还原明文）
+-- 查看所有用户
 SELECT id, username, created_at FROM users;
 
--- 查看所有会话（包含用户ID绑定关系）
+-- 查看所有会话
 SELECT id, session_id, user_id, title, created_at FROM conversations;
-
--- 查看某个用户的所有会话
-SELECT * FROM conversations WHERE user_id = 1 ORDER BY updated_at DESC;
 
 -- 查看某个会话的所有消息
 SELECT * FROM messages WHERE session_id = 'your-session-id' ORDER BY message_order;
 
--- 统计每个会话的消息数量
-SELECT session_id, COUNT(*) as message_count
-FROM messages
-GROUP BY session_id;
+-- 查看 RAG 文档元信息（持久化模式）
+SELECT * FROM rag_document;
+
+-- 查看模型参数预设
+SELECT * FROM model_param_presets;
 ```
 
 ---
 
-## 七、配置说明
+## 九、配置说明
 
-### 7.1 模型配置
-
-在 `application.yml` 中可以切换默认模型：
+### 9.1 模型配置
 
 ```yaml
 spring:
   profiles:
-    active: ollama,h2  # 可选: ollama, openai, deepseek
+    active: deepseek,openai,h2  # 可组合: ollama/openai/deepseek + h2/postgresql
 ```
 
-或者通过 Web 界面直接切换（推荐）：
-1. 打开 http://localhost:8080
-2. 在左侧边栏底部选择模型
-3. 切换后立即生效
+### 9.2 RAG 配置
 
-### 7.2 上下文长度配置
+```yaml
+rag:
+  embedding-model: ollama    # embedding: ollama 或 openai
+  store-type: memory         # memory（内存）或 pgvector（持久化）
+  pgvector:
+    dimensions: 768          # nomic-embed-text 维度
+    initialize-schema: true  # 自动创建表
+```
 
-在 `application.yml` 中可以调整以下配置：
+### 9.3 上下文长度配置
 
 ```yaml
 chat:
-  max-context-messages: 10  # 保留最近10轮对话作为上下文
+  max-context-messages: 10   # 保留最近10轮对话
 ```
 
-- 增加此值可以让 AI 记住更长的对话历史
-- 减少此值可以降低 token 消耗，提高响应速度
-
 ---
 
-## 八、注意事项
+## 十、注意事项
 
-1. **登录要求**：聊天相关接口需要先登录，未登录会返回 401/403
-2. **会话归属**：每个会话绑定到创建它的用户，用户只能查看和删除自己的会话
-3. **密码安全**：密码使用 RSA 加密传输，BCrypt 哈希存储，数据库中不存在明文密码
+1. **登录要求**：聊天和文档接口需要先登录，未登录返回 401/403
+2. **会话归属**：每个会话绑定创建用户，用户只能操作自己的会话
+3. **密码安全**：RSA 加密传输，BCrypt 哈希存储
 4. **验证码**：5位随机字母数字，一次性使用，不区分大小写
-5. **会话ID管理**：客户端需要保存 sessionId 以维持对话上下文
-6. **上下文限制**：默认保留最近10轮对话，超出的历史会被截断
-7. **自动标题生成**：第一条消息会自动生成会话标题（前20个字符）
-8. **数据库持久化**：H2 使用文件持久化模式，数据存储在 `./data/chatdb.mv.db` 文件中
+5. **SSE 流式**：使用 `POST /api/chat/stream` 获取实时流式回复
+6. **RAG 知识库**：上传文档后，在聊天时设置 `ragEnabled: true` 启用上下文增强
+7. **上下文限制**：默认保留最近10轮对话，可通过压缩功能释放空间
+8. **模型参数**：参数预设按用户和模型维度保存，切换模型时自动应用
+9. **文件上传**：最大 10MB，支持 TXT/PDF/MD 等格式
+10. **数据库持久化**：H2 文件模式存储在 `./data/chatdb.mv.db`
 
 ---
 
-## 九、常见问题
+## 十一、常见问题
 
-**Q: 为什么访问聊天接口返回 401？**
-A: 需要先登录。先调用 `/api/auth/login` 登录，确保 Cookie 被保存。
+**Q: 为什么聊天接口返回 401？**
+A: 需要先登录，调用 `/api/auth/login` 并确保 Cookie 被保存。
 
-**Q: 为什么 AI 不记得之前的对话？**
-A: 确保你使用了相同的 sessionId。如果不传 sessionId，每次都会创建新会话。
+**Q: SSE 流式接口如何在前端消费？**
+A: 使用 `fetch` + `ReadableStream` 或 `EventSource`（仅支持GET），推荐使用 fetch POST 方式。
 
-**Q: 如何清空对话历史？**
-A: 使用删除会话接口 `DELETE /api/chat/conversation/{sessionId}`，仅能删除自己的会话。
-
-**Q: 可以修改上下文长度吗？**
-A: 可以，在 application.yml 中修改 `chat.max-context-messages` 的值。
+**Q: RAG 上下文增强没有效果？**
+A: 确认已上传文档，并且 `ragEnabled` 设为 `true`。还需确认 embedding 模型可用。
 
 **Q: 如何切换AI模型？**
-A: 有三种方式：
-   1. **Web界面**（推荐）：在左侧边栏底部选择模型，立即生效
-   2. **API调用**：POST `/api/model/switch`，传入 `{"model": "deepseek"}`
-   3. **配置文件**：修改 `application.yml` 中的 `spring.profiles.active`
+A: Web界面（推荐）、API 调用 `POST /api/model/switch`、或修改配置文件。
 
-**Q: 切换模型后需要重启应用吗？**
-A: 不需要，通过 Web 界面或 API 切换模型后立即生效。
+**Q: 切换模型后需要重启吗？**
+A: 不需要，通过 Web 界面或 API 切换立即生效。
 
-**Q: 支持哪些AI模型？**
-A: 目前支持：
-   - **离线模式**：Ollama 本地模型（qwen2.5, llama3, mistral 等）
-   - **在线模式**：DeepSeek V4 Pro（需要 API Key）
+**Q: 模型参数预设如何生效？**
+A: 保存后，该用户在该模型下的所有对话自动应用自定义参数。
 
 **Q: RSA 公钥每次一样吗？**
-A: 不一样。RSA 密钥对在应用每次启动时重新生成，所以重启应用后需要重新获取公钥。
-
-**Q: 忘记密码怎么办？**
-A: 当前版本不支持密码重置。可以直接在数据库中删除用户记录后重新注册：`DELETE FROM users WHERE username = 'your-username';`
+A: 不一样，每次启动应用重新生成。

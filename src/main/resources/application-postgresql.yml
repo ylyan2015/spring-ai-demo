@@ -9,3 +9,10 @@ spring:
   
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+# RAG PgVector 持久化配置（仅 postgresql profile 生效）
+rag:
+  store-type: pgvector  # 使用 PgVector 持久化向量存储
+  pgvector:
+    dimensions: 768          # embedding 维度（nomic-embed-text 默认 768，openai text-embedding-3-small 为 1536）
+    initialize-schema: true  # 自动创建 vector_store 表和索引

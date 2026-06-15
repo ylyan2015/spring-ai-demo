@@ -119,6 +119,12 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-vector-store</artifactId>
         </dependency>
+
+        <!-- Spring AI PgVector Store (RAG: 持久化向量存储，生产环境使用) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-pgvector-store</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

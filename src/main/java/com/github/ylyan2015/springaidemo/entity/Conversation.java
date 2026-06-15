@@ -2,8 +2,6 @@ package com.github.ylyan2015.springaidemo.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * 会话实体类
@@ -46,13 +44,6 @@ public class Conversation {
      */
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
-
-    /**
-     * 关联的消息列表
-     */
-    @OneToMany(mappedBy = "sessionId", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @OrderBy("messageOrder ASC")
-    private List<Message> messages = new ArrayList<>();
 
     public Conversation() {
         this.createdAt = LocalDateTime.now();
@@ -123,20 +114,4 @@ public class Conversation {
         this.updatedAt = updatedAt;
     }
 
-    public List<Message> getMessages() {
-        return messages;
-    }
-
-    public void setMessages(List<Message> messages) {
-        this.messages = messages;
-        this.updatedAt = LocalDateTime.now();
-    }
-
-    /**
-     * 添加消息到会话
-     */
-    public void addMessage(Message message) {
-        this.messages.add(message);
-        this.updatedAt = LocalDateTime.now();
-    }
 }

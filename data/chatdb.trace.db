@@ -1,0 +1,3 @@
+2026-06-15 23:19:21.059831+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLDataException: Data conversion error converting "CHARACTER VARYING to DECFLOAT"; SQL statement:
+select m1_0.session_id,m1_0.id,m1_0.content,m1_0.created_at,m1_0.message_order,m1_0.role,m1_0.session_id from messages m1_0 where m1_0.session_id=? order by m1_0.message_order [22018-232]

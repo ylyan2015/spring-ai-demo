@@ -1,6 +1,6 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, and more.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, Docker one-click deployment, and more.
 
 ## Project Overview
 
@@ -25,6 +25,8 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **Web Interface** - Beautiful chat interface with session list, real-time conversation, Markdown rendering
 - ✅ **Model Switching** - Directly switch between offline mode and online expert mode in the web interface
 - ✅ **Spring Boot Actuator** - Built-in health checks, metrics monitoring, and operational endpoints
+- ✅ **Docker One-Click Deployment** - Multi-stage image build + docker-compose orchestration for app and middleware, ready out of the box
+- ✅ **AI Response Notification** - Desktop notification + sound + page title badge, never miss a reply when switching tabs
 
 ## Technology Stack
 
@@ -41,11 +43,19 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **RSA + BCrypt** - Password encryption scheme
 - **Lombok** - Code simplification
 - **Spring Boot Actuator** - Operations monitoring
+- **Docker + docker-compose** - Containerized deployment and service orchestration
 - **Maven** - Build tool
 
 ## Prerequisites
 
-Before running this project, please ensure:
+### Option A: Docker Deployment (Recommended, Zero Local Dependencies)
+
+Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other local tools needed:
+
+1. **Docker** - Download from [https://www.docker.com/get-started](https://www.docker.com/get-started)
+2. **Docker Compose** - Included with Docker Desktop
+
+### Option B: Local Development
 
 1. **JDK 17** or higher
 2. **Maven 3.6+**
@@ -57,7 +67,58 @@ Before running this project, please ensure:
 
 ## Quick Start
 
-### 1. Clone the Project
+### 🐳 Docker One-Click Deployment (Recommended)
+
+Just 3 steps to launch all services (app + PostgreSQL/pgvector + optional Ollama):
+
+```bash
+# 1. Clone the project
+git clone <repository-url>
+cd spring-ai-demo
+
+# 2. Configure API Keys
+cp .env.example .env
+# Edit .env with your real DeepSeek / OpenAI API Keys
+
+# 3. Start all services
+docker compose up -d
+```
+
+Visit http://localhost:8080 after startup.
+
+#### Enable Ollama Local Models (Optional)
+
+```bash
+docker compose --profile ollama up -d
+
+# Pull a model (first time only)
+docker exec spring-ai-ollama ollama pull qwen2.5:7b-instruct
+```
+
+#### Common Docker Commands
+
+```bash
+# Check service status
+docker compose ps
+
+# View app logs
+docker compose logs -f app
+
+# Rebuild and restart
+docker compose up -d --build
+
+# Stop all services
+docker compose down
+
+# Stop and remove volumes (reset database)
+docker compose down -v
+```
+
+> **Note**: docker-compose automatically activates the `docker` Spring profile, which internally activates `postgresql`, `deepseek`, and `openai` sub-profiles, and replaces database and Ollama addresses with Docker service names.
+
+### 💻 Local Development Setup
+
+#### 1. Clone the Project
 
 ```bash
 git clone <repository-url>
@@ -87,7 +148,7 @@ export OPENAI_API_KEY=sk-your-api-key-here
 export DEEPSEEK_API_KEY=your-api-key-here
 ```
 
-### 3. Build and Run
+#### 3. Build and Run
 
 ```bash
 mvn clean install
@@ -96,7 +157,7 @@ mvn spring-boot:run
 
 Or directly run the main class `SpringAiDemoApplication`.
 
-### 4. Use Web Interface (Recommended)
+#### 4. Use Web Interface (Recommended)
 
 After startup, access in your browser:
 
@@ -122,6 +183,7 @@ http://localhost:8080
 - 🎨 **Markdown Rendering** - Code highlighting, tables, lists, etc.
 - 🔄 **Model Switching** - Switch AI models at bottom of sidebar
 - 📊 **Context Monitor** - Real-time context usage display with AI compression
+- 🔔 **AI Reply Notification** - Switch tabs after sending; get notified via desktop notification + sound + title badge when AI replies
 
 #### RAG Knowledge Base
 
@@ -130,7 +192,7 @@ http://localhost:8080
 - 🗑️ **Document Delete** - Remove documents and their vectors
 - 🔀 **Context Toggle** - Enable/disable RAG context injection
 
-### 5. Test with API
+#### 5. Test with API
 
 ```bash
 # Get RSA public key
@@ -190,7 +252,7 @@ spring-ai-demo/
 │       └── UserRepository.java
 ├── src/main/resources/
 │   ├── static/css/chat.css             # Chat interface styles
-│   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown)
+│   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown/Notifications)
 │   ├── templates/index.html            # Main chat page template
 │   ├── templates/login.html            # Login/register page template
 │   ├── application.yml                 # Main configuration
@@ -198,8 +260,13 @@ spring-ai-demo/
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector config
 │   ├── application-ollama.yml          # Ollama model config
 │   ├── application-openai.yml          # OpenAI model config
-│   └── application-deepseek.yml        # DeepSeek model config
+│   ├── application-deepseek.yml        # DeepSeek model config
+│   └── application-docker.yml          # Docker deployment config
 ├── pom.xml                             # Maven configuration
+├── Dockerfile                          # Docker multi-stage build
+├── docker-compose.yml                  # docker-compose service orchestration
+├── .env.example                        # API Key environment variable template
+├── .dockerignore                       # Docker build exclusion rules
 ├── README.md / README-en.md            # Project documentation (Chinese/English)
 └── API_TEST.md / API_TEST-en.md        # API testing guide (Chinese/English)
 ```
@@ -282,6 +349,15 @@ rag:
     dimensions: 768
 ```
 
+#### Example 4: Docker Deployment (auto-activated by docker-compose)
+```yaml
+# application-docker.yml automatically includes these profiles
+spring:
+  profiles:
+    include: postgresql,deepseek,openai
+# No manual config needed — just run docker compose up
+```
+
 ## API Endpoints Overview
 
 ### Auth Endpoints (No Login Required)
@@ -362,6 +438,23 @@ rag:
 4. **Search** → Top-K relevant chunks retrieved for user query
 5. **Inject** → Retrieved chunks prepended as SystemMessage
 
+### Docker Deployment Architecture
+
+`docker-compose.yml` defines 3 services:
+
+| Service | Image | Description |
+|---------|-------|-------------|
+| `app` | Local build (Dockerfile) | Spring AI app, multi-stage build, JRE 17 Alpine runtime |
+| `postgres` | `pgvector/pgvector:pg16` | PostgreSQL + pgvector extension, RAG vector persistence |
+| `ollama` | `ollama/ollama` | Local AI model service, optionally enabled |
+
+Services communicate over the internal `ai-net` network. The app accesses middleware via service names (`postgres:5432`, `ollama:11434`).
+
+- **Health Check**: postgres has a `pg_isready` health check; app waits for database readiness before starting
+- **Data Persistence**: Named volumes `pgdata` and `ollama-data` ensure data survives restarts
+- **Profile Control**: ollama service uses `profiles: [ollama]`, not started by default — requires `--profile ollama` to explicitly enable
+- **Secure Runtime**: App runs as non-root user `appuser` inside the container
+
 ## FAQ
 
 ### 1. Ollama Connection Failed
@@ -381,6 +474,18 @@ Ensure consistent `sessionId` usage across requests.
 Delete user from database and re-register:
 ```sql
 DELETE FROM users WHERE username = 'your-username';
+```
+
+### 6. Slow Docker Build
+The first build downloads Maven dependencies. Subsequent builds benefit from Docker layer caching (`dependency:go-offline`). For slow networks, configure a Maven mirror in the `Dockerfile` build stage:
+```dockerfile
+COPY settings.xml /root/.m2/settings.xml
+```
+
+### 7. Docker Container Cannot Reach External APIs
+Ensure the `.env` file has valid API Keys and Docker host networking is working:
+```bash
+cat .env  # Confirm keys are not placeholders
 ```
 
 ## References

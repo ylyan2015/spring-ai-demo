@@ -1,0 +1,75 @@
+services:
+  # ==================== Spring AI 应用 ====================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spring-ai-demo
+    ports:
+      - "8080:8080"
+    environment:
+      # 使用 docker profile，自动激活 postgresql + deepseek + openai
+      SPRING_PROFILES_ACTIVE: docker
+      # API Keys（从 .env 文件读取）
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # JVM 参数
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-net
+
+  # ==================== PostgreSQL + pgvector ====================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: spring-ai-postgres
+    environment:
+      POSTGRES_DB: chatdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chatdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - ai-net
+
+  # ==================== Ollama（本地模型，可选） ====================
+  # 使用方式: docker compose --profile ollama up
+  ollama:
+    image: ollama/ollama
+    container_name: spring-ai-ollama
+    profiles:
+      - ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - ai-net
+    # GPU 支持（取消注释以启用 NVIDIA GPU）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  pgdata:
+  ollama-data:
+
+networks:
+  ai-net:
+    driver: bridge

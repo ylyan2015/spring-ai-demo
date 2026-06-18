@@ -10,4 +10,5 @@ target/
 # qdrant files
 .qoder
 
-
+# Docker env (API keys)
+.env

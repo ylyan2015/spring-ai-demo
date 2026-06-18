@@ -1,0 +1,27 @@
+# Docker 部署配置（Docker Compose 环境）
+# 此 profile 覆盖 localhost 地址为 Docker 服务名
+
+spring:
+  # 包含子 profile: postgresql（持久化数据库）+ deepseek + openai（云端模型）
+  profiles:
+    include: postgresql,deepseek,openai
+
+  # 覆盖 PostgreSQL 连接地址为 Docker 服务名
+  datasource:
+    url: jdbc:postgresql://postgres:5432/chatdb
+
+  # 覆盖 Ollama 地址为 Docker 服务名（若使用 Ollama 容器）
+  ai:
+    ollama:
+      base-url: http://ollama:11434
+
+  # Docker 环境下关闭 SQL 日志
+  jpa:
+    show-sql: false
+
+# Docker 环境默认使用 PgVector 持久化
+rag:
+  store-type: pgvector
+  pgvector:
+    dimensions: 768
+    initialize-schema: true

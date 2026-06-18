@@ -1,6 +1,6 @@
 # Spring AI Demo - 多模型智能聊天应用
 
-一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出等功能。
+一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、Docker 一键部署等功能。
 
 ## 项目概述
 
@@ -25,6 +25,8 @@
 - ✅ **Web 界面** - 美观的聊天界面，支持会话列表、实时对话、Markdown 渲染
 - ✅ **模型切换** - Web界面直接切换离线模式和在线专家模式
 - ✅ **Spring Boot Actuator** - 内置健康检查、指标监控等运维端点
+- ✅ **Docker 一键部署** - 多阶段构建镜像 + docker-compose 编排应用和中间件，开箱即用
+- ✅ **AI 回复完成通知** - 浏览器桌面通知 + 提示音 + 页面标题徽标，切走页面也不错过回复
 
 ## 技术栈
 
@@ -41,11 +43,19 @@
 - **RSA + BCrypt** - 密码加密方案
 - **Lombok** - 代码简化
 - **Spring Boot Actuator** - 运维监控
+- **Docker + docker-compose** - 容器化部署与服务编排
 - **Maven** - 项目构建工具
 
 ## 前置要求
 
-在运行本项目之前，请确保已安装以下软件：
+### 方式一：Docker 部署（推荐，零依赖）
+
+仅需安装 Docker 和 docker-compose，无需 JDK、Maven、PostgreSQL 等任何本地环境：
+
+1. **Docker** - 从 [https://www.docker.com/get-started](https://www.docker.com/get-started) 下载安装
+2. **Docker Compose** - Docker Desktop 已内置
+
+### 方式二：本地开发
 
 1. **JDK 17** 或更高版本
 2. **Maven 3.6+**
@@ -57,14 +67,65 @@
 
 ## 快速开始
 
-### 1. 克隆项目
+### 🐳 Docker 一键部署（推荐）
+
+只需 3 步即可启动所有服务（应用 + PostgreSQL/pgvector + 可选 Ollama）：
+
+```bash
+# 1. 克隆项目
+git clone <repository-url>
+cd spring-ai-demo
+
+# 2. 配置 API Key
+cp .env.example .env
+# 编辑 .env 文件，填入真实的 DeepSeek / OpenAI API Key
+
+# 3. 启动所有服务
+docker compose up -d
+```
+
+启动后访问 http://localhost:8080 即可使用。
+
+#### 启用 Ollama 本地模型（可选）
+
+```bash
+docker compose --profile ollama up -d
+
+# 拉取模型（首次需要）
+docker exec spring-ai-ollama ollama pull qwen2.5:7b-instruct
+```
+
+#### 常用 Docker 命令
+
+```bash
+# 查看服务状态
+docker compose ps
+
+# 查看应用日志
+docker compose logs -f app
+
+# 重新构建镜像并启动
+docker compose up -d --build
+
+# 停止所有服务
+docker compose down
+
+# 停止并清除数据卷（重置数据库）
+docker compose down -v
+```
+
+> **说明**：docker-compose 会自动激活 `docker` Spring profile，该 profile 内部自动激活 `postgresql`、`deepseek`、`openai` 子 profile，并将数据库和 Ollama 地址替换为 Docker 容器服务名。
+
+### 💻 本地开发部署
+
+#### 1. 克隆项目
 
 ```bash
 git clone <repository-url>
 cd spring-ai-demo
 ```
 
-### 2. 准备AI模型服务
+#### 2. 准备AI模型服务
 
 根据你选择的模型类型进行配置：
 
@@ -91,7 +152,7 @@ export OPENAI_API_KEY=sk-your-api-key-here
 export DEEPSEEK_API_KEY=your-api-key-here
 ```
 
-### 3. 构建并运行应用
+#### 3. 构建并运行应用
 
 ```bash
 # 使用 Maven 构建项目
@@ -103,7 +164,7 @@ mvn spring-boot:run
 
 或者直接运行主类 `SpringAiDemoApplication`。
 
-### 4. 使用 Web 界面（推荐）
+#### 4. 使用 Web 界面（推荐）
 
 应用启动后，直接在浏览器中访问：
 
@@ -142,6 +203,7 @@ Web 界面提供以下功能：
 - 🎨 **Markdown 渲染** - 支持代码高亮、表格、列表等 Markdown 格式
 - 🔄 **模型切换** - 侧边栏底部直接切换AI模型
 - 📊 **上下文监控** - 实时显示上下文使用率，支持 AI 智能压缩
+- 🔔 **AI 回复通知** - 发送消息后可切走，AI 回复完成后通过桌面通知 + 提示音 + 标题徽标提醒
 
 #### RAG 知识库
 
@@ -151,7 +213,7 @@ Web 界面右侧提供知识库面板：
 - 🗑️ **文档删除** - 删除不需要的文档及其向量数据
 - 🔀 **上下文增强** - 开启/关闭 RAG 知识库上下文注入
 
-### 5. 使用 API 测试
+#### 5. 使用 API 测试
 
 如果你想通过 API 进行测试，请先注册并登录：
 
@@ -237,7 +299,7 @@ spring-ai-demo/
 │   │   ├── css/
 │   │   │   └── chat.css                # 聊天界面样式
 │   │   └── js/
-│   │       └── chat.js                 # 前端交互逻辑（SSE/RAG/Markdown）
+│   │       └── chat.js                 # 前端交互逻辑（SSE/RAG/Markdown/通知）
 │   ├── templates/
 │   │   ├── index.html                  # 主聊天页面模板
 │   │   └── login.html                  # 登录/注册页面模板
@@ -246,8 +308,13 @@ spring-ai-demo/
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector 配置
 │   ├── application-ollama.yml          # Ollama 模型配置
 │   ├── application-openai.yml          # OpenAI 模型配置
-│   └── application-deepseek.yml        # DeepSeek 模型配置
+│   ├── application-deepseek.yml        # DeepSeek 模型配置
+│   └── application-docker.yml          # Docker 部署配置
 ├── pom.xml                             # Maven 配置文件
+├── Dockerfile                          # Docker 多阶段构建
+├── docker-compose.yml                  # docker-compose 服务编排
+├── .env.example                        # API Key 环境变量模板
+├── .dockerignore                       # Docker 构建排除规则
 ├── README.md / README-en.md            # 项目说明文档（中/英文）
 └── API_TEST.md / API_TEST-en.md        # API测试指南（中/英文）
 ```
@@ -420,6 +487,15 @@ rag:
     dimensions: 768
 ```
 
+#### 示例4：Docker 部署（docker-compose 自动激活）
+```yaml
+# application-docker.yml 自动包含以下 profile
+spring:
+  profiles:
+    include: postgresql,deepseek,openai
+# 无需手动配置，docker compose up 即可使用
+```
+
 ## API 接口概览
 
 ### 认证接口（无需登录）
@@ -500,6 +576,23 @@ rag:
 4. **相似度检索**：聊天时根据用户问题检索 Top-K 相关片段
 5. **上下文注入**：将检索到的片段作为 SystemMessage 注入对话
 
+### Docker 部署架构
+
+`docker-compose.yml` 定义了 3 个服务：
+
+| 服务 | 镜像 | 说明 |
+|------|------|------|
+| `app` | 本地构建 (Dockerfile) | Spring AI 应用，多阶段构建，JRE 17 Alpine 运行时 |
+| `postgres` | `pgvector/pgvector:pg16` | PostgreSQL + pgvector 扩展，RAG 向量持久化 |
+| `ollama` | `ollama/ollama` | 本地 AI 模型服务，可选启用 |
+
+服务之间通过内部网络 `ai-net` 通信，应用通过服务名访问中间件（`postgres:5432`、`ollama:11434`）。
+
+- **健康检查**：postgres 配置了 `pg_isready` 健康检查，app 等待数据库就绪后才启动
+- **数据持久化**：`pgdata` 和 `ollama-data` 命名卷保证重启不丢数据
+- **Profile 控制**：ollama 服务使用 `profiles: [ollama]`，默认不启动，需 `--profile ollama` 显式启用
+- **安全运行**：容器以非 root 用户 `appuser` 运行应用
+
 ## 常见问题
 
 ### 1. 连接 Ollama 失败
@@ -553,6 +646,20 @@ ollama pull qwen2.5:7b-instruct
 当前版本暂不支持密码重置功能。可以直接在数据库中删除用户记录后重新注册：
 ```sql
 DELETE FROM users WHERE username = 'your-username';
+```
+
+### 8. Docker 构建缓慢
+
+首次构建需要下载 Maven 依赖，后续构建利用 Docker 层缓存（`dependency:go-offline`），速度会快很多。如果网络较慢，可配置 Maven 国内镜像，在 `Dockerfile` 构建阶段添加：
+```dockerfile
+COPY settings.xml /root/.m2/settings.xml
+```
+
+### 9. Docker 容器无法连接外网 API
+
+确保 `.env` 文件中的 API Key 已正确配置，且 Docker 宿主机网络正常：
+```bash
+cat .env  # 确认 API Key 非占位符
 ```
 
 ## 参考资料

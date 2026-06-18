@@ -1,0 +1,23 @@
+# Build output
+target/
+
+# IDE files
+.idea/
+.vscode/
+
+# Documentation
+*.md
+
+# Data files
+data/
+
+# Git
+.git/
+.gitignore
+
+# Qoder
+.qoder/
+
+# Docker
+docker-compose*.yml
+.env*

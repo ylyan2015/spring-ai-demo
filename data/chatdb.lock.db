@@ -1,6 +1,6 @@
 #FileLock
-#Mon Jun 15 23:23:04 CST 2026
-server=192.168.2.42\:23842
+#Mon Jun 15 23:52:33 CST 2026
+server=192.168.2.42\:2202
 hostName=192.168.2.42
 method=file
-id=19ecbe10e87c6fe92ec1985cbd871d913c145965bbd
+id=19ecbfc0c303c65e2003b2a91b0a7000b29720ac159

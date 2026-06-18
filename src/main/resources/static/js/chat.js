@@ -8,6 +8,8 @@ let weatherTimer = null;
 let userCoords = { latitude: null, longitude: null }; // IP定位坐标
 let ragEnabled = false; // RAG 知识库增强开关
 let contextUsage = 0; // 上下文使用率
+let notificationEnabled = true; // 通知开关
+let originalPageTitle = 'Spring AI Chat'; // 原始页面标题
 
 // DOM元素
 const messagesContainer = document.getElementById('messagesContainer');
@@ -26,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     setupParamListeners();
     loadTimezoneAndStartClock();
+    initNotification();
 });
 
 // 加载当前用户信息
@@ -277,6 +280,8 @@ async function sendMessage() {
                             updateContextWarning();
                         }
                     } catch(e) { /* 忽略解析错误 */ }
+                    // AI 回复完成，发送通知
+                    notifyAiResponseDone(fullResponse);
                 } else if (eventType === 'error') {
                     assistantBubble.innerHTML = `<span style="color:#ef4444">${eventData}</span>`;
                     assistantBubble.classList.remove('streaming');
@@ -305,6 +310,116 @@ async function sendMessage() {
     } finally {
         isStreaming = false;
         sendBtn.disabled = messageInput.value.trim().length === 0;
+    }
+}
+
+// ==================== 通知功能 ====================
+
+// 初始化通知：请求权限 + 恢复用户偏好 + 监听页面可见性变化
+function initNotification() {
+    // 恢复用户的开关偏好
+    const saved = localStorage.getItem('notificationEnabled');
+    if (saved !== null) {
+        notificationEnabled = saved === 'true';
+    }
+    const checkbox = document.getElementById('notificationToggle');
+    if (checkbox) checkbox.checked = notificationEnabled;
+
+    // 请求浏览器通知权限
+    if (notificationEnabled && 'Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+
+    // 页面从隐藏变为可见时，恢复标题
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            document.title = originalPageTitle;
+        }
+    });
+}
+
+// 切换通知开关
+function toggleNotification() {
+    const checkbox = document.getElementById('notificationToggle');
+    notificationEnabled = checkbox.checked;
+    localStorage.setItem('notificationEnabled', notificationEnabled);
+
+    if (notificationEnabled && 'Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(perm => {
+            if (perm !== 'granted') {
+                notificationEnabled = false;
+                checkbox.checked = false;
+                localStorage.setItem('notificationEnabled', 'false');
+                showError('浏览器通知权限被拒绝，请在浏览器设置中允许通知');
+            }
+        });
+    }
+}
+
+// AI 回复完成时触发通知
+function notifyAiResponseDone(fullResponse) {
+    if (!notificationEnabled) return;
+
+    // 1. 页面标题提示（始终生效）
+    if (document.visibilityState === 'hidden') {
+        document.title = '💬 AI 已回复 - Spring AI Chat';
+    }
+
+    // 2. 浏览器桌面通知（仅页面不可见时）
+    if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+        const preview = fullResponse.length > 100 ? fullResponse.substring(0, 100) + '...' : fullResponse;
+        // 去除 Markdown 符号以获得纯文本预览
+        const plainPreview = preview.replace(/[#*`_~\[\]]/g, '');
+        const notification = new Notification('AI 回复完成', {
+            body: plainPreview,
+            icon: '/favicon.ico',
+            tag: 'ai-response', // 同一 tag 的通知会替换而非堆叠
+            silent: false
+        });
+        // 点击通知时聚焦页面
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+
+    // 3. 播放提示音（页面不可见时）
+    if (document.visibilityState === 'hidden') {
+        playNotificationSound();
+    }
+}
+
+// 使用 Web Audio API 播放提示音（无需外部音频文件）
+function playNotificationSound() {
+    try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // 第一个音符
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+        gain1.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain1.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(audioCtx.currentTime);
+        osc1.stop(audioCtx.currentTime + 0.3);
+
+        // 第二个音符（间隔0.15s，更高音）
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1108.73, audioCtx.currentTime + 0.15); // C#6
+        gain2.gain.setValueAtTime(0, audioCtx.currentTime);
+        gain2.gain.setValueAtTime(0.3, audioCtx.currentTime + 0.15);
+        gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.start(audioCtx.currentTime + 0.15);
+        osc2.stop(audioCtx.currentTime + 0.5);
+    } catch (e) {
+        console.warn('播放提示音失败:', e);
     }
 }
 

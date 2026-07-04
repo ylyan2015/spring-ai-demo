@@ -3,12 +3,15 @@ package com.github.ylyan2015.springaidemo.controller;
 import com.github.ylyan2015.springaidemo.entity.Conversation;
 import com.github.ylyan2015.springaidemo.entity.Message;
 import com.github.ylyan2015.springaidemo.service.ChatService;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,17 +63,18 @@ public class ChatController {
                 // 流结束时发送 done 事件并保存结果
                 .concatWith(Flux.defer(() -> {
                     try {
-                        chatService.saveStreamResult(
+                        Long messageId = chatService.saveStreamResult(
                                 streamResponse.getSessionId(),
                                 fullResponse.toString(),
                                 streamResponse.isFirstMessage(),
                                 streamResponse.getUserMessage(),
                                 streamResponse.getMessageOrder()
                         );
-                        // 发送包含上下文使用率的 done 事件
+                        // 发送包含上下文使用率和消息ID的 done 事件
                         String doneData = String.format(
-                                "{\"contextUsage\":%d}",
-                                streamResponse.getContextUsagePercent());
+                                "{\"contextUsage\":%d,\"messageId\":%d}",
+                                streamResponse.getContextUsagePercent(),
+                                messageId);
                         return Flux.just(ServerSentEvent.<String>builder()
                                 .event("done")
                                 .data(doneData)
@@ -235,6 +239,73 @@ public class ChatController {
         result.put("success", true);
         result.put("contextUsage", chatService.getContextUsagePercent(sessionId));
         return ResponseEntity.ok(result);
+    }
+
+   /**
+     * 导出单条消息为 Markdown 文件
+     *
+     * @param messageId 消息ID
+     * @return Markdown 文件下载
+     */
+    @GetMapping("/export-message/{messageId}")
+    public ResponseEntity<byte[]> exportMessage(@PathVariable Long messageId) {
+        Message msg = chatService.getMessage(messageId);
+        if (msg == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // 生成文件名：会话标题或"AI回答" + 时间戳
+        Conversation conv = chatService.getConversation(msg.getSessionId());
+        String baseName = conv != null && conv.getTitle() != null ? conv.getTitle() : "AI回答";
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+
+        StringBuilder md = new StringBuilder();
+        md.append("# ").append(baseName).append("\n\n");
+        md.append("> 导出时间：").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date())).append("\n\n");
+        md.append("---\n\n");
+        md.append(msg.getContent()).append("\n\n");
+
+        byte[] content = md.toString().getBytes(StandardCharsets.UTF_8);
+
+        String filename = baseName + "_" + timestamp + ".md";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/markdown;charset=UTF-8"));
+        headers.setContentDisposition(ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build());
+
+        return ResponseEntity.ok().headers(headers).body(content);
+    }
+
+    /**
+     * 导出当前会话的最新AI回答为 Markdown 文件
+     *
+     * @param sessionId 会话ID
+     * @return Markdown 文件下载
+     */
+    @GetMapping("/export-latest/{sessionId}")
+    public ResponseEntity<byte[]> exportLatestAnswer(@PathVariable String sessionId) {
+        Message msg = chatService.getLatestAssistantMessage(sessionId);
+        if (msg == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Conversation conv = chatService.getConversation(sessionId);
+        String baseName = conv != null && conv.getTitle() != null ? conv.getTitle() : "AI回答";
+        String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+
+        StringBuilder md = new StringBuilder();
+        md.append("# ").append(baseName).append("\n\n");
+        md.append("> 导出时间：").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date())).append("\n\n");
+        md.append("---\n\n");
+        md.append(msg.getContent()).append("\n\n");
+
+        byte[] content = md.toString().getBytes(StandardCharsets.UTF_8);
+
+        String filename = baseName + "_" + timestamp + ".md";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/markdown;charset=UTF-8"));
+        headers.setContentDisposition(ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build());
+
+        return ResponseEntity.ok().headers(headers).body(content);
     }
 
     /**

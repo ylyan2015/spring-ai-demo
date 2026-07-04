@@ -218,7 +218,7 @@ async function sendMessage() {
     autoResizeTextarea();
 
     // 创建流式消息气泡（带光标动画）
-    const assistantBubble = createStreamingBubble();
+    const { bubble: assistantBubble, timeEl: streamTimeEl } = createStreamingBubble();
     isStreaming = true;
     sendBtn.disabled = true;
 
@@ -272,14 +272,31 @@ async function sendMessage() {
                 } else if (eventType === 'done') {
                     // 流结束，移除光标动画
                     assistantBubble.classList.remove('streaming');
-                    // 解析上下文使用率
+                    let streamMessageId = null;
+                    // 解析上下文使用率和消息ID
                     try {
                         const doneInfo = JSON.parse(eventData);
                         if (doneInfo.contextUsage != null) {
                             contextUsage = doneInfo.contextUsage;
                             updateContextWarning();
                         }
+                        if (doneInfo.messageId != null) {
+                            streamMessageId = doneInfo.messageId;
+                        }
                     } catch(e) { /* 忽略解析错误 */ }
+                    // 为流式消息添加下载按钮
+                    if (streamMessageId && streamTimeEl) {
+                        const exportBtn = document.createElement('button');
+                        exportBtn.className = 'msg-export-btn';
+                        exportBtn.title = '下载此回答为 .md 文件';
+                        exportBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg> 下载`;
+                        exportBtn.onclick = function(e) { e.stopPropagation(); exportSingleMessage(streamMessageId, exportBtn); };
+                        streamTimeEl.appendChild(exportBtn);
+                    }
                     // AI 回复完成，发送通知
                     notifyAiResponseDone(fullResponse);
                 } else if (eventType === 'error') {
@@ -437,7 +454,7 @@ function createStreamingBubble() {
     messageDiv.appendChild(time);
     messagesContainer.appendChild(messageDiv);
     scrollToBottom();
-    return bubble;
+    return { bubble, timeEl: time };
 }
 
 // 配置 marked.js + highlight.js
@@ -474,7 +491,7 @@ function renderFinalMarkdown(text) {
 }
 
 // 添加消息到UI
-function addMessageToUI(role, content) {
+function addMessageToUI(role, content, messageId) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message message-${role}`;
     const bubble = document.createElement('div');
@@ -489,6 +506,19 @@ function addMessageToUI(role, content) {
     time.textContent = formatTime(new Date());
     messageDiv.appendChild(bubble);
     messageDiv.appendChild(time);
+    // 为AI消息添加下载按钮
+    if (role === 'assistant' && messageId) {
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'msg-export-btn';
+        exportBtn.title = '下载此回答为 .md 文件';
+        exportBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg> 下载`;
+        exportBtn.onclick = function(e) { e.stopPropagation(); exportSingleMessage(messageId, exportBtn); };
+        time.appendChild(exportBtn);
+    }
     messagesContainer.appendChild(messageDiv);
     scrollToBottom();
 }
@@ -523,7 +553,7 @@ async function loadMessageHistory(sessionId) {
         clearMessages();
         if (data.messages && data.messages.length > 0) {
             hideWelcomeScreen();
-            data.messages.forEach(msg => addMessageToUI(msg.role, msg.content));
+            data.messages.forEach(msg => addMessageToUI(msg.role, msg.content, msg.id));
         } else {
             showWelcomeScreen();
         }
@@ -998,5 +1028,130 @@ async function deleteRagDocument(docId) {
     } catch (e) {
         console.error('删除文档失败:', e);
         showError('删除失败，请重试');
+    }
+}
+
+// ==================== 导出 Markdown 功能 ====================
+
+/**
+ * 通用文件下载函数
+ */
+async function downloadMdFromApi(url) {
+    let response;
+    try {
+        response = await fetch(url);
+    } catch (e) {
+        console.error('网络请求失败:', e);
+        showError('网络连接失败，请检查网络后重试');
+        return false;
+    }
+    if (!handleAuthResponse(response)) return false;
+    if (!response.ok) {
+        if (response.status === 400) {
+            showError('当前没有可导出的回答');
+        } else if (response.status === 404) {
+            showError('消息不存在或已被删除');
+        } else if (response.status >= 500) {
+            showError('服务器错误，请稍后重试');
+        } else {
+            showError('导出失败（' + response.status + '），请重试');
+        }
+        return false;
+    }
+    // 获取文件名
+    const disposition = response.headers.get('Content-Disposition');
+    let filename = 'AI回答.md';
+    if (disposition) {
+        const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s]+)|filename="?([^";]+)"?/);
+        if (match) {
+            try {
+                filename = decodeURIComponent(match[1] || match[2]);
+            } catch(e) {
+                filename = match[1] || match[2];
+            }
+        }
+    }
+    // 下载文件
+    try {
+        const blob = await response.blob();
+        if (!blob || blob.size === 0) {
+            showError('下载内容为空');
+            return false;
+        }
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        // 延迟清理，确保下载已触发
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        }, 200);
+        return true;
+    } catch (e) {
+        console.error('文件下载失败:', e);
+        showError('文件下载失败，请重试');
+        return false;
+    }
+}
+
+/**
+ * 导出当前会话的最新AI回答为 .md 文件
+ */
+async function exportLatestAnswer() {
+    if (!currentSessionId) {
+        showError('请先开始一个对话');
+        return;
+    }
+    const btn = document.getElementById('exportMdBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ 导出中...';
+    }
+    try {
+        const ok = await downloadMdFromApi(`/api/chat/export-latest/${currentSessionId}`);
+        if (ok) showSuccess('导出成功');
+    } catch (e) {
+        console.error('导出失败:', e);
+        showError('导出失败，请重试');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                导出当前回答
+            `;
+        }
+    }
+}
+
+/**
+ * 导出指定消息ID的AI回答为 .md 文件
+ */
+async function exportSingleMessage(messageId, btnEl) {
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '⏳';
+    }
+    try {
+        await downloadMdFromApi(`/api/chat/export-message/${messageId}`);
+    } catch (e) {
+        console.error('导出失败:', e);
+        showError('导出失败，请重试');
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg> 下载`;
+        }
     }
 }

@@ -162,9 +162,11 @@ public class ChatService {
 
     /**
      * 流完成后保存AI回复和更新会话标题
+     *
+     * @return 保存的消息ID
      */
     @Transactional
-    public void saveStreamResult(String sessionId, String fullResponse, boolean isFirstMessage, String userMessage, int messageOrder) {
+    public Long saveStreamResult(String sessionId, String fullResponse, boolean isFirstMessage, String userMessage, int messageOrder) {
         // 保存AI回复
         Message aiMsgEntity = new Message(sessionId, "assistant", fullResponse, messageOrder + 1);
         messageRepository.save(aiMsgEntity);
@@ -177,6 +179,8 @@ public class ChatService {
                 conversationRepository.save(conv);
             });
         }
+
+        return aiMsgEntity.getId();
     }
 
     /**
@@ -385,6 +389,51 @@ public class ChatService {
      */
     public List<Message> getConversationHistory(String sessionId) {
         return messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
+    }
+
+    /**
+     * 获取会话信息
+     *
+     * @param sessionId 会话ID
+     * @return 会话实体
+     */
+    public Conversation getConversation(String sessionId) {
+        return conversationRepository.findBySessionId(sessionId).orElse(null);
+    }
+
+    /**
+     * 根据ID获取消息（带所有权验证）
+     *
+     * @param messageId 消息ID
+     * @return 消息实体
+     */
+    public Message getMessage(Long messageId) {
+        Message msg = messageRepository.findById(messageId)
+                .orElseThrow(() -> new RuntimeException("消息不存在"));
+        // 验证会话所有权
+        Conversation conv = conversationRepository.findBySessionId(msg.getSessionId())
+                .orElseThrow(() -> new RuntimeException("会话不存在"));
+        Long userId = getCurrentUserId();
+        if (!conv.getUserId().equals(userId)) {
+            throw new RuntimeException("无权操作该消息");
+        }
+        return msg;
+    }
+
+    /**
+     * 获取会话中最后一条AI回复（当前回答）
+     *
+     * @param sessionId 会话ID
+     * @return 最后一条assistant消息，没有则返回null
+     */
+    public Message getLatestAssistantMessage(String sessionId) {
+        List<Message> messages = messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if ("assistant".equalsIgnoreCase(messages.get(i).getRole())) {
+                return messages.get(i);
+            }
+        }
+        return null;
     }
 
     /**

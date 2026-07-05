@@ -1,10 +1,10 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, Docker one-click deployment, and more.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, Docker one-click deployment, and more.
 
 ## Project Overview
 
-This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, ensuring data privacy and security.
+This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, AI image generation with multi-storage management, ensuring data privacy and security.
 
 ### ✨ Core Features
 
@@ -27,6 +27,9 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **Spring Boot Actuator** - Built-in health checks, metrics monitoring, and operational endpoints
 - ✅ **Docker One-Click Deployment** - Multi-stage image build + docker-compose orchestration for app and middleware, ready out of the box
 - ✅ **AI Response Notification** - Desktop notification + sound + page title badge, never miss a reply when switching tabs
+- ✅ **AI Image Generation** - Integrated with Alibaba Cloud Bailian Tongyi Wanxiang model (wan2.6-t2i), generate high-quality images from prompts
+- ✅ **Multi-Storage Support** - Unified storage abstraction layer, supports local storage / Alibaba Cloud OSS / MinIO / FastDFS with one-click switching
+- ✅ **Image Generation Records** - Generation records persisted in database, associated with users and chat sessions, supports history query
 
 ## Technology Stack
 
@@ -39,10 +42,12 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **PostgreSQL + PgVector** - Database + persistent vector storage
 - **H2 Database** - Lightweight embedded database (development mode)
 - **AI Models**: Ollama / OpenAI / DeepSeek (switchable)
+- **DashScope Tongyi Wanxiang** - AI image generation engine (wan2.6-t2i)
 - **Apache Tika** - Document parsing (RAG: supports TXT/PDF/MD and more)
 - **RSA + BCrypt** - Password encryption scheme
 - **Lombok** - Code simplification
 - **Spring Boot Actuator** - Operations monitoring
+- **Aliyun OSS SDK / MinIO SDK** - Multi-storage support
 - **Docker + docker-compose** - Containerized deployment and service orchestration
 - **Maven** - Build tool
 
@@ -63,7 +68,8 @@ Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other 
    - **Ollama** (local model) - Download from [https://ollama.com](https://ollama.com)
    - **OpenAI API Key** - Register at OpenAI
    - **DeepSeek API Key** - Register at DeepSeek
-4. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
+4. **(Optional) DashScope API Key** - For image generation, register at Alibaba Cloud Bailian Platform
+5. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
 ## Quick Start
 
@@ -78,7 +84,9 @@ cd spring-ai-demo
 
 # 2. Configure API Keys
 cp .env.example .env
-# Edit .env with your real DeepSeek / OpenAI API Keys
+# Edit .env with your real DeepSeek / OpenAI / DashScope API Keys
+
+# To use AI image generation, set DASHSCOPE_API_KEY (get from Alibaba Cloud Bailian Platform)
 
 # 3. Start all services
 docker compose up -d
@@ -224,11 +232,15 @@ spring-ai-demo/
 │   ├── config/
 │   │   ├── AiModelConfig.java          # AI model config (dual-mode vector store)
 │   │   ├── RsaKeyPairGenerator.java    # RSA key pair generator
-│   │   └── SecurityConfig.java         # Spring Security configuration
+│   │   ├── SecurityConfig.java         # Spring Security configuration
+│   │   ├── StorageConfig.java          # Storage service factory (local/oss/minio/fastdfs)
+│   │   ├── StorageProperties.java      # Storage configuration properties
+│   │   └── WebMvcConfig.java           # Web MVC config (static resource mapping for local storage)
 │   ├── controller/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
 │   │   ├── ChatController.java         # Chat controller (REST API + SSE)
 │   │   ├── DocumentController.java     # Knowledge base document controller
+│   │   ├── ImageController.java        # Image generation controller (REST API)
 │   │   ├── ModelController.java        # Model management (switch/param presets)
 │   │   ├── ModelService.java           # Model service (dynamic switch/presets)
 │   │   ├── PageController.java         # Page controller (Web routing)
@@ -237,19 +249,34 @@ spring-ai-demo/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
 │   │   ├── CaptchaService.java         # Captcha service
 │   │   ├── ChatService.java            # Chat service (business logic/compression)
+│   │   ├── ImageService.java           # Image generation service (DashScope API + storage)
 │   │   └── RagService.java             # RAG service (parse/vectorize/search)
 │   ├── entity/
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
+│   │   ├── ImageRecord.java            # Image generation record entity
 │   │   ├── Message.java                # Message entity
 │   │   ├── ModelParamPreset.java       # Model parameter preset entity
 │   │   ├── RagDocument.java            # RAG document metadata entity (persistent)
 │   │   └── User.java                   # User entity
+│   ├── exception/
+│   │   ├── ImageGenerationException.java # Image generation exception
+│   │   └── StorageException.java         # Storage exception
 │   └── repository/
 │       ├── ConversationRepository.java
+│       ├── ImageRecordRepository.java  # Image generation record data access
 │       ├── MessageRepository.java
 │       ├── ModelParamPresetRepository.java
 │       ├── RagDocumentRepository.java
 │       └── UserRepository.java
+├── src/main/java/com/github/ylyan2015/springaidemo/dto/
+│   ├── ImageGenerateRequest.java       # Image generation request DTO
+│   └── ImageGenerateResponse.java      # Image generation response DTO
+├── src/main/java/com/github/ylyan2015/springaidemo/storage/
+│   ├── StorageService.java             # Storage service interface (unified abstraction)
+│   ├── LocalStorageService.java        # Local storage implementation
+│   ├── OssStorageService.java          # Alibaba Cloud OSS implementation
+│   ├── MinioStorageService.java        # MinIO implementation
+│   └── FastDfsStorageService.java      # FastDFS implementation (skeleton)
 ├── src/main/resources/
 │   ├── static/css/chat.css             # Chat interface styles
 │   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown/Notifications)
@@ -300,6 +327,59 @@ rag:
   embedding-model: ollama    # Embedding provider: ollama (local) or openai
   store-type: memory         # Vector store: memory (testing) or pgvector (production)
 ```
+
+### Image Generation Configuration
+
+Uses Alibaba Cloud Bailian DashScope Tongyi Wanxiang model for image generation. Requires API Key:
+
+```yaml
+spring:
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-api-key}  # Get from Alibaba Cloud Bailian Platform
+```
+
+> **Get API Key**: Visit [Alibaba Cloud Bailian Platform](https://bailian.console.aliyun.com/) → Model Plaza → Tongyi Wanxiang → Get API Key
+
+**Image Generation Request Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `prompt` | string | Yes | - | Image description prompt |
+| `size` | string | No | `1024x1024` | Image size (e.g. 1024x1024, 720x1280) |
+| `n` | int | No | `1` | Number of images (1~4) |
+| `quality` | string | No | - | Image quality (standard/hd) |
+| `style` | string | No | - | Image style (realistic/illustration) |
+| `sessionId` | string | No | - | Associated chat session ID |
+
+### Storage Configuration
+
+Generated images are automatically transferred to the configured storage service. Supports four storage modes with one-click switching:
+
+```yaml
+storage:
+  type: local  # Storage type: local / oss / minio / fastdfs
+  local:
+    base-path: ./uploads     # Local file storage root
+    access-path: /images     # Local file access path prefix
+  oss:
+    endpoint: ${OSS_ENDPOINT:}
+    access-key-id: ${OSS_ACCESS_KEY:}
+    access-key-secret: ${OSS_SECRET:}
+    bucket-name: ${OSS_BUCKET:}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET:}
+    bucket-name: ${MINIO_BUCKET:ai-images}
+```
+
+| Storage Type | Config Value | Use Case |
+|-------------|-------------|----------|
+| Local | `local` (default) | Dev/testing, no external dependencies |
+| Alibaba Cloud OSS | `oss` | Production, highly available object storage |
+| MinIO | `minio` | Self-hosted object storage, S3-compatible |
+| FastDFS | `fastdfs` | Legacy distributed file system |
 
 #### RAG Storage Modes
 
@@ -410,6 +490,14 @@ spring:
 |----------|--------|-------------|
 | `/api/timezone` | GET | Get timezone and coordinates by IP |
 
+### Image Generation Endpoints (Login Required)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/image/generate` | POST | Generate image (Tongyi Wanxiang wan2.6-t2i + auto storage) |
+| `/api/image/records` | GET | Get all image generation records for current user |
+| `/api/image/records/{sessionId}` | GET | Get image generation records for a session |
+
 **For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
 ## Development Guide
@@ -487,6 +575,21 @@ Ensure the `.env` file has valid API Keys and Docker host networking is working:
 ```bash
 cat .env  # Confirm keys are not placeholders
 ```
+
+### 8. Image Generation Failed
+- Ensure `DASHSCOPE_API_KEY` is correctly configured (in `.env` or `application.yml`)
+- Ensure your Alibaba Cloud Bailian account has access to Tongyi Wanxiang and sufficient credits
+- Ensure network access to `dashscope.aliyuncs.com`
+- Check application logs for specific error messages
+
+### 9. Where are Generated Images Stored?
+By default, images are stored locally in the `./uploads/` directory, organized by date folders.
+Switch to Alibaba Cloud OSS, MinIO, or FastDFS by changing `storage.type`.
+Local images are accessible via the `/images/**` static resource mapping.
+
+### 10. How to View Image Generation History?
+- API: `GET /api/image/records` to get all records for the current user
+- Database: `SELECT * FROM image_records WHERE user_id = ? ORDER BY create_time DESC`
 
 ## References
 

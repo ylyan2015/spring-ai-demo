@@ -458,7 +458,109 @@ curl http://localhost:8080/api/timezone
 
 ---
 
-## 六、完整测试流程
+## 六、图像生成接口（需要登录）
+
+### 6.1 生成图像
+
+调用阿里云百炼通义万相模型（wan2.6-t2i）生成图像，自动转存到配置的存储服务。
+
+**请求：**
+```bash
+curl -X POST http://localhost:8080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "一只可爱的橘猫在阳光下打盹",
+    "size": "1024x1024",
+    "n": 1
+  }'
+```
+
+**请求参数：**
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `prompt` | string | 是 | - | 图像描述提示词 |
+| `size` | string | 否 | `1024x1024` | 图像尺寸（如 1024x1024、720x1280） |
+| `n` | int | 否 | `1` | 生成数量（1~4） |
+| `quality` | string | 否 | - | 图像质量（标准/高清） |
+| `style` | string | 否 | - | 图像风格（写实/插画等） |
+| `sessionId` | string | 否 | - | 关联到聊天会话的ID |
+
+**响应：**
+```json
+{
+  "success": true,
+  "message": "图像生成成功",
+  "data": {
+    "imageUrl": "/images/2026/07/05/uuid_filename.png",
+    "fileId": "2026/07/05/uuid_filename.png",
+    "fileName": "ai_image_1234567890.png",
+    "storageType": "local",
+    "prompt": "一只可爱的橘猫在阳光下打盹",
+    "fileSize": 102400,
+    "width": 1024,
+    "height": 1024,
+    "createTime": "2026-07-05T10:30:00",
+    "sessionId": null
+  }
+}
+```
+
+> **说明**：`imageUrl` 为可公开访问的图片地址（本地存储时通过 `/images/**` 静态资源映射）。
+> 需先配置 `DASHSCOPE_API_KEY` 环境变量或 `application.yml` 中的 `spring.ai.dashscope.api-key`。
+
+---
+
+### 6.2 获取图像生成历史
+
+**请求：**
+```bash
+curl http://localhost:8080/api/image/records
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "records": [
+    {
+      "id": 1,
+      "prompt": "一只可爱的橘猫在阳光下打盹",
+      "imageUrl": "/images/2026/07/05/uuid_filename.png",
+      "fileId": "2026/07/05/uuid_filename.png",
+      "fileName": "ai_image_1234567890.png",
+      "storageType": "local",
+      "fileSize": 102400,
+      "width": 1024,
+      "height": 1024,
+      "sessionId": null,
+      "createTime": "2026-07-05T10:30:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### 6.3 获取指定会话中的图像生成记录
+
+**请求：**
+```bash
+curl http://localhost:8080/api/image/records/your-session-id
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "records": [],
+  "count": 0
+}
+```
+
+---
+
+## 七、完整测试流程
 
 ### 步骤1：获取 RSA 公钥和验证码
 ```bash
@@ -519,9 +621,20 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
 curl -X DELETE http://localhost:8080/api/documents/doc-1
 ```
 
+### 步骤5：图像生成
+```bash
+# 生成图像（需先配置 DASHSCOPE_API_KEY）
+curl -X POST http://localhost:8080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"一只可爱的橘猫在阳光下打盹","size":"1024x1024","n":1}'
+
+# 查看图像生成历史
+curl http://localhost:8080/api/image/records
+```
+
 ---
 
-## 七、使用 Postman 测试
+## 八、使用 Postman 测试
 
 **环境变量：**
 - `base_url`: `http://localhost:8080`
@@ -553,10 +666,13 @@ curl -X DELETE http://localhost:8080/api/documents/doc-1
 | 20 | Get Presets | GET | `{{base_url}}/api/model/params` | - |
 | 21 | Save Preset | POST | `{{base_url}}/api/model/params/deepseek` | `{"temperature":0.8,"maxTokens":4096}` |
 | 22 | Get Timezone | GET | `{{base_url}}/api/timezone` | - |
+| 23 | Generate Image | POST | `{{base_url}}/api/image/generate` | `{"prompt":"一只可爱的橘猫","size":"1024x1024","n":1}` |
+| 24 | Get Image Records | GET | `{{base_url}}/api/image/records` | - |
+| 25 | Get Image Records By Session | GET | `{{base_url}}/api/image/records/{{session_id}}` | - |
 
 ---
 
-## 八、访问 H2 数据库控制台
+## 九、访问 H2 数据库控制台
 
 - URL: http://localhost:8080/h2-console
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
@@ -578,13 +694,45 @@ SELECT * FROM rag_document;
 
 -- 查看模型参数预设
 SELECT * FROM model_param_presets;
+
+-- 查看图像生成记录
+SELECT * FROM image_records ORDER BY create_time DESC;
 ```
 
 ---
 
-## 九、配置说明
+## 十、配置说明
 
-### 9.1 模型配置
+### 9.1 图像生成配置
+
+```yaml
+spring:
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-api-key}  # 阿里云百炼平台获取
+```
+
+### 9.2 存储配置
+
+```yaml
+storage:
+  type: local  # local / oss / minio / fastdfs
+  local:
+    base-path: ./uploads
+    access-path: /images
+  oss:
+    endpoint: ${OSS_ENDPOINT:}
+    access-key-id: ${OSS_ACCESS_KEY:}
+    access-key-secret: ${OSS_SECRET:}
+    bucket-name: ${OSS_BUCKET:}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET:}
+    bucket-name: ${MINIO_BUCKET:ai-images}
+```
+
+### 9.3 模型配置
 
 ```yaml
 spring:
@@ -592,7 +740,7 @@ spring:
     active: deepseek,openai,h2  # 可组合: ollama/openai/deepseek + h2/postgresql
 ```
 
-### 9.2 RAG 配置
+### 9.4 RAG 配置
 
 ```yaml
 rag:
@@ -603,7 +751,7 @@ rag:
     initialize-schema: true  # 自动创建表
 ```
 
-### 9.3 上下文长度配置
+### 9.5 上下文长度配置
 
 ```yaml
 chat:
@@ -612,7 +760,7 @@ chat:
 
 ---
 
-## 十、注意事项
+## 十一、注意事项
 
 1. **登录要求**：聊天和文档接口需要先登录，未登录返回 401/403
 2. **会话归属**：每个会话绑定创建用户，用户只能操作自己的会话
@@ -624,10 +772,12 @@ chat:
 8. **模型参数**：参数预设按用户和模型维度保存，切换模型时自动应用
 9. **文件上传**：最大 10MB，支持 TXT/PDF/MD 等格式
 10. **数据库持久化**：H2 文件模式存储在 `./data/chatdb.mv.db`
+11. **图像生成**：需配置 `DASHSCOPE_API_KEY`，图像自动转存到配置的存储服务
+12. **多存储切换**：通过 `storage.type` 配置切换本地/OSS/MinIO/FastDFS，无需修改业务代码
 
 ---
 
-## 十一、常见问题
+## 十二、常见问题
 
 **Q: 为什么聊天接口返回 401？**
 A: 需要先登录，调用 `/api/auth/login` 并确保 Cookie 被保存。
@@ -649,3 +799,13 @@ A: 保存后，该用户在该模型下的所有对话自动应用自定义参�
 
 **Q: RSA 公钥每次一样吗？**
 A: 不一样，每次启动应用重新生成。
+
+**Q: 图像生成时返回 500 错误？**
+A: 确认 DASHSCOPE_API_KEY 已正确配置且账户有调用额度。可在 `.env` 文件中设置。
+
+**Q: 生成的图片如何访问？**
+A: 本地存储模式下图片通过 `/images/日期/文件名` 访问（如 `/images/2026/07/05/uuid_filename.png`）。
+切换到 OSS/MinIO 后，`imageUrl` 会返回对应的云存储访问地址。
+
+**Q: 如何切换存储方式？**
+A: 修改 `application.yml` 中的 `storage.type` 配置：`local` → `oss` / `minio` / `fastdfs`，无需重启。

@@ -1,10 +1,10 @@
 # Spring AI Demo - 多模型智能聊天应用
 
-一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、Docker 一键部署等功能。
+一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、AI 图像生成（通义万相）、多存储服务、Docker 一键部署等功能。
 
 ## 项目概述
 
-本项目演示了如何在 Spring Boot 应用中集成 Spring AI 框架，并支持灵活切换不同的AI模型提供商，包括本地部署的 Ollama 模型和在线 API 服务（OpenAI、DeepSeek等）。同时提供完整的用户认证体系，聊天记录与用户绑定，RAG 知识库支持文档上传和上下文增强，保障数据隐私安全。
+本项目演示了如何在 Spring Boot 应用中集成 Spring AI 框架，并支持灵活切换不同的AI模型提供商，包括本地部署的 Ollama 模型和在线 API 服务（OpenAI、DeepSeek等）。同时提供完整的用户认证体系，聊天记录与用户绑定，RAG 知识库支持文档上传和上下文增强，AI 图像生成与多存储管理，保障数据隐私安全。
 
 ### ✨ 核心特性
 
@@ -27,6 +27,9 @@
 - ✅ **Spring Boot Actuator** - 内置健康检查、指标监控等运维端点
 - ✅ **Docker 一键部署** - 多阶段构建镜像 + docker-compose 编排应用和中间件，开箱即用
 - ✅ **AI 回复完成通知** - 浏览器桌面通知 + 提示音 + 页面标题徽标，切走页面也不错过回复
+- ✅ **AI 图像生成** - 集成阿里云百炼通义万相模型（wan2.6-t2i），通过提示词生成高品质图片
+- ✅ **多存储支持** - 统一存储抽象层，支持本地存储 / 阿里云OSS / MinIO / FastDFS 一键切换
+- ✅ **图像生成记录** - 生成记录持久化存储，关联用户与聊天会话，支持历史查询
 
 ## 技术栈
 
@@ -39,10 +42,12 @@
 - **PostgreSQL + PgVector** - 数据库 + 向量持久化存储
 - **H2 Database** - 轻量级嵌入式数据库（开发模式）
 - **AI Models**: Ollama / OpenAI / DeepSeek（支持切换）
+- **DashScope 通义万相** - AI 图像生成引擎（wan2.6-t2i）
 - **Apache Tika** - 文档解析（RAG: 支持 TXT/PDF/MD 等格式）
 - **RSA + BCrypt** - 密码加密方案
 - **Lombok** - 代码简化
 - **Spring Boot Actuator** - 运维监控
+- **Aliyun OSS SDK / MinIO SDK** - 多存储支持
 - **Docker + docker-compose** - 容器化部署与服务编排
 - **Maven** - 项目构建工具
 
@@ -63,7 +68,8 @@
    - **Ollama**（本地模型）- 从 [https://ollama.com](https://ollama.com) 下载并安装
    - **OpenAI API Key** - 注册 OpenAI 账号获取
    - **DeepSeek API Key** - 注册 DeepSeek 账号获取
-4. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
+4. **（可选）DashScope API Key** - 如需图像生成功能，注册阿里云百炼平台获取
+5. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
 
 ## 快速开始
 
@@ -78,7 +84,9 @@ cd spring-ai-demo
 
 # 2. 配置 API Key
 cp .env.example .env
-# 编辑 .env 文件，填入真实的 DeepSeek / OpenAI API Key
+# 编辑 .env 文件，填入真实的 DeepSeek / OpenAI / DashScope API Key
+
+# 如需使用 AI 图像生成功能，请设置 DASHSCOPE_API_KEY（阿里云百炼平台获取）
 
 # 3. 启动所有服务
 docker compose up -d
@@ -268,11 +276,15 @@ spring-ai-demo/
 │   ├── config/
 │   │   ├── AiModelConfig.java          # AI模型配置（向量存储双模式切换）
 │   │   ├── RsaKeyPairGenerator.java    # RSA密钥对生成器
-│   │   └── SecurityConfig.java         # Spring Security配置
+│   │   ├── SecurityConfig.java         # Spring Security配置
+│   │   ├── StorageConfig.java          # 存储服务工厂（local/oss/minio/fastdfs）
+│   │   ├── StorageProperties.java      # 存储配置属性
+│   │   └── WebMvcConfig.java           # Web MVC配置（本地存储静态资源映射）
 │   ├── controller/
 │   │   ├── AuthController.java         # 认证控制器（注册/登录/验证码）
 │   │   ├── ChatController.java         # 聊天控制器（REST API + SSE）
 │   │   ├── DocumentController.java     # 知识库文档管理控制器
+│   │   ├── ImageController.java        # 图像生成控制器（REST API）
 │   │   ├── ModelController.java        # 模型管理控制器（切换/参数预设）
 │   │   ├── ModelService.java           # 模型管理服务（动态切换/参数预设）
 │   │   ├── PageController.java         # 页面控制器（Web 路由）
@@ -281,19 +293,34 @@ spring-ai-demo/
 │   │   ├── AuthService.java            # 认证服务（注册/登录逻辑）
 │   │   ├── CaptchaService.java         # 验证码服务
 │   │   ├── ChatService.java            # 聊天服务（业务逻辑/上下文压缩）
+│   │   ├── ImageService.java           # 图像生成服务（调用DashScope + 转存存储）
 │   │   └── RagService.java             # RAG 服务（文档解析/向量化/检索）
 │   ├── entity/
 │   │   ├── Conversation.java           # 会话实体（绑定userId）
+│   │   ├── ImageRecord.java            # 图像生成记录实体
 │   │   ├── Message.java                # 消息实体
 │   │   ├── ModelParamPreset.java       # 模型参数预设实体
 │   │   ├── RagDocument.java            # RAG 文档元信息实体（持久化）
 │   │   └── User.java                   # 用户实体
-│   └── repository/
+│   ├── exception/
+│   │   ├── ImageGenerationException.java # 图像生成异常
+│   │   └── StorageException.java         # 存储异常
+│   ├── repository/
 │       ├── ConversationRepository.java # 会话数据访问
+│       ├── ImageRecordRepository.java  # 图像生成记录数据访问
 │       ├── MessageRepository.java      # 消息数据访问
 │       ├── ModelParamPresetRepository.java # 参数预设数据访问
 │       ├── RagDocumentRepository.java  # RAG 文档元信息数据访问
 │       └── UserRepository.java         # 用户数据访问
+├── src/main/java/com/github/ylyan2015/springaidemo/dto/
+│   ├── ImageGenerateRequest.java       # 图像生成请求DTO
+│   └── ImageGenerateResponse.java      # 图像生成响应DTO
+├── src/main/java/com/github/ylyan2015/springaidemo/storage/
+│   ├── StorageService.java             # 存储服务接口（统一抽象层）
+│   ├── LocalStorageService.java        # 本地存储实现
+│   ├── OssStorageService.java          # 阿里云OSS存储实现
+│   ├── MinioStorageService.java        # MinIO存储实现
+│   └── FastDfsStorageService.java      # FastDFS存储实现（骨架代码）
 ├── src/main/resources/
 │   ├── static/
 │   │   ├── css/
@@ -458,10 +485,63 @@ H2 使用文件持久化模式，数据保存在 `./data/chatdb.mv.db` 文件中
 - **用户名**：`sa`
 - **密码**：(留空)
 
+### 图像生成配置
+
+通过阿里云百炼 DashScope 通义万相模型生成图像，需配置 API Key：
+
+```yaml
+spring:
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-api-key}  # 从阿里云百炼平台获取
+```
+
+> **获取 API Key**：登录 [阿里云百炼平台](https://bailian.console.aliyun.com/) → 模型广场 → 通义万相 → 获取 API Key
+
+**图像生成请求参数：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `prompt` | string | 是 | - | 图像描述提示词 |
+| `size` | string | 否 | `1024x1024` | 图像尺寸（如 1024x1024、720x1280） |
+| `n` | int | 否 | `1` | 生成数量（1~4） |
+| `quality` | string | 否 | - | 图像质量（标准/高清） |
+| `style` | string | 否 | - | 图像风格（写实/插画等） |
+| `sessionId` | string | 否 | - | 关联聊天会话ID |
+
+### 存储配置
+
+图像生成后自动转存到配置的存储服务，支持四种存储方式一键切换：
+
+```yaml
+storage:
+  type: local  # 存储类型：local（本地）/ oss（阿里云OSS）/ minio（MinIO）/ fastdfs（FastDFS）
+  local:
+    base-path: ./uploads     # 本地文件存储根目录
+    access-path: /images     # 本地文件访问路径前缀
+  oss:
+    endpoint: ${OSS_ENDPOINT:}
+    access-key-id: ${OSS_ACCESS_KEY:}
+    access-key-secret: ${OSS_SECRET:}
+    bucket-name: ${OSS_BUCKET:}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET:}
+    bucket-name: ${MINIO_BUCKET:ai-images}
+```
+
+| 存储类型 | 配置值 | 适用场景 |
+|----------|--------|----------|
+| 本地存储 | `local`（默认） | 开发/测试，无需外部依赖 |
+| 阿里云OSS | `oss` | 生产环境，高可用对象存储 |
+| MinIO | `minio` | 自建对象存储，兼容S3 |
+| FastDFS | `fastdfs` | 传统分布式文件系统 |
+
 ### 完整配置示例
 
 #### 示例1：Ollama + H2（本地开发）
-```yaml
+```
 spring:
   profiles:
     active: ollama,h2
@@ -470,14 +550,14 @@ rag:
 ```
 
 #### 示例2：DeepSeek + OpenAI + H2（在线模式开发）
-```yaml
+```
 spring:
   profiles:
     active: deepseek,openai,h2
 ```
 
 #### 示例3：DeepSeek + PostgreSQL（生产部署）
-```yaml
+```
 spring:
   profiles:
     active: deepseek,openai,postgresql
@@ -488,7 +568,7 @@ rag:
 ```
 
 #### 示例4：Docker 部署（docker-compose 自动激活）
-```yaml
+```
 # application-docker.yml 自动包含以下 profile
 spring:
   profiles:
@@ -548,7 +628,13 @@ spring:
 |------|------|------|
 | `/api/timezone` | GET | 根据IP获取时区和经纬度 |
 
-**详细 API 文档和示例请参考：** [API_TEST.md](API_TEST.md)
+### 图像生成接口（需要登录）
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/image/generate` | POST | 生成图像（通义万相wan2.6-t2i + 自动存储） |
+| `/api/image/records` | GET | 获取当前用户的所有图像生成记录 |
+| `/api/image/records/{sessionId}` | GET | 获取指定会话中的图像生成记录 |
 
 ## 开发指南
 
@@ -661,6 +747,23 @@ COPY settings.xml /root/.m2/settings.xml
 ```bash
 cat .env  # 确认 API Key 非占位符
 ```
+
+### 10. 图像生成失败怎么办？
+
+- 确认已正确配置 `DASHSCOPE_API_KEY`（在 `.env` 或 `application.yml` 中）
+- 确认阿里云百炼账户有通义万相的调用权限和余额
+- 确认网络可以访问 `dashscope.aliyuncs.com`
+- 检查应用日志中是否有具体的错误信息
+
+### 11. 生成的图片存储在哪里？
+
+默认存储在本地 `./uploads/` 目录下，按日期分文件夹存储。可通过 `storage.type` 配置切换为
+阿里云OSS、MinIO 或 FastDFS。本地存储的图片通过静态资源映射 `/images/**` 访问。
+
+### 12. 如何查看图像生成历史记录？
+
+- API：`GET /api/image/records` 获取当前用户的所有历史记录
+- 数据库：`SELECT * FROM image_records WHERE user_id = ? ORDER BY create_time DESC`
 
 ## 参考资料
 

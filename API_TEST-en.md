@@ -421,7 +421,109 @@ curl http://localhost:8080/api/timezone
 
 ---
 
-## VI. Complete Testing Workflow
+## VI. Image Generation Endpoints (Login Required)
+
+### 6.1 Generate Image
+
+Calls Alibaba Cloud Bailian Tongyi Wanxiang model (wan2.6-t2i) to generate images, automatically saved to the configured storage service.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "A cute orange cat napping in the sun",
+    "size": "1024x1024",
+    "n": 1
+  }'
+```
+
+**Request Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `prompt` | string | Yes | - | Image description prompt |
+| `size` | string | No | `1024x1024` | Image size (e.g. 1024x1024, 720x1280) |
+| `n` | int | No | `1` | Number of images (1~4) |
+| `quality` | string | No | - | Image quality (standard/hd) |
+| `style` | string | No | - | Image style (realistic/illustration) |
+| `sessionId` | string | No | - | Associated chat session ID |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Image generated successfully",
+  "data": {
+    "imageUrl": "/images/2026/07/05/uuid_filename.png",
+    "fileId": "2026/07/05/uuid_filename.png",
+    "fileName": "ai_image_1234567890.png",
+    "storageType": "local",
+    "prompt": "A cute orange cat napping in the sun",
+    "fileSize": 102400,
+    "width": 1024,
+    "height": 1024,
+    "createTime": "2026-07-05T10:30:00",
+    "sessionId": null
+  }
+}
+```
+
+> **Note**: `imageUrl` is a publicly accessible image URL (via `/images/**` static resource mapping for local storage).
+> Requires `DASHSCOPE_API_KEY` environment variable or `spring.ai.dashscope.api-key` in `application.yml`.
+
+---
+
+### 6.2 Get Image Generation History
+
+**Request:**
+```bash
+curl http://localhost:8080/api/image/records
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "records": [
+    {
+      "id": 1,
+      "prompt": "A cute orange cat napping in the sun",
+      "imageUrl": "/images/2026/07/05/uuid_filename.png",
+      "fileId": "2026/07/05/uuid_filename.png",
+      "fileName": "ai_image_1234567890.png",
+      "storageType": "local",
+      "fileSize": 102400,
+      "width": 1024,
+      "height": 1024,
+      "sessionId": null,
+      "createTime": "2026-07-05T10:30:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### 6.3 Get Image Generation Records by Session
+
+**Request:**
+```bash
+curl http://localhost:8080/api/image/records/your-session-id
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "records": [],
+  "count": 0
+}
+```
+
+---
+
+## VII. Complete Testing Workflow
 
 ### Step 1: Get RSA public key and captcha
 ```bash
@@ -481,6 +583,17 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
 curl -X DELETE http://localhost:8080/api/documents/doc-1
 ```
 
+### Step 5: Image Generation
+```bash
+# Generate image (requires DASHSCOPE_API_KEY configured)
+curl -X POST http://localhost:8080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"A cute orange cat napping in the sun","size":"1024x1024","n":1}'
+
+# View image generation history
+curl http://localhost:8080/api/image/records
+```
+
 ---
 
 ## VII. Testing with Postman
@@ -515,6 +628,9 @@ curl -X DELETE http://localhost:8080/api/documents/doc-1
 | 20 | Get Presets | GET | `{{base_url}}/api/model/params` | - |
 | 21 | Save Preset | POST | `{{base_url}}/api/model/params/deepseek` | `{"temperature":0.8,"maxTokens":4096}` |
 | 22 | Get Timezone | GET | `{{base_url}}/api/timezone` | - |
+| 23 | Generate Image | POST | `{{base_url}}/api/image/generate` | `{"prompt":"A cute cat","size":"1024x1024","n":1}` |
+| 24 | Get Image Records | GET | `{{base_url}}/api/image/records` | - |
+| 25 | Get Image Records By Session | GET | `{{base_url}}/api/image/records/{{session_id}}` | - |
 
 ---
 
@@ -540,13 +656,45 @@ SELECT * FROM rag_document;
 
 -- View model parameter presets
 SELECT * FROM model_param_presets;
+
+-- View image generation records
+SELECT * FROM image_records ORDER BY create_time DESC;
 ```
 
 ---
 
 ## IX. Configuration Guide
 
-### 9.1 Model Configuration
+### 9.1 Image Generation Configuration
+
+```yaml
+spring:
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-api-key}  # Get from Alibaba Cloud Bailian Platform
+```
+
+### 9.2 Storage Configuration
+
+```yaml
+storage:
+  type: local  # local / oss / minio / fastdfs
+  local:
+    base-path: ./uploads
+    access-path: /images
+  oss:
+    endpoint: ${OSS_ENDPOINT:}
+    access-key-id: ${OSS_ACCESS_KEY:}
+    access-key-secret: ${OSS_SECRET:}
+    bucket-name: ${OSS_BUCKET:}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET:}
+    bucket-name: ${MINIO_BUCKET:ai-images}
+```
+
+### 9.3 Model Configuration
 
 ```yaml
 spring:
@@ -554,7 +702,7 @@ spring:
     active: deepseek,openai,h2  # Combine: ollama/openai/deepseek + h2/postgresql
 ```
 
-### 9.2 RAG Configuration
+### 9.4 RAG Configuration
 
 ```yaml
 rag:
@@ -565,7 +713,7 @@ rag:
     initialize-schema: true  # auto-create tables
 ```
 
-### 9.3 Context Length
+### 9.5 Context Length
 
 ```yaml
 chat:
@@ -586,6 +734,8 @@ chat:
 8. **Model Presets**: Saved per-user per-model, auto-applied during conversations
 9. **File Upload**: Max 10MB, supports TXT/PDF/MD formats
 10. **Database Persistence**: H2 file mode stored in `./data/chatdb.mv.db`
+11. **Image Generation**: Requires `DASHSCOPE_API_KEY` configuration, images auto-stored to configured storage service
+12. **Multi-Storage Switching**: Switch between local/OSS/MinIO/FastDFS via `storage.type`, no code changes needed
 
 ---
 
@@ -611,3 +761,13 @@ A: Once saved, custom parameters auto-apply to all conversations with that model
 
 **Q: Is the RSA public key the same every time?**
 A: No, the RSA key pair is regenerated on each application startup.
+
+**Q: Image generation returns 500 error?**
+A: Ensure `DASHSCOPE_API_KEY` is correctly configured and your account has sufficient credits. Set it in the `.env` file.
+
+**Q: How to access the generated images?**
+A: In local storage mode, images are accessible via `/images/date/filename` (e.g. `/images/2026/07/05/uuid_filename.png`).
+When switched to OSS/MinIO, `imageUrl` returns the corresponding cloud storage access address.
+
+**Q: How to switch storage type?**
+A: Change `storage.type` in `application.yml`: `local` → `oss` / `minio` / `fastdfs`. No restart required.

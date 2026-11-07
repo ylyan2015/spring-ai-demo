@@ -30,10 +30,11 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/", "/login", "/css/**", "/js/**", "/test-timezone.html",
+                    "/", "/login", "/video-studio", "/css/**", "/js/**", "/test-timezone.html",
                     "/api/auth/**",
                     "/api/model/**",
                     "/api/timezone/**",
+                    "/api/video/**",
                     "/actuator/**",
                     "/h2-console/**"
                 ).permitAll()

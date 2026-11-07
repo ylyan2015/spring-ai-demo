@@ -36,4 +36,16 @@ public class PageController {
         }
         return "login";
     }
+
+    /**
+     * AI 短视频工作室页面
+     */
+    @GetMapping("/video-studio")
+    public String videoStudio() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            return "redirect:/login";
+        }
+        return "video-studio";
+    }
 }

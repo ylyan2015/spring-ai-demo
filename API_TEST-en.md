@@ -523,7 +523,307 @@ curl http://localhost:8080/api/image/records/your-session-id
 
 ---
 
-## VII. Complete Testing Workflow
+## VII. AI Short Video Studio Endpoints (Login Required)
+
+Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Image Generation (SSE progress) → Quick Preview / BGM Scoring / Multi-Ratio HD Export**
+
+Frontend page: http://localhost:8080/video-studio
+
+> Video composition requires FFmpeg (including ffprobe). Narration requires Edge TTS (`pip install edge-tts`; automatically skipped when not installed).
+
+### 7.1 Generate Storyboard Script
+
+Generates a multi-shot storyboard from a creative idea via LLM and persists it:
+
+```bash
+curl -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "A heartwarming story about a ginger cat's daily life"}'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "title": "A Ginger Cat's Day",
+    "theme": "Heartwarming",
+    "status": "DRAFT",
+    "shots": [
+      {
+        "id": 11, "shotOrder": 1,
+        "sceneDescription": "Morning sunlight streams through the window, a ginger cat curled up asleep on a blanket",
+        "cameraMovement": "Slow push-in", "durationSeconds": 5,
+        "narration": "The first ray of morning sunlight",
+        "imagePrompt": "A ginger cat sleeping on a blanket in morning sunlight...",
+        "imageUrl": null, "imageStatus": "PENDING"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 7.2 Script List / Detail / Update / Delete
+
+```bash
+# List scripts (current user's only)
+curl http://localhost:8080/api/video/scripts
+
+# Script detail (with all shots)
+curl http://localhost:8080/api/video/scripts/1
+
+# Rename
+curl -X PUT http://localhost:8080/api/video/scripts/1 \
+  -H "Content-Type: application/json" \
+  -d '{"title": "New Title"}'
+
+# Delete script (with shots)
+curl -X DELETE http://localhost:8080/api/video/scripts/1
+```
+
+**List response:**
+```json
+{ "success": true, "data": [ { "id": 1, "title": "A Ginger Cat's Day", "shotCount": 5, "status": "DRAFT" } ] }
+```
+
+---
+
+### 7.3 Shot Management (CRUD / Reorder)
+
+```bash
+# Add shot (appended at the end)
+curl -X POST http://localhost:8080/api/video/scripts/1/shots \
+  -H "Content-Type: application/json" \
+  -d '{"sceneDescription":"New shot","narration":"","imagePrompt":"","cameraMovement":"Static","durationSeconds":5}'
+
+# Update shot (any fields; changing imagePrompt auto-clears the old image and resets to PENDING)
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/11 \
+  -H "Content-Type: application/json" \
+  -d '{"durationSeconds": 6, "narration": "Updated narration"}'
+
+# Delete shot
+curl -X DELETE http://localhost:8080/api/video/scripts/1/shots/11
+
+# Drag-sort shots (shotIds is the full ordered ID list)
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/reorder \
+  -H "Content-Type: application/json" \
+  -d '{"shotIds": [13, 11, 12]}'
+```
+
+> Note: when imagePrompt changes, the server automatically clears imageUrl/imageFileId and resets imageStatus to PENDING; images must be regenerated.
+
+---
+
+### 7.4 Prompt Enhancement (8 Visual Styles)
+
+```bash
+# Get style list
+curl http://localhost:8080/api/video/enhance-prompt/styles
+
+# Enhance a single prompt (Chinese scene description → high-quality English prompt)
+curl -X POST http://localhost:8080/api/video/enhance-prompt \
+  -H "Content-Type: application/json" \
+  -d '{"sceneDescription": "A ginger cat lounging on a windowsill at sunset", "style": "CINEMATIC_REALISM"}'
+
+# Batch enhance all shots' prompts (calls LLM per shot; time-consuming)
+curl -X POST http://localhost:8080/api/video/enhance-prompt/script/1 \
+  -H "Content-Type: application/json" \
+  -d '{"style": "ANIME"}'
+```
+
+**Styles:** `CINEMATIC_REALISM`, `ANIME`, `WATERCOLOR`, `CYBERPUNK`, `PIXAR_3D`, `VINTAGE`, `CHINESE_PAINTING`, `FANTASY` (Chinese names also accepted).
+
+**Single enhancement response:**
+```json
+{
+  "success": true,
+  "data": {
+    "enhancedPrompt": "A ginger cat lounging on a windowsill at golden hour, warm cinematic lighting...",
+    "negativePrompt": "text, watermark, blurry, low quality",
+    "style": "CINEMATIC_REALISM",
+    "styleName": "Cinematic Realism"
+  }
+}
+```
+
+---
+
+### 7.5 Image Generation (Single / Batch SSE / Generator Management)
+
+```bash
+# Generate image for a single shot (style optional; local SD generator appends negative prompt)
+curl -X POST http://localhost:8080/api/video/images/shot/1/11 \
+  -H "Content-Type: application/json" \
+  -d '{"style": "CINEMATIC_REALISM"}'
+
+# List image generators (with availability detection)
+curl http://localhost:8080/api/video/images/generators
+
+# Switch generator at runtime (type: dashscope / local)
+curl -X PUT "http://localhost:8080/api/video/images/generator?type=local"
+```
+
+**Batch parallel generation (SSE; native EventSource supports GET only):**
+
+```
+GET /api/video/images/script/1/stream?style=CINEMATIC_REALISM
+Accept: text/event-stream
+```
+
+**SSE event types:**
+
+| Event | data payload |
+|-------|--------------|
+| `START` | `{totalShots, message}` |
+| `SHOT_START` | `{shotId, shotOrder, currentShotIndex, message}` |
+| `SHOT_COMPLETE` | `{shotId, imageUrl, completedShots, failedShots, totalShots}` |
+| `SHOT_FAILED` | `{shotId, completedShots, failedShots, message}` |
+| `COMPLETE` | `{completedShots, failedShots, message}` |
+| `ERROR` | `{message}` |
+
+> Parallelism is controlled by `image.generation.parallelism` (default 3); failures retry automatically (`image.generation.retry-attempts`).
+
+---
+
+### 7.6 Video Preview & Export
+
+```bash
+# 480p quick preview (low resolution + watermark, fast turnaround)
+curl -X POST http://localhost:8080/api/video/export/preview \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "aspectRatio": "16:9", "bgmId": null, "subtitle": true}'
+
+# HD export (720p/1080p, optional BGM and subtitle burning)
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true}'
+
+# Export history (with failure reasons, re-downloadable)
+curl http://localhost:8080/api/video/exports/1
+```
+
+**Request parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `scriptId` | long | Yes | - | Script ID |
+| `resolution` | string | No | `720p` | HD export resolution (720p/1080p); preview is fixed 480p |
+| `aspectRatio` | string | No | `16:9` | Aspect ratio (16:9 / 9:16 / 1:1) |
+| `bgmId` | long | No | null | BGM to use; null means no music |
+| `subtitle` | boolean | No | false | Burn subtitles into frames (automatically ignored when no narration) |
+
+**Resolution × ratio → output size:**
+
+| Resolution \ Ratio | 16:9 Landscape (Bilibili) | 9:16 Portrait (TikTok) | 1:1 Square (Xiaohongshu) |
+|--------------------|---------------------------|------------------------|-------------------------|
+| 480p (preview) | 854x480 | 480x854 | 480x480 |
+| 720p | 1280x720 | 720x1280 | 720x720 |
+| 1080p | 1920x1080 | 1080x1920 | 1080x1080 |
+
+> - All shots must be in READY state before exporting
+> - Preview adds a semi-transparent "PREVIEW" watermark with crf 28; formal exports have no watermark with crf 23
+> - Script status automatically becomes EXPORTED after a successful HD export
+> - Pipeline: image download → Ken Burns + xfade → Edge TTS narration (if available) → BGM mixing (optional: 15% volume + 2s fade-in / 3s fade-out) → subtitle burning (optional) → storage
+
+**Response (data.video):**
+```json
+{
+  "videoUrl": "/images/2026/11/07/video_1730966400000.mp4",
+  "fileSizeBytes": 2512345,
+  "width": 1080, "height": 1920,
+  "totalDuration": 21,
+  "hasNarration": true, "hasAudio": true, "hasBgm": true, "hasSubtitle": true
+}
+```
+
+---
+
+### 7.7 BGM Management (Library / AI Recommendation / Upload)
+
+```bash
+# BGM list (built-in + current user's uploads; filter with ?category=happy)
+curl http://localhost:8080/api/video/bgm
+
+# AI-recommend BGM (LLM analyzes theme sentiment and matches a category track)
+curl "http://localhost:8080/api/video/bgm/recommend?theme=heartwarming%20cat%20daily%20life"
+
+# Upload custom BGM (mp3/wav/ogg/m4a/flac)
+curl -X POST http://localhost:8080/api/video/bgm/upload \
+  -F "file=@./my-music.mp3" \
+  -F "name=My Score" \
+  -F "category=happy"
+```
+
+**Recommendation response:**
+```json
+{
+  "success": true,
+  "data": {
+    "category": "calm",
+    "reason": "A heartwarming cat story suits calm, soothing music",
+    "available": true,
+    "bgm": { "id": 2, "name": "peaceful piano", "category": "calm", "durationSeconds": 60 }
+  }
+}
+```
+
+> **Built-in music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/`
+> (e.g. `happy__sunny_morning.mp3`); auto-registered on startup. Categories: `happy` / `sad` / `epic` / `calm` / `tense`.
+
+---
+
+### 7.8 Subtitle System (SRT Export / Preview)
+
+Auto-generates timed subtitles from shot narrations (timeline precisely aligned with xfade transitions: switching at transition midpoints, adjacent cues seamless and non-overlapping):
+
+```bash
+# Generate SRT subtitle file (uploaded to storage + content returned, ready for social platforms)
+curl -X POST http://localhost:8080/api/video/subtitle/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1}'
+
+# Render a single-frame subtitle preview image (first shot image + target ratio + first cue)
+curl -X POST http://localhost:8080/api/video/subtitle/preview \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "aspectRatio": "9:16", "style": {"fontSize": 28, "position": "bottom"}}'
+```
+
+**generate response:**
+```json
+{
+  "success": true,
+  "data": {
+    "srtUrl": "/images/2026/11/07/script_1_subtitle_1730966400000.srt",
+    "srtContent": "1\n00:00:00,000 --> 00:00:03,600\nThe first ray of morning sunlight\n\n...",
+    "cueCount": 5
+  }
+}
+```
+
+**preview optional style parameters:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `fontName` | string | `Microsoft YaHei` (configurable via `video.subtitle.font-name`) | Font name, must be installed |
+| `fontSize` | int | `24` | Font size (1280x720 coordinate system, auto-scaled) |
+| `fontColor` | string | `#FFFFFF` | Font color (#RRGGBB) |
+| `outlineColor` | string | `#000000` | Outline color |
+| `outlineWidth` | int | `2` | Outline width (pixels) |
+| `position` | string | `bottom` | Position: `bottom` / `center` / `top` |
+
+**preview response:**
+```json
+{ "success": true, "data": { "previewUrl": "/images/2026/11/07/subtitle_preview_1730966400000.png", "width": 720, "height": 1280 } }
+```
+
+> Subtitle burning happens during export (the `subtitle` parameter in 7.6, FFmpeg subtitles filter + libass); the frontend workflow also provides a "Burn Subtitles" toggle plus "Export SRT" and "Subtitle Preview" buttons.
+
+---
+
+## VIII. Complete Testing Workflow
 
 ### Step 1: Get RSA public key and captcha
 ```bash
@@ -594,9 +894,38 @@ curl -X POST http://localhost:8080/api/image/generate \
 curl http://localhost:8080/api/image/records
 ```
 
+### Step 6: AI Short Video Workflow (full pipeline)
+```bash
+# 1. Generate storyboard script
+SCRIPT_ID=$(curl -s -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea":"A heartwarming story about a ginger cat"}' | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+
+# 2. Batch enhance prompts (optional, time-consuming)
+curl -X POST http://localhost:8080/api/video/enhance-prompt/script/$SCRIPT_ID \
+  -H "Content-Type: application/json" -d '{"style":"CINEMATIC_REALISM"}'
+
+# 3. Batch parallel image generation (SSE real-time progress)
+curl -N "http://localhost:8080/api/video/images/script/$SCRIPT_ID/stream?style=CINEMATIC_REALISM"
+
+# 4. 480p quick preview
+curl -X POST http://localhost:8080/api/video/export/preview \
+  -H "Content-Type: application/json" \
+  -d "{\"scriptId\":$SCRIPT_ID,\"aspectRatio\":\"16:9\",\"bgmId\":null}"
+
+# 5. HD export (optional BGM)
+BGM_ID=$(curl -s "http://localhost:8080/api/video/bgm" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d "{\"scriptId\":$SCRIPT_ID,\"resolution\":\"1080p\",\"aspectRatio\":\"16:9\",\"bgmId\":$BGM_ID}"
+
+# 6. View export history
+curl http://localhost:8080/api/video/exports/$SCRIPT_ID
+```
+
 ---
 
-## VII. Testing with Postman
+## IX. Testing with Postman
 
 **Environment Variables:**
 - `base_url`: `http://localhost:8080`
@@ -631,10 +960,23 @@ curl http://localhost:8080/api/image/records
 | 23 | Generate Image | POST | `{{base_url}}/api/image/generate` | `{"prompt":"A cute cat","size":"1024x1024","n":1}` |
 | 24 | Get Image Records | GET | `{{base_url}}/api/image/records` | - |
 | 25 | Get Image Records By Session | GET | `{{base_url}}/api/image/records/{{session_id}}` | - |
+| 26 | Generate Story Script | POST | `{{base_url}}/api/video/scripts/generate` | `{"idea":"A heartwarming cat story"}` |
+| 27 | List Video Scripts | GET | `{{base_url}}/api/video/scripts` | - |
+| 28 | Get Script Detail | GET | `{{base_url}}/api/video/scripts/{{script_id}}` | - |
+| 29 | Enhance Prompt | POST | `{{base_url}}/api/video/enhance-prompt` | `{"sceneDescription":"A cat at sunset","style":"CINEMATIC_REALISM"}` |
+| 30 | Enhance Script Prompts | POST | `{{base_url}}/api/video/enhance-prompt/script/{{script_id}}` | `{"style":"ANIME"}` |
+| 31 | Generate Shot Image | POST | `{{base_url}}/api/video/images/shot/{{script_id}}/{{shot_id}}` | `{"style":"CINEMATIC_REALISM"}` |
+| 32 | Batch Images (SSE) | GET | `{{base_url}}/api/video/images/script/{{script_id}}/stream?style=CINEMATIC_REALISM` | - |
+| 33 | List BGM | GET | `{{base_url}}/api/video/bgm` | - |
+| 34 | Export Preview | POST | `{{base_url}}/api/video/export/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
+| 35 | Export HD | POST | `{{base_url}}/api/video/export/hd` | `{"scriptId":1,"resolution":"1080p","aspectRatio":"9:16","bgmId":1}` |
+| 36 | Export History | GET | `{{base_url}}/api/video/exports/{{script_id}}` | - |
+| 37 | Generate SRT | POST | `{{base_url}}/api/video/subtitle/generate` | `{"scriptId":1}` |
+| 38 | Subtitle Preview | POST | `{{base_url}}/api/video/subtitle/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
 
 ---
 
-## VIII. Access H2 Database Console
+## X. Access H2 Database Console
 
 - URL: http://localhost:8080/h2-console
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
@@ -659,13 +1001,22 @@ SELECT * FROM model_param_presets;
 
 -- View image generation records
 SELECT * FROM image_records ORDER BY create_time DESC;
+
+-- Video studio: story scripts and shots
+SELECT id, title, theme, status FROM story_scripts;
+SELECT id, script_id, shot_order, image_status FROM story_shots ORDER BY script_id, shot_order;
+
+-- Video studio: prompt optimizations / exports / BGM
+SELECT * FROM image_prompt_optimizations ORDER BY id DESC LIMIT 10;
+SELECT id, script_id, resolution, aspect_ratio, status FROM video_exports ORDER BY created_at DESC;
+SELECT id, name, category, is_built_in, user_id FROM bgm_tracks;
 ```
 
 ---
 
-## IX. Configuration Guide
+## XI. Configuration Guide
 
-### 9.1 Image Generation Configuration
+### 11.1 Image Generation Configuration
 
 ```yaml
 spring:
@@ -674,7 +1025,7 @@ spring:
       api-key: ${DASHSCOPE_API_KEY:your-api-key}  # Get from Alibaba Cloud Bailian Platform
 ```
 
-### 9.2 Storage Configuration
+### 11.2 Storage Configuration
 
 ```yaml
 storage:
@@ -694,7 +1045,7 @@ storage:
     bucket-name: ${MINIO_BUCKET:ai-images}
 ```
 
-### 9.3 Model Configuration
+### 11.3 Model Configuration
 
 ```yaml
 spring:
@@ -702,7 +1053,7 @@ spring:
     active: deepseek,openai,h2  # Combine: ollama/openai/deepseek + h2/postgresql
 ```
 
-### 9.4 RAG Configuration
+### 11.4 RAG Configuration
 
 ```yaml
 rag:
@@ -713,16 +1064,43 @@ rag:
     initialize-schema: true  # auto-create tables
 ```
 
-### 9.5 Context Length
+### 11.5 Context Length
 
 ```yaml
 chat:
   max-context-messages: 10   # Retain last 10 conversation rounds
 ```
 
+### 11.6 AI Short Video Studio Configuration
+
+```yaml
+image:
+  generator: dashscope               # Image source: dashscope (cloud Tongyi Wanxiang) / local (local SD/FLUX)
+  local:                              # Local SD WebUI config
+    base-url: http://127.0.0.1:7860
+    steps: 25
+    cfg-scale: 7.0
+    timeout: 120                      # Local generation timeout (seconds)
+  generation:
+    parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
+    retry-attempts: 1                 # Retry attempts on failure
+    retry-delay-ms: 2000              # Retry delay (ms)
+    total-timeout-seconds: 300        # Batch generation total timeout (seconds)
+    default-size: 1280x720           # Default image size
+
+video:
+  compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes)
+  subtitle:                          # Module F: subtitle burning
+    font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
+
+bgm:
+  library-path: ./data/bgm          # Built-in music library dir, filename format category__name.mp3
+                                    # (e.g. happy__sunny_morning.mp3), auto-scanned on startup
+```
+
 ---
 
-## X. Important Notes
+## XII. Important Notes
 
 1. **Login Requirement**: Chat and document endpoints require login; returns 401/403 if unauthenticated
 2. **Session Ownership**: Each session bound to its creator; users can only manage their own
@@ -736,10 +1114,16 @@ chat:
 10. **Database Persistence**: H2 file mode stored in `./data/chatdb.mv.db`
 11. **Image Generation**: Requires `DASHSCOPE_API_KEY` configuration, images auto-stored to configured storage service
 12. **Multi-Storage Switching**: Switch between local/OSS/MinIO/FastDFS via `storage.type`, no code changes needed
+13. **Video Studio Dependencies**: Video composition requires FFmpeg (with ffprobe) in PATH; narration requires `pip install edge-tts` (automatically skipped when missing, silent video output)
+14. **SSE Batch Generation**: Use native EventSource on `GET /api/video/images/script/{id}/stream` (EventSource is GET-only); event types in 7.5
+15. **Prompt Changes**: Updating a shot's imagePrompt clears old image references; images must be regenerated before video export
+16. **BGM Permissions**: Users can only use built-in BGM and their own uploads; export automatically lowers BGM volume (~ -16dB) with fade in/out
+17. **Export Prerequisites**: All shots must be in READY state, otherwise the response lists which shots are not ready
+18. **Subtitle Burning**: Requires the configured CJK font installed (default Microsoft YaHei); the subtitle parameter is automatically ignored when no narration exists; burning happens during export, no separate call needed
 
 ---
 
-## XI. FAQ
+## XIII. FAQ
 
 **Q: Why do chat endpoints return 401?**
 A: Login first via `/api/auth/login` and ensure cookies are saved.
@@ -771,3 +1155,24 @@ When switched to OSS/MinIO, `imageUrl` returns the corresponding cloud storage a
 
 **Q: How to switch storage type?**
 A: Change `storage.type` in `application.yml`: `local` → `oss` / `minio` / `fastdfs`. No restart required.
+
+**Q: Video export reports FFmpeg errors or timeouts?**
+A: Verify `ffmpeg -version` works (including ffprobe). Multi-shot 1080p composition is slow by nature; the timeout is controlled by `video.compose-timeout-minutes` (default 8). BGM mixing requires ffmpeg >= 4.4.
+
+**Q: Narration volume drops after BGM mixing?**
+A: The backend uses `amix normalize=0` to keep narration at original volume; BGM is fixed at 15% (~ -16dB) so it never overpowers narration. Try a softer track if the mix feels off.
+
+**Q: How to add built-in BGM?**
+A: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/` (e.g. `calm__peaceful_piano.mp3`) and restart to auto-register; or use the frontend "Upload" button / `POST /api/video/bgm/upload`.
+
+**Q: Why is SSE batch image generation a GET endpoint?**
+A: Native browser EventSource supports GET only, so the batch endpoint is `GET /api/video/images/script/{id}/stream` with style passed via the `?style=` query parameter.
+
+**Q: How are 9:16 portrait exports cropped?**
+A: Each image is first `scale + crop`-ed to the target ratio (center-cropped preserving aspect ratio), then the Ken Burns effect is applied — 16:9 source images exported as 9:16 video are never distorted.
+
+**Q: How is the subtitle timeline computed?**
+A: Each cue starts at the previous transition's midpoint and ends at the next transition's midpoint (switching in sync with xfade transitions; adjacent cues are seamless and non-overlapping); the actual video duration has transition overlaps deducted, keeping subtitles strictly aligned with the picture.
+
+**Q: Garbled text or wrong font after subtitle burning?**
+A: The subtitle font must be installed (default Microsoft YaHei); on Linux/Docker set `video.subtitle.font-name` to `Source Han Sans CN` / `Noto Sans CJK SC`, and confirm with `POST /api/video/subtitle/preview`.

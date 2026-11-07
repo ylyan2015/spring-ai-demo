@@ -1,10 +1,10 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, Docker one-click deployment, and more.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, **AI Short Video Studio** (idea → storyboard → parallel image generation → BGM → FFmpeg compose with multi-ratio export), Docker one-click deployment, and more.
 
 ## Project Overview
 
-This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, AI image generation with multi-storage management, ensuring data privacy and security.
+This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, AI image generation with multi-storage management, and an end-to-end AI short video production pipeline, ensuring data privacy and security.
 
 ### ✨ Core Features
 
@@ -30,6 +30,11 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **AI Image Generation** - Integrated with Alibaba Cloud Bailian Tongyi Wanxiang model (wan2.6-t2i), generate high-quality images from prompts
 - ✅ **Multi-Storage Support** - Unified storage abstraction layer, supports local storage / Alibaba Cloud OSS / MinIO / FastDFS with one-click switching
 - ✅ **Image Generation Records** - Generation records persisted in database, associated with users and chat sessions, supports history query
+- ✅ **AI Short Video Studio** - Idea → LLM-generated storyboard (editable/drag-sortable) → LLM prompt enhancement (8 visual styles) → parallel image generation (SSE real-time progress) → 480p quick preview / 720p/1080p HD export
+- ✅ **Multi-Ratio Video Export** - 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview with watermark, formal exports without, export history traceable
+- ✅ **BGM Scoring** - Built-in music library (categorized by mood) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
+- ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position)
+- ✅ **Multiple Image Generation Backends** - DashScope Tongyi Wanxiang (cloud) and local Stable Diffusion / FLUX (SD WebUI protocol) switching via config, with automatic retry on failure
 
 ## Technology Stack
 
@@ -43,6 +48,8 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **H2 Database** - Lightweight embedded database (development mode)
 - **AI Models**: Ollama / OpenAI / DeepSeek (switchable)
 - **DashScope Tongyi Wanxiang** - AI image generation engine (wan2.6-t2i)
+- **FFmpeg** - Video composition engine (Ken Burns effect + xfade transitions + BGM mixing + multi-ratio cropping)
+- **Edge TTS** - Narration voiceover (Python CLI, optional; automatically skipped when not installed)
 - **Apache Tika** - Document parsing (RAG: supports TXT/PDF/MD and more)
 - **RSA + BCrypt** - Password encryption scheme
 - **Lombok** - Code simplification
@@ -69,7 +76,9 @@ Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other 
    - **OpenAI API Key** - Register at OpenAI
    - **DeepSeek API Key** - Register at DeepSeek
 4. **(Optional) DashScope API Key** - For image generation, register at Alibaba Cloud Bailian Platform
-5. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
+5. **(Optional) FFmpeg** - For video composition/export in the AI Short Video Studio (must be in PATH, including ffprobe)
+6. **(Optional) Edge TTS** - For short video narration: `pip install edge-tts` (automatically skipped when not installed)
+7. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
 ## Quick Start
 
@@ -200,6 +209,22 @@ http://localhost:8080
 - 🗑️ **Document Delete** - Remove documents and their vectors
 - 🔀 **Context Toggle** - Enable/disable RAG context injection
 
+#### AI Short Video Studio
+
+Visit http://localhost:8080/video-studio to use it (login required):
+
+Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Image Generation (SSE real-time progress) → Quick Preview / BGM Scoring / Multi-Ratio HD Export**
+
+- 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting
+- 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort
+- 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
+- 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX; SSE real-time progress bar, automatic retry, per-shot regeneration
+- 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc.), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
+- 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); standalone SRT export and single-frame subtitle preview supported
+- 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
+
+> **Note**: Video composition requires FFmpeg; narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`).
+
 #### 5. Test with API
 
 ```bash
@@ -238,36 +263,71 @@ spring-ai-demo/
 │   │   └── WebMvcConfig.java           # Web MVC config (static resource mapping for local storage)
 │   ├── controller/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
+│   │   ├── BgmController.java          # Video studio: BGM list/recommend/upload
+│   │   ├── SubtitleController.java    # Video studio: SRT export/subtitle preview
 │   │   ├── ChatController.java         # Chat controller (REST API + SSE)
 │   │   ├── DocumentController.java     # Knowledge base document controller
 │   │   ├── ImageController.java        # Image generation controller (REST API)
+│   │   ├── ImageGenerationController.java  # Video studio: image gen/SSE progress/generator switching
+│   │   ├── ImagePromptOptimizerController.java # Video studio: prompt enhancement
 │   │   ├── ModelController.java        # Model management (switch/param presets)
 │   │   ├── ModelService.java           # Model service (dynamic switch/presets)
 │   │   ├── PageController.java         # Page controller (Web routing)
-│   │   └── TimeZoneController.java     # Timezone controller (IP geolocation)
+│   │   ├── StoryScriptController.java  # Video studio: storyboard/shot CRUD/reorder
+│   │   ├── TimeZoneController.java     # Timezone controller (IP geolocation)
+│   │   └── VideoExportController.java  # Video studio: preview/HD export/history
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
+│   │   ├── BgmService.java             # Video studio: BGM library/LLM recommend/upload
 │   │   ├── CaptchaService.java         # Captcha service
 │   │   ├── ChatService.java            # Chat service (business logic/compression)
 │   │   ├── ImageService.java           # Image generation service (DashScope API + storage)
-│   │   └── RagService.java             # RAG service (parse/vectorize/search)
+│   │   ├── ImageGenerationService.java # Video studio: parallel generation + SSE + retry
+│   │   ├── ImagePromptOptimizerService.java # Video studio: LLM prompt enhancement
+│   │   ├── RagService.java             # RAG service (parse/vectorize/search)
+│   │   ├── StoryScriptService.java     # Video studio: script generate/edit/reorder
+│   │   └── VideoExportService.java     # Video studio: preview/HD export/history
 │   ├── entity/
+│   │   ├── Bgm.java                    # BGM entity (video module D)
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
+│   │   ├── ImagePromptOptimizer.java   # Prompt optimization record entity (module B)
 │   │   ├── ImageRecord.java            # Image generation record entity
 │   │   ├── Message.java                # Message entity
 │   │   ├── ModelParamPreset.java       # Model parameter preset entity
 │   │   ├── RagDocument.java            # RAG document metadata entity (persistent)
-│   │   └── User.java                   # User entity
+│   │   ├── StoryScript.java / StoryShot.java # Script/shot entities (module A)
+│   │   ├── User.java                   # User entity
+│   │   └── VideoExport.java            # Video export record entity (module C)
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # Image generation exception
 │   │   └── StorageException.java         # Storage exception
 │   └── repository/
+│       ├── BgmRepository.java          # BGM data access (module D)
 │       ├── ConversationRepository.java
+│       ├── ImagePromptOptimizerRepository.java # Prompt optimization data access (module B)
 │       ├── ImageRecordRepository.java  # Image generation record data access
 │       ├── MessageRepository.java
 │       ├── ModelParamPresetRepository.java
 │       ├── RagDocumentRepository.java
-│       └── UserRepository.java
+│       ├── StoryScriptRepository.java / StoryShotRepository.java # Script/shot data access (module A)
+│       ├── UserRepository.java
+│       └── VideoExportRepository.java  # Export record data access (module C)
+├── src/main/java/com/github/ylyan2015/springaidemo/video/
+│   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1)
+│   ├── VisualStyle.java               # 8 visual style presets (with negative prompts)
+│   ├── ImageGenerationProgress.java   # SSE progress event
+│   ├── VideoScriptService.java        # Script generation (Phase 1)
+│   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
+│   ├── VideoController.java           # Legacy one-shot workflow API (kept for compat)
+│   ├── subtitle/                     # Module F: subtitle system
+│   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline
+│   │   ├── SubtitleStyle.java         # Subtitle style (font/size/color/outline/position)
+│   │   └── SubtitleCue.java           # Subtitle cue (text + start/end ms)
+│   └── generator/                     # Image generation abstraction (strategy + factory)
+│       ├── ImageGenerator.java / GeneratedImage.java
+│       ├── DashScopeImageGenerator.java  # Cloud Tongyi Wanxiang
+│       ├── LocalSdImageGenerator.java   # Local SD WebUI / FLUX
+│       └── ImageGeneratorFactory.java   # Config-driven + runtime switching
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # Image generation request DTO
 │   └── ImageGenerateResponse.java      # Image generation response DTO
@@ -282,6 +342,7 @@ spring-ai-demo/
 │   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown/Notifications)
 │   ├── templates/index.html            # Main chat page template
 │   ├── templates/login.html            # Login/register page template
+│   ├── templates/video-studio.html     # AI Short Video Studio frontend (complete workflow UI)
 │   ├── application.yml                 # Main configuration
 │   ├── application-h2.yml              # H2 database config
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector config
@@ -380,6 +441,45 @@ storage:
 | Alibaba Cloud OSS | `oss` | Production, highly available object storage |
 | MinIO | `minio` | Self-hosted object storage, S3-compatible |
 | FastDFS | `fastdfs` | Legacy distributed file system |
+
+### AI Short Video Studio Configuration
+
+Configuration for the video workflow (script → images → BGM → export) is centralized in `application.yml`:
+
+```yaml
+image:
+  generator: dashscope               # Image source: dashscope (cloud) / local (local SD/FLUX)
+  local:                               # Local Stable Diffusion WebUI / ComfyUI config
+    base-url: http://127.0.0.1:7860    # Local service API address
+    model: stable-diffusion            # Local model name
+    steps: 25                          # Sampling steps
+    cfg-scale: 7.0                     # Prompt guidance (CFG)
+    timeout: 120                       # Local generation timeout (seconds)
+  generation:
+    parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
+    retry-attempts: 1                 # Retry attempts on failure
+    retry-delay-ms: 2000              # Retry delay (ms)
+    total-timeout-seconds: 300        # Batch generation total timeout (seconds)
+    default-size: 1280x720           # Default image size (16:9 landscape)
+
+video:
+  compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
+  subtitle:                          # Module F: subtitle burning
+    font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
+
+bgm:
+  library-path: ./data/bgm          # Built-in music library dir; filename format category__name.mp3
+                                    # (e.g. happy__sunny_morning.mp3), categories: happy/sad/epic/calm/tense,
+                                    # auto-scanned on startup; user uploads stored under uploads/ subdirectory
+```
+
+**Key Notes:**
+
+- **Video composition requires FFmpeg** in PATH (including ffprobe); exports fail with a clear error when missing
+- **Narration requires Edge TTS**: `pip install edge-tts`; automatically skipped when not installed (silent video)
+- **BGM music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/` for auto-registration, or upload via the frontend button
+- **Subtitles**: Timeline precisely aligned with xfade transitions; font must be installed (default Microsoft YaHei, configurable via `video.subtitle.font-name`); burning uses the FFmpeg subtitles filter (libass, included in common builds)
+- **Export ratios**: 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview is fixed 480p + watermark, formal exports 720p/1080p without watermark
 
 #### RAG Storage Modes
 
@@ -498,6 +598,36 @@ spring:
 | `/api/image/records` | GET | Get all image generation records for current user |
 | `/api/image/records/{sessionId}` | GET | Get image generation records for a session |
 
+### AI Short Video Studio Endpoints (Login Required)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/video/scripts/generate` | POST | Generate storyboard from a creative idea and persist it |
+| `/api/video/scripts` | GET/POST | Script list / save script |
+| `/api/video/scripts/{id}` | GET/PUT/DELETE | Script detail (with shots) / rename / delete |
+| `/api/video/scripts/{id}/shots` | PUT/POST | Batch update shots / add shot |
+| `/api/video/scripts/{id}/shots/{shotId}` | PUT/DELETE | Update shot / delete shot |
+| `/api/video/scripts/{id}/shots/reorder` | PUT | Drag-sort shots |
+| `/api/video/enhance-prompt` | POST | Single prompt LLM enhancement (8 styles) |
+| `/api/video/enhance-prompt/script/{scriptId}` | POST | Batch enhance all shots' prompts |
+| `/api/video/enhance-prompt/styles` | GET | Visual style list |
+| `/api/video/enhance-prompt/history` | GET | Prompt enhancement history |
+| `/api/video/images/shot/{scriptId}/{shotId}` | POST | Generate image for a single shot |
+| `/api/video/images/script/{scriptId}/stream` | GET | SSE batch parallel generation (real-time progress) |
+| `/api/video/images/generators` | GET | Available image generators (with availability) |
+| `/api/video/images/generator` | PUT | Switch image generator at runtime |
+| `/api/video/export/preview` | POST | 480p quick preview (watermarked, crf 28, optional BGM/subtitles) |
+| `/api/video/export/hd` | POST | HD export (720p/1080p × 16:9/9:16/1:1, optional BGM/subtitle burning) |
+| `/api/video/exports/{scriptId}` | GET | Export history (with failure reasons) |
+| `/api/video/bgm` | GET | BGM list (built-in + user uploads) |
+| `/api/video/bgm/recommend?theme=` | GET | LLM smart BGM recommendation by theme |
+| `/api/video/bgm/upload` | POST | Upload custom BGM (multipart) |
+| `/api/video/subtitle/generate` | POST | Generate SRT subtitle file (timeline aligned with transitions) |
+| `/api/video/subtitle/preview` | POST | Render a single-frame subtitle preview image (optional style override) |
+| `/api/video/generate` / `/api/video/compose` | POST | Legacy one-shot workflow API (kept for compat) |
+
+> Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)
+
 **For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
 ## Development Guide
@@ -590,6 +720,32 @@ Local images are accessible via the `/images/**` static resource mapping.
 ### 10. How to View Image Generation History?
 - API: `GET /api/image/records` to get all records for the current user
 - Database: `SELECT * FROM image_records WHERE user_id = ? ORDER BY create_time DESC`
+
+### 11. How to Add Built-in BGM to the Video Studio?
+
+Place royalty-free music files named `category__name.mp3` into the `./data/bgm/` directory
+(e.g. `happy__sunny_morning.mp3`). Supported categories: `happy` / `sad` / `epic` / `calm` / `tense`.
+They are auto-registered on startup. You can also click the "Upload" button in the Video Studio page
+to add custom BGM (mp3/wav/ogg/m4a/flac supported).
+
+### 12. Video Export Fails with FFmpeg Errors?
+
+- Ensure `ffmpeg` and `ffprobe` are installed and in PATH: `ffmpeg -version`
+- Multi-shot composition is slow by nature (1080p may take minutes); the timeout is controlled by `video.compose-timeout-minutes` (default 8)
+- BGM mixing requires ffmpeg >= 4.4 (the `amix normalize` option); upgrade older versions
+
+### 13. How to Use Local Stable Diffusion / FLUX for Video Frames?
+
+1. Start a local SD WebUI (or ComfyUI-compatible service) and verify it responds at `http://127.0.0.1:7860`
+2. Set `image.generator: local` in config, or switch at runtime via the frontend "Image Generator" dropdown
+3. Local generation natively supports negative prompts, giving more controllable styles with zero API cost
+
+### 14. Garbled Text or Wrong Font After Subtitle Burning?
+
+- Subtitles default to Microsoft YaHei, which must be installed on the system; on Linux/Docker switch to an installed CJK font:
+  `video.subtitle.font-name: Source Han Sans CN` (or Noto Sans CJK SC)
+- Burning uses the FFmpeg subtitles filter (libass), included in common distribution builds; if libass is missing, install a full FFmpeg build
+- You can also customize font/size/color/outline/position via the `style` field of `POST /api/video/subtitle/preview` and preview the result
 
 ## References
 

@@ -1,0 +1,118 @@
+package com.github.ylyan2015.springaidemo.controller;
+
+import com.github.ylyan2015.springaidemo.service.VideoExportService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.*;
+
+/**
+ * 视频预览与导出控制器
+ * 快速预览（480p + 水印）、高清导出（720p / 1080p，多比例，可选 BGM）与导出历史
+ */
+@RestController
+@RequestMapping("/api/video")
+public class VideoExportController {
+
+    private static final Logger log = LoggerFactory.getLogger(VideoExportController.class);
+
+    private final VideoExportService videoExportService;
+
+    public VideoExportController(VideoExportService videoExportService) {
+        this.videoExportService = videoExportService;
+    }
+
+    /**
+     * 生成 480p 快速预览版（低分辨率 + 水印，秒级出片确认效果）
+     * 请求体: { "scriptId": 1, "aspectRatio": "16:9", "bgmId": 3, "subtitle": true }
+     */
+    @PostMapping("/export/preview")
+    public ResponseEntity<Map<String, Object>> exportPreview(@RequestBody Map<String, Object> request) {
+        return executeExport(request, true);
+    }
+
+    /**
+     * 生成高清正式版（无水印）
+     * 请求体: { "scriptId": 1, "resolution": "720p", "aspectRatio": "9:16", "bgmId": 3, "subtitle": true }
+     */
+    @PostMapping("/export/hd")
+    public ResponseEntity<Map<String, Object>> exportHd(@RequestBody Map<String, Object> request) {
+        return executeExport(request, false);
+    }
+
+    /**
+     * 获取脚本的导出历史
+     */
+    @GetMapping("/exports/{scriptId}")
+    public ResponseEntity<Map<String, Object>> listExports(@PathVariable Long scriptId) {
+        try {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("data", videoExportService.listExports(scriptId));
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("List exports failed: {}", e.getMessage());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    // ==================== 内部工具 ====================
+
+    private ResponseEntity<Map<String, Object>> executeExport(
+            Map<String, Object> request, boolean preview) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            Long scriptId = toLong(request.get("scriptId"));
+            if (scriptId == null) {
+                result.put("success", false);
+                result.put("message", "scriptId 不能为空");
+                return ResponseEntity.badRequest().body(result);
+            }
+            Long bgmId = toLong(request.get("bgmId"));
+            String aspectRatio = (String) request.get("aspectRatio");
+            boolean subtitle = toBoolean(request.get("subtitle"), false);
+
+            Map<String, Object> data;
+            if (preview) {
+                data = videoExportService.exportPreview(scriptId, aspectRatio, bgmId, subtitle);
+            } else {
+                data = videoExportService.exportHd(scriptId,
+                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle);
+            }
+
+            result.put("success", true);
+            result.put("data", data);
+            result.put("message", preview ? "预览生成完成" : "高清导出完成");
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            log.error("{} export failed: {}", preview ? "Preview" : "HD", e.getMessage(), e);
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
+        }
+    }
+
+    private Long toLong(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private boolean toBoolean(Object value, boolean defaultValue) {
+        if (value instanceof Boolean b) return b;
+        if (value != null) {
+            return Boolean.parseBoolean(value.toString());
+        }
+        return defaultValue;
+    }
+}

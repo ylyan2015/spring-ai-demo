@@ -1,10 +1,10 @@
 # Spring AI Demo - 多模型智能聊天应用
 
-一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、AI 图像生成（通义万相）、多存储服务、Docker 一键部署等功能。
+一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、AI 图像生成（通义万相）、多存储服务、**AI 短视频工作室**（创意想法 → 分镜脚本 → 并行生成画面 → BGM 配乐 → FFmpeg 合成多比例导出）、Docker 一键部署等功能。
 
 ## 项目概述
 
-本项目演示了如何在 Spring Boot 应用中集成 Spring AI 框架，并支持灵活切换不同的AI模型提供商，包括本地部署的 Ollama 模型和在线 API 服务（OpenAI、DeepSeek等）。同时提供完整的用户认证体系，聊天记录与用户绑定，RAG 知识库支持文档上传和上下文增强，AI 图像生成与多存储管理，保障数据隐私安全。
+本项目演示了如何在 Spring Boot 应用中集成 Spring AI 框架，并支持灵活切换不同的AI模型提供商，包括本地部署的 Ollama 模型和在线 API 服务（OpenAI、DeepSeek等）。同时提供完整的用户认证体系，聊天记录与用户绑定，RAG 知识库支持文档上传和上下文增强，AI 图像生成与多存储管理，以及端到端的 AI 短视频生产流水线，保障数据隐私安全。
 
 ### ✨ 核心特性
 
@@ -30,6 +30,11 @@
 - ✅ **AI 图像生成** - 集成阿里云百炼通义万相模型（wan2.6-t2i），通过提示词生成高品质图片
 - ✅ **多存储支持** - 统一存储抽象层，支持本地存储 / 阿里云OSS / MinIO / FastDFS 一键切换
 - ✅ **图像生成记录** - 生成记录持久化存储，关联用户与聊天会话，支持历史查询
+- ✅ **AI 短视频工作室** - 创意想法 → LLM 生成分镜脚本（可编辑/拖拽排序）→ 提示词 LLM 优化（8 种风格）→ 并行生成画面（SSE 实时进度）→ 480p 快速预览 / 720p/1080p 高清导出
+- ✅ **多比例视频导出** - 16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览版带水印、正式版无水印，导出历史可追溯
+- ✅ **BGM 配乐** - 内置音乐库（按情感分类）+ LLM 智能推荐 + 自定义上传；自动降音量、淡入淡出、短曲循环
+- ✅ **字幕系统** - 旁白自动生成带时间轴字幕（时间轴与转场精确对齐），支持 SRT 单独导出与 ASS 烧录进画面，样式可定制（字体/字号/颜色/描边/位置）
+- ✅ **多图像生成后端** - DashScope 通义万相（云端）与本地 Stable Diffusion / FLUX（SD WebUI 协议）配置切换，失败自动重试
 
 ## 技术栈
 
@@ -43,6 +48,8 @@
 - **H2 Database** - 轻量级嵌入式数据库（开发模式）
 - **AI Models**: Ollama / OpenAI / DeepSeek（支持切换）
 - **DashScope 通义万相** - AI 图像生成引擎（wan2.6-t2i）
+- **FFmpeg** - 短视频合成引擎（Ken Burns 动效 + xfade 转场 + BGM 混音 + 多比例裁剪）
+- **Edge TTS** - 旁白配音（Python CLI，可选，未安装时自动跳过配音）
 - **Apache Tika** - 文档解析（RAG: 支持 TXT/PDF/MD 等格式）
 - **RSA + BCrypt** - 密码加密方案
 - **Lombok** - 代码简化
@@ -69,7 +76,9 @@
    - **OpenAI API Key** - 注册 OpenAI 账号获取
    - **DeepSeek API Key** - 注册 DeepSeek 账号获取
 4. **（可选）DashScope API Key** - 如需图像生成功能，注册阿里云百炼平台获取
-5. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
+5. **（可选）FFmpeg** - 如需 AI 短视频工作室的视频合成/导出功能（需在 PATH 中，含 ffprobe）
+6. **（可选）Edge TTS** - 如需短视频旁白配音：`pip install edge-tts`（未安装时自动跳过配音）
+7. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
 
 ## 快速开始
 
@@ -221,6 +230,22 @@ Web 界面右侧提供知识库面板：
 - 🗑️ **文档删除** - 删除不需要的文档及其向量数据
 - 🔀 **上下文增强** - 开启/关闭 RAG 知识库上下文注入
 
+#### AI 短视频工作室
+
+访问 http://localhost:8080/video-studio 即可使用（需登录）：
+
+完整工作流：**创意想法 → 分镜脚本 → 提示词优化 → 并行生成画面（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出**
+
+- 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除
+- 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序
+- 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
+- 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换；SSE 实时进度条、失败自动重试、单镜头重新生成
+- 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
+- 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；支持单独导出 SRT 文件与一帧字幕效果预览
+- 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
+
+> **说明**：视频合成依赖 FFmpeg；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。
+
 #### 5. 使用 API 测试
 
 如果你想通过 API 进行测试，请先注册并登录：
@@ -282,36 +307,71 @@ spring-ai-demo/
 │   │   └── WebMvcConfig.java           # Web MVC配置（本地存储静态资源映射）
 │   ├── controller/
 │   │   ├── AuthController.java         # 认证控制器（注册/登录/验证码）
+│   │   ├── BgmController.java          # 短视频：BGM 列表/推荐/上传
+│   │   ├── SubtitleController.java    # 短视频：SRT 导出/字幕预览
 │   │   ├── ChatController.java         # 聊天控制器（REST API + SSE）
 │   │   ├── DocumentController.java     # 知识库文档管理控制器
 │   │   ├── ImageController.java        # 图像生成控制器（REST API）
+│   │   ├── ImageGenerationController.java  # 短视频：图片生成/SSE 进度/生成器切换
+│   │   ├── ImagePromptOptimizerController.java # 短视频：提示词优化
 │   │   ├── ModelController.java        # 模型管理控制器（切换/参数预设）
 │   │   ├── ModelService.java           # 模型管理服务（动态切换/参数预设）
 │   │   ├── PageController.java         # 页面控制器（Web 路由）
-│   │   └── TimeZoneController.java     # 时区控制器（IP定位）
+│   │   ├── StoryScriptController.java  # 短视频：分镜脚本/镜头增删改/排序
+│   │   ├── TimeZoneController.java     # 时区控制器（IP定位）
+│   │   └── VideoExportController.java  # 短视频：预览/高清导出/导出历史
 │   ├── service/
 │   │   ├── AuthService.java            # 认证服务（注册/登录逻辑）
+│   │   ├── BgmService.java             # 短视频：BGM 音乐库/LLM推荐/上传
 │   │   ├── CaptchaService.java         # 验证码服务
 │   │   ├── ChatService.java            # 聊天服务（业务逻辑/上下文压缩）
 │   │   ├── ImageService.java           # 图像生成服务（调用DashScope + 转存存储）
-│   │   └── RagService.java             # RAG 服务（文档解析/向量化/检索）
+│   │   ├── ImageGenerationService.java # 短视频：并行生成 + SSE + 重试
+│   │   ├── ImagePromptOptimizerService.java # 短视频：LLM 提示词优化
+│   │   ├── RagService.java             # RAG 服务（文档解析/向量化/检索）
+│   │   ├── StoryScriptService.java     # 短视频：脚本生成/编辑/排序
+│   │   └── VideoExportService.java     # 短视频：预览/高清导出/导出历史
 │   ├── entity/
+│   │   ├── Bgm.java                    # BGM 实体（短视频模块 D）
 │   │   ├── Conversation.java           # 会话实体（绑定userId）
+│   │   ├── ImagePromptOptimizer.java   # 提示词优化记录实体（模块 B）
 │   │   ├── ImageRecord.java            # 图像生成记录实体
 │   │   ├── Message.java                # 消息实体
 │   │   ├── ModelParamPreset.java       # 模型参数预设实体
 │   │   ├── RagDocument.java            # RAG 文档元信息实体（持久化）
-│   │   └── User.java                   # 用户实体
+│   │   ├── StoryScript.java / StoryShot.java # 脚本/镜头实体（模块 A）
+│   │   ├── User.java                   # 用户实体
+│   │   └── VideoExport.java            # 视频导出记录实体（模块 C）
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # 图像生成异常
 │   │   └── StorageException.java         # 存储异常
 │   ├── repository/
+│       ├── BgmRepository.java          # BGM 数据访问（模块 D）
 │       ├── ConversationRepository.java # 会话数据访问
+│       ├── ImagePromptOptimizerRepository.java # 提示词优化记录数据访问（模块 B）
 │       ├── ImageRecordRepository.java  # 图像生成记录数据访问
 │       ├── MessageRepository.java      # 消息数据访问
 │       ├── ModelParamPresetRepository.java # 参数预设数据访问
 │       ├── RagDocumentRepository.java  # RAG 文档元信息数据访问
-│       └── UserRepository.java         # 用户数据访问
+│       ├── StoryScriptRepository.java / StoryShotRepository.java # 脚本/镜头数据访问（模块 A）
+│       ├── UserRepository.java         # 用户数据访问
+│       └── VideoExportRepository.java  # 导出记录数据访问（模块 C）
+├── src/main/java/com/github/ylyan2015/springaidemo/video/
+│   ├── Storyboard.java / Shot.java    # 分镜 DTO（Phase 1）
+│   ├── VisualStyle.java               # 8 种视觉风格预设（含负面提示词）
+│   ├── ImageGenerationProgress.java   # SSE 进度事件
+│   ├── VideoScriptService.java        # 脚本生成（Phase 1）
+│   ├── VideoComposeService.java       # FFmpeg 合成 + ComposeOptions（多比例/水印/BGM 混音/字幕烧录）
+│   ├── VideoController.java           # 旧一次性流程 API（保留兼容）
+│   ├── subtitle/                     # 模块 F：字幕系统
+│   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴
+│   │   ├── SubtitleStyle.java         # 字幕样式（字体/字号/颜色/描边/位置）
+│   │   └── SubtitleCue.java           # 字幕条目（文本 + 起止毫秒）
+│   └── generator/                     # 图片生成抽象（策略+工厂）
+│       ├── ImageGenerator.java / GeneratedImage.java
+│       ├── DashScopeImageGenerator.java  # 云端通义万相
+│       ├── LocalSdImageGenerator.java   # 本地 SD WebUI / FLUX
+│       └── ImageGeneratorFactory.java   # 配置驱动 + 运行时切换
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # 图像生成请求DTO
 │   └── ImageGenerateResponse.java      # 图像生成响应DTO
@@ -329,7 +389,8 @@ spring-ai-demo/
 │   │       └── chat.js                 # 前端交互逻辑（SSE/RAG/Markdown/通知）
 │   ├── templates/
 │   │   ├── index.html                  # 主聊天页面模板
-│   │   └── login.html                  # 登录/注册页面模板
+│   │   ├── login.html                  # 登录/注册页面模板
+│   │   └── video-studio.html           # AI 短视频工作室前端（完整工作流界面）
 │   ├── application.yml                 # 主配置文件
 │   ├── application-h2.yml              # H2 数据库配置
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector 配置
@@ -538,6 +599,45 @@ storage:
 | MinIO | `minio` | 自建对象存储，兼容S3 |
 | FastDFS | `fastdfs` | 传统分布式文件系统 |
 
+### AI 短视频工作室配置
+
+短视频工作流（脚本 → 图片 → BGM → 导出）的配置集中在 `application.yml`：
+
+```yaml
+image:
+  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  local:                               # 本地 Stable Diffusion WebUI / ComfyUI 配置
+    base-url: http://127.0.0.1:7860    # 本地服务 API 地址
+    model: stable-diffusion            # 本地模型名称
+    steps: 25                          # 采样步数
+    cfg-scale: 7.0                     # 提示词相关性（CFG）
+    timeout: 120                       # 本地生成超时（秒）
+  generation:
+    parallelism: 3                     # 并行生成数（避免云端 API 限流）
+    retry-attempts: 1                 # 失败重试次数
+    retry-delay-ms: 2000              # 重试间隔（毫秒）
+    total-timeout-seconds: 300        # 批量生成总超时（秒）
+    default-size: 1280x720           # 默认图片尺寸（16:9 横屏）
+
+video:
+  compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头建议 ≥8
+  subtitle:                          # 模块 F：字幕烧录
+    font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN）
+
+bgm:
+  library-path: ./data/bgm          # 内置音乐库目录；文件名格式 category__name.mp3
+                                    #（如 happy__sunny_morning.mp3），分类：happy/sad/epic/calm/tense，
+                                    # 启动时自动扫描注册；用户上传保存在 uploads/ 子目录
+```
+
+**关键说明：**
+
+- **视频合成依赖 FFmpeg**：需在 PATH 中（含 ffprobe）；未安装时导出会失败并给出错误提示
+- **旁白配音依赖 Edge TTS**：`pip install edge-tts`；未安装时自动跳过配音，仅输出无声视频
+- **BGM 音乐库**：将免版权音乐按 `category__name.mp3` 命名放入 `./data/bgm/` 即自动注册，也可通过前端上传按钮添加
+- **字幕**：字幕时间轴与 xfade 转场精确对齐；字体需系统已安装（默认微软雅黑，`video.subtitle.font-name` 可改）；烧录使用 FFmpeg subtitles 滤镜（libass，常用构建均已内置）
+- **导出比例**：16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览固定 480p + 水印，正式导出 720p/1080p 无水印
+
 ### 完整配置示例
 
 #### 示例1：Ollama + H2（本地开发）
@@ -635,6 +735,36 @@ spring:
 | `/api/image/generate` | POST | 生成图像（通义万相wan2.6-t2i + 自动存储） |
 | `/api/image/records` | GET | 获取当前用户的所有图像生成记录 |
 | `/api/image/records/{sessionId}` | GET | 获取指定会话中的图像生成记录 |
+
+### AI 短视频工作室接口（需要登录）
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/video/scripts/generate` | POST | 输入创意想法生成分镜脚本并持久化 |
+| `/api/video/scripts` | GET/POST | 脚本列表 / 保存脚本 |
+| `/api/video/scripts/{id}` | GET/PUT/DELETE | 脚本详情（含镜头）/ 重命名 / 删除 |
+| `/api/video/scripts/{id}/shots` | PUT/POST | 批量更新镜头 / 添加镜头 |
+| `/api/video/scripts/{id}/shots/{shotId}` | PUT/DELETE | 更新镜头 / 删除镜头 |
+| `/api/video/scripts/{id}/shots/reorder` | PUT | 镜头拖拽排序 |
+| `/api/video/enhance-prompt` | POST | 单个提示词 LLM 优化（8 种风格） |
+| `/api/video/enhance-prompt/script/{scriptId}` | POST | 批量优化脚本所有镜头提示词 |
+| `/api/video/enhance-prompt/styles` | GET | 视觉风格列表 |
+| `/api/video/enhance-prompt/history` | GET | 提示词优化历史 |
+| `/api/video/images/shot/{scriptId}/{shotId}` | POST | 单镜头图片生成 |
+| `/api/video/images/script/{scriptId}/stream` | GET | SSE 批量并行生成（实时进度） |
+| `/api/video/images/generators` | GET | 可用图像生成器列表（含可用性） |
+| `/api/video/images/generator` | PUT | 运行时切换图像生成器 |
+| `/api/video/export/preview` | POST | 480p 快速预览（带水印，crf 28，可选 BGM/字幕） |
+| `/api/video/export/hd` | POST | 高清导出（720p/1080p × 16:9/9:16/1:1，可选 BGM/字幕烧录） |
+| `/api/video/exports/{scriptId}` | GET | 导出历史（含失败原因） |
+| `/api/video/bgm` | GET | BGM 列表（内置 + 用户上传） |
+| `/api/video/bgm/recommend?theme=` | GET | LLM 按主题智能推荐 BGM |
+| `/api/video/bgm/upload` | POST | 上传自定义 BGM（multipart） |
+| `/api/video/subtitle/generate` | POST | 生成 SRT 字幕文件（时间轴按转场对齐） |
+| `/api/video/subtitle/preview` | POST | 渲染一帧字幕效果预览图（可选样式覆盖） |
+| `/api/video/generate` / `/api/video/compose` | POST | 旧一次性流程 API（保留兼容） |
+
+> 视频工作室页面：http://localhost:8080/video-studio （详见 [API_TEST.md](API_TEST.md) 第七节）
 
 ## 开发指南
 
@@ -764,6 +894,31 @@ cat .env  # 确认 API Key 非占位符
 
 - API：`GET /api/image/records` 获取当前用户的所有历史记录
 - 数据库：`SELECT * FROM image_records WHERE user_id = ? ORDER BY create_time DESC`
+
+### 13. 短视频工作室如何添加内置 BGM？
+
+将免版权音乐文件按 `分类__名称.mp3` 命名放入 `./data/bgm/` 目录（如 `happy__sunny_morning.mp3`），
+支持的分类：`happy`（轻快）/ `sad`（忧伤）/ `epic`（史诗）/ `calm`（舒缓）/ `tense`（紧张）；
+启动时自动扫描注册。也可以在短视频工作室页面点击「上传」按钮添加自定义 BGM（支持 mp3/wav/ogg/m4a/flac）。
+
+### 14. 短视频导出失败提示 FFmpeg 相关错误？
+
+- 确认 `ffmpeg` 和 `ffprobe` 已安装且在系统 PATH 中：`ffmpeg -version`
+- 多镜头合成较慢属于正常现象（1080p 可能需要几分钟），超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）
+- BGM 混音需 ffmpeg ≥ 4.4（`amix normalize` 参数），老版本请升级
+
+### 15. 如何使用本地 Stable Diffusion / FLUX 生成短视频画面？
+
+1. 启动本地 SD WebUI（或 ComfyUI 等兼容服务），确认可访问 `http://127.0.0.1:7860`
+2. 修改配置 `image.generator: local`，或在前端「图像生成器」下拉中运行时切换
+3. 本地生成原生支持负面提示词（Negative Prompt），画面风格更可控且无 API 成本
+
+### 16. 字幕烧录后乱码或字体不对？
+
+- 字幕默认使用微软雅黑（`Microsoft YaHei`），需系统已安装该字体；Linux/Docker 环境可改为已安装的中文字体：
+  `video.subtitle.font-name: Source Han Sans CN`（或 Noto Sans CJK SC）
+- 烧录使用 FFmpeg subtitles 滤镜（libass），常用发行版构建均已内置；如报错无 libass 请更换完整版 FFmpeg
+- 也可通过 `POST /api/video/subtitle/preview` 传 `style` 字段自定义字体/字号/颜色/描边/位置后预览确认
 
 ## 参考资料
 

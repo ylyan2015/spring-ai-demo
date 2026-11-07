@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
@@ -25,7 +26,9 @@ public class VideoComposeService {
     private static final int VIDEO_WIDTH = 1280;
     private static final int VIDEO_HEIGHT = 720;
     private static final int FPS = 30;
-    private static final double XFADE_DURATION = 0.8;
+
+    /** xfade 转场时长（秒）：字幕时间轴等模块需引用此常量保持与合成时长严格对齐 */
+    public static final double XFADE_DURATION = 0.8;
 
     private final StorageService storageService;
 
@@ -37,18 +40,32 @@ public class VideoComposeService {
     @Value("${server.port:8080}")
     private int serverPort;
 
+    /** 单次 FFmpeg 命令超时（分钟），1080p 多镜头合成耗时较长 */
+    @Value("${video.compose-timeout-minutes:8}")
+    private int composeTimeoutMinutes;
+
     public VideoComposeService(StorageService storageService) {
         this.storageService = storageService;
     }
 
     /**
      * Compose a video from shot data: download images → ffmpeg → optional TTS → final video
+     * (Legacy entry: fixed 1280x720, no watermark, no BGM)
      */
     public Map<String, Object> compose(List<Map<String, Object>> shots) {
+        return compose(shots, new ComposeOptions());
+    }
+
+    /**
+     * Compose a video with custom options (resolution / aspect ratio / watermark / BGM)
+     */
+    public Map<String, Object> compose(List<Map<String, Object>> shots, ComposeOptions options) {
         Path workDir = null;
         try {
             workDir = Files.createTempDirectory("video-compose-");
-            log.info("Video compose work dir: {}", workDir);
+            log.info("Video compose work dir: {} ({}x{}, crf={}, watermark={}, bgm={})",
+                    workDir, options.getWidth(), options.getHeight(), options.getCrf(),
+                    options.getWatermark(), options.getBgmPath());
 
             List<Path> imageFiles = downloadImages(shots, workDir);
             if (imageFiles.size() != shots.size()) {
@@ -71,24 +88,55 @@ public class VideoComposeService {
                 audioFiles = generateTtsAudio(narrations, durations, workDir);
             }
 
-            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, workDir);
+            // xfade 转场会吃掉相邻镜头的重叠时长，BGM 淡出与展示时长必须按实际视频时长计算，
+            // 否则结尾淡出会被 -shortest 截掉，BGM 以全音量戛然而止
+            int totalDuration = imageFiles.size() == 1
+                    ? durations.get(0)
+                    : (int) Math.round(durations.stream().mapToInt(Integer::intValue).sum()
+                        - (imageFiles.size() - 1) * XFADE_DURATION);
+
+            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, workDir, options);
 
             Path finalVideo;
+            boolean hasNarrationTrack = false;
             if (audioFiles != null && !audioFiles.isEmpty()) {
                 Path mergedAudio = concatAudioWithSilence(audioFiles, durations, workDir);
                 finalVideo = mergeVideoAndAudio(videoOnly, mergedAudio, workDir);
+                hasNarrationTrack = true;
             } else {
                 finalVideo = videoOnly;
             }
 
-            String videoUrl = storeVideo(finalVideo);
+            boolean hasBgm = false;
+            if (options.getBgmPath() != null && Files.exists(options.getBgmPath())) {
+                finalVideo = mixBgmIntoVideo(finalVideo, options.getBgmPath(), totalDuration,
+                        hasNarrationTrack, workDir);
+                hasBgm = true;
+            } else if (options.getBgmPath() != null) {
+                log.warn("BGM file not found, skipping BGM mix: {}", options.getBgmPath());
+            }
+
+            // 模块 F：可选字幕硬烧录（调用方预先生成 ASS 文本传入）
+            boolean hasSubtitle = false;
+            if (options.getSubtitleAss() != null && !options.getSubtitleAss().isBlank()) {
+                Path assFile = workDir.resolve("subtitle.ass");
+                Files.writeString(assFile, options.getSubtitleAss(), StandardCharsets.UTF_8);
+                finalVideo = burnSubtitlesIntoVideo(finalVideo, assFile, options, workDir);
+                hasSubtitle = true;
+            }
+
+            StoreResult stored = storeVideo(finalVideo);
 
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("videoUrl", videoUrl);
-            result.put("width", VIDEO_WIDTH);
-            result.put("height", VIDEO_HEIGHT);
-            result.put("totalDuration", durations.stream().mapToInt(Integer::intValue).sum());
-            result.put("hasAudio", ttsAvailable);
+            result.put("videoUrl", stored.url());
+            result.put("fileSizeBytes", stored.fileSizeBytes());
+            result.put("width", options.getWidth());
+            result.put("height", options.getHeight());
+            result.put("totalDuration", totalDuration);
+            result.put("hasNarration", hasNarrationTrack);
+            result.put("hasAudio", hasNarrationTrack || hasBgm); // 最终视频是否含音轨
+            result.put("hasBgm", hasBgm);
+            result.put("hasSubtitle", hasSubtitle);
             return result;
 
         } catch (RuntimeException e) {
@@ -113,25 +161,7 @@ public class VideoComposeService {
             }
             try {
                 Path imgFile = workDir.resolve("shot_" + i + ".png");
-                String fullUrl = resolveImageUrl(imageUrl);
-
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(fullUrl))
-                        .timeout(Duration.ofSeconds(60))
-                        .GET()
-                        .build();
-
-                HttpResponse<InputStream> response = httpClient.send(request,
-                        HttpResponse.BodyHandlers.ofInputStream());
-
-                if (response.statusCode() != 200) {
-                    log.error("Download shot {} failed: HTTP {}", i, response.statusCode());
-                    continue;
-                }
-
-                try (InputStream is = response.body()) {
-                    Files.copy(is, imgFile, StandardCopyOption.REPLACE_EXISTING);
-                }
+                downloadImageTo(imageUrl, imgFile);
                 paths.add(imgFile);
                 log.info("Downloaded shot {} image: {}", i, imgFile.getFileName());
             } catch (Exception e) {
@@ -139,6 +169,24 @@ public class VideoComposeService {
             }
         }
         return paths;
+    }
+
+    /** 下载单张图片到指定文件（含本地相对地址解析） */
+    private void downloadImageTo(String imageUrl, Path targetFile) throws Exception {
+        String fullUrl = resolveImageUrl(imageUrl);
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(fullUrl))
+                .timeout(Duration.ofSeconds(60))
+                .GET()
+                .build();
+        HttpResponse<InputStream> response = httpClient.send(request,
+                HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("Download image failed: HTTP " + response.statusCode());
+        }
+        try (InputStream is = response.body()) {
+            Files.copy(is, targetFile, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     private String resolveImageUrl(String url) {
@@ -150,12 +198,13 @@ public class VideoComposeService {
 
     // ==================== FFmpeg Video Composition ====================
 
-    private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, Path workDir)
+    private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, Path workDir,
+                                        ComposeOptions options)
             throws Exception {
         Path output = workDir.resolve("output_video.mp4");
 
         if (images.size() == 1) {
-            buildSingleImageVideo(images.get(0), durations.get(0), output);
+            buildSingleImageVideo(images.get(0), durations.get(0), output, options);
             return output;
         }
 
@@ -173,16 +222,17 @@ public class VideoComposeService {
         StringBuilder filter = new StringBuilder();
 
         for (int i = 0; i < images.size(); i++) {
-            int totalFrames = durations.get(i) * FPS;
-            double zoomEnd = 1.0 + 0.06 * (i % 2 == 0 ? 1 : -1);
             String zoomExpr = i % 2 == 0
                     ? String.format("min(1+0.06*t/%d,1.06)", durations.get(i))
                     : String.format("max(1.06-0.06*t/%d,1.0)", durations.get(i));
 
+            // 先按目标比例居中裁剪，再 zoompan 动效，避免非 16:9 比例下画面变形
             filter.append(String.format(
-                    "[%d:v]zoompan=z='%s':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
+                    "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                            + "zoompan=z='%s':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
                             + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
-                    i, zoomExpr, VIDEO_WIDTH, VIDEO_HEIGHT, FPS, i));
+                    i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
+                    zoomExpr, options.getWidth(), options.getHeight(), FPS, i));
         }
 
         double offset = 0;
@@ -190,15 +240,23 @@ public class VideoComposeService {
             offset += durations.get(i);
             double xfadeOffset = offset - (i + 1) * XFADE_DURATION;
 
-            int srcA = (i == 0) ? 0 : -1;
             String labelA = (i == 0) ? "[v0]" : "[xf" + (i - 1) + "]";
             String labelB = "[v" + (i + 1) + "]";
             String labelOut = (i < images.size() - 2) ? "[xf" + i + "]" : "[vout]";
 
             filter.append(String.format(
-                    "%s%s%sxfade=transition=fade:duration=%.1f:offset=%.2f%s;",
-                    labelA, labelB, labelOut, XFADE_DURATION, Math.max(0, xfadeOffset),
-                    (i == images.size() - 2) ? "" : ""));
+                    "%s%s%sxfade=transition=fade:duration=%.1f:offset=%.2f;",
+                    labelA, labelB, labelOut, XFADE_DURATION, Math.max(0, xfadeOffset)));
+        }
+
+        // 可选水印：半透明居中大字（预览版），正式导出不叠加
+        String finalLabel = "[vout]";
+        if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
+            filter.append(String.format(
+                    "[vout]drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
+                            + ":x=(w-text_w)/2:y=(h-text_h)/2[vfinal];",
+                    options.getWatermark(), Math.max(16, options.getHeight() / 14)));
+            finalLabel = "[vfinal]";
         }
 
         String filterStr = filter.toString();
@@ -210,13 +268,13 @@ public class VideoComposeService {
         cmd.add(filterStr);
 
         cmd.add("-map");
-        cmd.add("[vout]");
+        cmd.add(finalLabel);
         cmd.add("-c:v");
         cmd.add("libx264");
         cmd.add("-profile:v");
         cmd.add("high");
         cmd.add("-crf");
-        cmd.add("23");
+        cmd.add(String.valueOf(options.getCrf()));
         cmd.add("-pix_fmt");
         cmd.add("yuv420p");
         cmd.add("-movflags");
@@ -227,18 +285,26 @@ public class VideoComposeService {
         return output;
     }
 
-    private void buildSingleImageVideo(Path image, int duration, Path output) throws Exception {
-        int totalFrames = duration * FPS;
+    private void buildSingleImageVideo(Path image, int duration, Path output, ComposeOptions options)
+            throws Exception {
+        String vf = String.format(
+                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                        + "zoompan=z='min(1+0.06*t/%d,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
+                        + "setpts=PTS-STARTPTS,format=yuva420p",
+                options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
+                duration, options.getWidth(), options.getHeight(), FPS);
+        if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
+            vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
+                            + ":x=(w-text_w)/2:y=(h-text_h)/2",
+                    options.getWatermark(), Math.max(16, options.getHeight() / 14));
+        }
         executeCommand(List.of(
                 "ffmpeg", "-y",
                 "-loop", "1",
                 "-i", image.toAbsolutePath().toString(),
-                "-vf", String.format(
-                        "zoompan=z='min(1+0.06*t/%d,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
-                                + "setpts=PTS-STARTPTS,format=yuva420p",
-                        duration, VIDEO_WIDTH, VIDEO_HEIGHT, FPS),
+                "-vf", vf,
                 "-t", String.valueOf(duration),
-                "-c:v", "libx264", "-profile:v", "high", "-crf", "23",
+                "-c:v", "libx264", "-profile:v", "high", "-crf", String.valueOf(options.getCrf()),
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 output.toAbsolutePath().toString()
@@ -371,16 +437,161 @@ public class VideoComposeService {
         return output;
     }
 
+    // ==================== BGM Mix ====================
+
+    /**
+     * 将 BGM 混入视频：音量降至 15%（约 -16dB，不抢旁白），
+     * 开头 2s 淡入，结尾 3s 淡出；BGM 短于视频时自动循环
+     *
+     * @param totalDuration    实际视频时长（秒，已扣除 xfade 转场重叠）
+     * @param hasNarrationTrack 视频是否已有旁白音轨，决定 amix 混合还是作为唯一音轨
+     */
+    private Path mixBgmIntoVideo(Path videoFile, Path bgmFile, int totalDuration,
+                                 boolean hasNarrationTrack, Path workDir) throws Exception {
+        Path output = workDir.resolve("video_with_bgm.mp4");
+        double fadeOutStart = Math.max(0, totalDuration - 3);
+
+        List<String> cmd = new ArrayList<>();
+        cmd.add("ffmpeg");
+        cmd.add("-y");
+        cmd.add("-i");
+        cmd.add(videoFile.toAbsolutePath().toString());
+        cmd.add("-stream_loop");
+        cmd.add("-1");
+        cmd.add("-i");
+        cmd.add(bgmFile.toAbsolutePath().toString());
+
+        String bgmFilter = String.format(
+                "[1:a]volume=0.15,afade=t=in:st=0:d=2,afade=t=out:st=%.2f:d=3[bg]", fadeOutStart);
+
+        if (hasNarrationTrack) {
+            // 已有旁白：BGM 与旁白混合；normalize=0 防止 amix 把旁白音量也减半（需 ffmpeg ≥ 4.4）
+            cmd.add("-filter_complex");
+            cmd.add(String.format(
+                    "%s;[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
+                    bgmFilter));
+            cmd.add("-map");
+            cmd.add("0:v");
+            cmd.add("-map");
+            cmd.add("[aout]");
+        } else {
+            // 无旁白：BGM 作为唯一音轨
+            cmd.add("-filter_complex");
+            cmd.add(bgmFilter);
+            cmd.add("-map");
+            cmd.add("0:v");
+            cmd.add("-map");
+            cmd.add("[bg]");
+        }
+        cmd.add("-c:v");
+        cmd.add("copy");
+        cmd.add("-c:a");
+        cmd.add("aac");
+        cmd.add("-b:a");
+        cmd.add("128k");
+        cmd.add("-shortest");
+        cmd.add("-movflags");
+        cmd.add("+faststart");
+        cmd.add(output.toAbsolutePath().toString());
+
+        executeCommand(cmd, workDir, "ffmpeg mix bgm");
+        log.info("BGM mixed: {} (video duration={}s, narrationTrack={})",
+                output.getFileName(), totalDuration, hasNarrationTrack);
+        return output;
+    }
+
+    // ==================== Subtitle Burn (模块 F) ====================
+
+    /**
+     * 将 ASS 字幕硬烧录进视频画面（subtitles 滤镜，libass）
+     * 烧录需重新编码视频流；音频流直接 copy 保持无损
+     */
+    private Path burnSubtitlesIntoVideo(Path videoFile, Path assFile, ComposeOptions options, Path workDir)
+            throws Exception {
+        Path output = workDir.resolve("video_with_subtitle.mp4");
+        executeCommand(List.of(
+                "ffmpeg", "-y",
+                "-i", videoFile.toAbsolutePath().toString(),
+                // executeCommand 以 workDir 为工作目录，用相对文件名可避开 Windows 盘符冒号转义问题
+                "-vf", "subtitles=" + assFile.getFileName(),
+                "-c:v", "libx264", "-profile:v", "high",
+                "-crf", String.valueOf(options.getCrf()),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                output.toAbsolutePath().toString()
+        ), workDir, "ffmpeg burn subtitles");
+        return output;
+    }
+
+    /**
+     * 渲染字幕效果预览帧：下载首镜头图片，按目标比例裁剪并烧录 ASS 字幕，输出 PNG
+     * （t=0 时刻仅显示第一条字幕，用于确认字体/字号/描边/位置效果）
+     */
+    public Path renderSubtitlePreview(String imageUrl, String assText, int width, int height, Path workDir)
+            throws Exception {
+        Path image = workDir.resolve("preview_source.png");
+        downloadImageTo(imageUrl, image);
+
+        Path assFile = workDir.resolve("subtitle.ass");
+        Files.writeString(assFile, assText, StandardCharsets.UTF_8);
+
+        Path output = workDir.resolve("subtitle_preview.png");
+        executeCommand(List.of(
+                "ffmpeg", "-y",
+                "-i", image.toAbsolutePath().toString(),
+                "-vf", String.format(
+                        "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,subtitles=%s",
+                        width, height, width, height, assFile.getFileName()),
+                "-frames:v", "1",
+                output.toAbsolutePath().toString()
+        ), workDir, "ffmpeg subtitle preview");
+        return output;
+    }
+
     // ==================== Storage ====================
 
-    private String storeVideo(Path videoFile) throws IOException {
+    /** 存储结果：访问地址 + 文件大小 */
+    private record StoreResult(String url, long fileSizeBytes) {}
+
+    private StoreResult storeVideo(Path videoFile) throws IOException {
         String fileName = "video_" + System.currentTimeMillis() + ".mp4";
         try (InputStream is = Files.newInputStream(videoFile)) {
             String fileId = storageService.upload(is, fileName, "video/mp4");
             String url = storageService.getAccessUrl(fileId);
-            log.info("Video stored: fileId={}, url={}", fileId, url);
-            return url;
+            long size = Files.size(videoFile);
+            log.info("Video stored: fileId={}, url={}, size={} bytes", fileId, url, size);
+            return new StoreResult(url, size);
         }
+    }
+
+    // ==================== Compose Options ====================
+
+    /**
+     * 合成参数：输出分辨率/比例、画质、预览水印、BGM
+     * 比例裁剪由滤镜 scale+crop 完成（支持 16:9 / 9:16 / 1:1）
+     */
+    public static class ComposeOptions {
+        private int width = VIDEO_WIDTH;
+        private int height = VIDEO_HEIGHT;
+        private int crf = 23;
+        private String watermark;
+        private Path bgmPath;
+        private String subtitleAss;
+
+        public ComposeOptions width(int width) { this.width = width; return this; }
+        public ComposeOptions height(int height) { this.height = height; return this; }
+        public ComposeOptions crf(int crf) { this.crf = crf; return this; }
+        public ComposeOptions watermark(String watermark) { this.watermark = watermark; return this; }
+        public ComposeOptions bgmPath(Path bgmPath) { this.bgmPath = bgmPath; return this; }
+        public ComposeOptions subtitleAss(String subtitleAss) { this.subtitleAss = subtitleAss; return this; }
+
+        public int getWidth() { return width; }
+        public int getHeight() { return height; }
+        public int getCrf() { return crf; }
+        public String getWatermark() { return watermark; }
+        public Path getBgmPath() { return bgmPath; }
+        public String getSubtitleAss() { return subtitleAss; }
     }
 
     // ==================== Utilities ====================
@@ -398,10 +609,10 @@ public class VideoComposeService {
             output = reader.lines().collect(java.util.stream.Collectors.joining("\n"));
         }
 
-        boolean finished = process.waitFor(5, java.util.concurrent.TimeUnit.MINUTES);
+        boolean finished = process.waitFor(composeTimeoutMinutes, java.util.concurrent.TimeUnit.MINUTES);
         if (!finished) {
             process.destroyForcibly();
-            throw new RuntimeException(taskName + " timed out (5 min)");
+            throw new RuntimeException(taskName + " timed out (" + composeTimeoutMinutes + " min)");
         }
 
         int exitCode = process.exitValue();

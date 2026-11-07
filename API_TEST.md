@@ -560,7 +560,306 @@ curl http://localhost:8080/api/image/records/your-session-id
 
 ---
 
-## 七、完整测试流程
+## 七、AI 短视频工作室接口（需要登录）
+
+完整工作流：**创意想法 → 分镜脚本 → 提示词优化 → 并行图片生成（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出**
+
+前端页面：http://localhost:8080/video-studio
+
+> 视频合成依赖 FFmpeg（含 ffprobe），旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时自动跳过配音）。
+
+### 7.1 生成分镜脚本
+
+输入创意想法，LLM 生成多镜头分镜脚本并持久化保存：
+
+```bash
+curl -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "一只橘猫的温馨日常，适合社交平台投放"}'
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "title": "橘猫的一天",
+    "theme": "温馨治愈",
+    "status": "DRAFT",
+    "shots": [
+      {
+        "id": 11, "shotOrder": 1,
+        "sceneDescription": "清晨阳光洒进窗台，橘猫蜷缩在毛毯上睡觉",
+        "cameraMovement": "缓慢推进", "durationSeconds": 5,
+        "narration": "清晨的第一缕阳光",
+        "imagePrompt": "A ginger cat sleeping on a blanket in morning sunlight...",
+        "imageUrl": null, "imageStatus": "PENDING"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 7.2 脚本列表 / 详情 / 更新 / 删除
+
+```bash
+# 脚本列表（仅当前用户的）
+curl http://localhost:8080/api/video/scripts
+
+# 脚本详情（含全部镜头）
+curl http://localhost:8080/api/video/scripts/1
+
+# 重命名
+curl -X PUT http://localhost:8080/api/video/scripts/1 \
+  -H "Content-Type: application/json" \
+  -d '{"title": "新标题"}'
+
+# 删除脚本（含镜头）
+curl -X DELETE http://localhost:8080/api/video/scripts/1
+```
+
+**列表响应：**
+```json
+{ "success": true, "data": [ { "id": 1, "title": "橘猫的一天", "shotCount": 5, "status": "DRAFT" } ] }
+```
+
+---
+
+### 7.3 镜头管理（增删改 / 拖拽排序）
+
+```bash
+# 添加镜头（追加到末尾）
+curl -X POST http://localhost:8080/api/video/scripts/1/shots \
+  -H "Content-Type: application/json" \
+  -d '{"sceneDescription":"新的镜头","narration":"","imagePrompt":"","cameraMovement":"固定","durationSeconds":5}'
+
+# 更新镜头（任意字段；imagePrompt 变化时自动清空旧图并置为 PENDING）
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/11 \
+  -H "Content-Type: application/json" \
+  -d '{"durationSeconds": 6, "narration": "修改后的旁白"}'
+
+# 删除镜头
+curl -X DELETE http://localhost:8080/api/video/scripts/1/shots/11
+
+# 拖拽排序（shotIds 为全量有序 ID 列表）
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/reorder \
+  -H "Content-Type: application/json" \
+  -d '{"shotIds": [13, 11, 12]}'
+```
+
+> 提示词变化后旧图片失效：更新 imagePrompt 时服务端会自动清空 imageUrl/imageFileId 并将 imageStatus 置回 PENDING，需重新生成图片。
+
+---
+
+### 7.4 提示词优化（8 种视觉风格）
+
+```bash
+# 获取风格列表
+curl http://localhost:8080/api/video/enhance-prompt/styles
+
+# 单个提示词优化（中文场景描述 → 高质量英文提示词）
+curl -X POST http://localhost:8080/api/video/enhance-prompt \
+  -H "Content-Type: application/json" \
+  -d '{"sceneDescription": "夕阳下橘猫懒洋洋地卧在窗台", "style": "CINEMATIC_REALISM"}'
+
+# 批量优化脚本所有镜头的提示词（逐镜头调 LLM，耗时较长）
+curl -X POST http://localhost:8080/api/video/enhance-prompt/script/1 \
+  -H "Content-Type: application/json" \
+  -d '{"style": "ANIME"}'
+```
+
+**风格列表：** `CINEMATIC_REALISM`（电影写实）、`ANIME`（动漫）、`WATERCOLOR`（水彩）、`CYBERPUNK`（赛博朋克）、`PIXAR_3D`（皮克斯3D）、`VINTAGE`（复古）、`CHINESE_PAINTING`（国画）、`FANTASY`（奇幻），也支持中文传参（如 `"风格": "动漫"`）。
+
+**单个优化响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "enhancedPrompt": "A ginger cat lounging on a windowsill at golden hour, warm cinematic lighting...",
+    "negativePrompt": "text, watermark, blurry, low quality",
+    "style": "CINEMATIC_REALISM",
+    "styleName": "电影写实"
+  }
+}
+```
+
+---
+
+### 7.5 图片生成（单镜头 / 批量 SSE / 生成器管理）
+
+```bash
+# 单镜头生成（style 可选；本地 SD 生成器会附加负面提示词）
+curl -X POST http://localhost:8080/api/video/images/shot/1/11 \
+  -H "Content-Type: application/json" \
+  -d '{"style": "CINEMATIC_REALISM"}'
+
+# 生成器列表（含可用性检测）
+curl http://localhost:8080/api/video/images/generators
+
+# 运行时切换生成器（type: dashscope / local）
+curl -X PUT "http://localhost:8080/api/video/images/generator?type=local"
+```
+
+**批量并行生成（SSE，浏览器原生 EventSource 仅支持 GET）：**
+
+```
+GET /api/video/images/script/1/stream?style=CINEMATIC_REALISM
+Accept: text/event-stream
+```
+
+**SSE 事件类型：**
+
+| 事件 | data 内容 |
+|------|-----------|
+| `START` | `{totalShots, message}` |
+| `SHOT_START` | `{shotId, shotOrder, currentShotIndex, message}` |
+| `SHOT_COMPLETE` | `{shotId, imageUrl, completedShots, failedShots, totalShots}` |
+| `SHOT_FAILED` | `{shotId, completedShots, failedShots, message}` |
+| `COMPLETE` | `{completedShots, failedShots, message}` |
+| `ERROR` | `{message}` |
+
+> 后端并行度由 `image.generation.parallelism` 控制（默认 3），失败自动重试（`image.generation.retry-attempts`）。
+
+---
+
+### 7.6 视频预览与导出
+
+```bash
+# 480p 快速预览（低分辨率 + 水印，秒级出片确认效果）
+curl -X POST http://localhost:8080/api/video/export/preview \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "aspectRatio": "16:9", "bgmId": null, "subtitle": true}'
+
+# 高清导出（720p/1080p，可选 BGM 与字幕烧录）
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true}'
+
+# 导出历史（含失败原因，可重新下载）
+curl http://localhost:8080/api/video/exports/1
+```
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `scriptId` | long | 是 | - | 脚本ID |
+| `resolution` | string | 否 | `720p` | 高清导出分辨率（720p/1080p），预览固定 480p |
+| `aspectRatio` | string | 否 | `16:9` | 画面比例（16:9 / 9:16 / 1:1） |
+| `bgmId` | long | 否 | null | 使用的 BGM，null 表示不配乐 |
+| `subtitle` | boolean | 否 | false | 是否烧录字幕（无旁白时自动忽略） |
+
+**分辨率 × 比例 → 输出尺寸：**
+
+| 分辨率\比例 | 16:9 横屏(B站) | 9:16 竖屏(抖音) | 1:1 方形(小红书) |
+|--------------|----------------|----------------|----------------|
+| 480p（预览） | 854x480 | 480x854 | 480x480 |
+| 720p | 1280x720 | 720x1280 | 720x720 |
+| 1080p | 1920x1080 | 1080x1920 | 1080x1080 |
+
+> - 所有镜头图片必须为 READY 状态才可导出
+> - 预览版叠加半透明 "PREVIEW" 水印、crf 28；正式版无水印、crf 23
+> - 高清导出成功后脚本状态自动变为 EXPORTED
+> - 合成流程：图片下载 → Ken Burns 动效 + xfade 转场 → Edge TTS 旁白（可用时）→ BGM 混音（可选，音量 15% + 2s 淡入/3s 淡出）→ 字幕烧录（可选）→ 存储
+
+**响应（data.video 部分）：**
+```json
+{
+  "videoUrl": "/images/2026/11/07/video_1730966400000.mp4",
+  "fileSizeBytes": 2512345,
+  "width": 1080, "height": 1920,
+  "totalDuration": 21,
+  "hasNarration": true, "hasAudio": true, "hasBgm": true, "hasSubtitle": true
+}
+```
+
+---
+
+### 7.7 BGM 管理（音乐库 / AI 推荐 / 上传）
+
+```bash
+# BGM 列表（内置 + 当前用户上传，可按分类过滤 ?category=happy）
+curl http://localhost:8080/api/video/bgm
+
+# AI 推荐BGM（LLM 分析主题情感后匹配分类曲目）
+curl "http://localhost:8080/api/video/bgm/recommend?theme=%E6%B8%A9%E9%A6%A8%E6%B2%BB%E6%84%88%E7%9A%84%E7%8C%AB%E5%92%AA%E6%97%A5%E5%B8%B8"
+
+# 上传自定义 BGM（mp3/wav/ogg/m4a/flac）
+curl -X POST http://localhost:8080/api/video/bgm/upload \
+  -F "file=@./my-music.mp3" \
+  -F "name=我的配乐" \
+  -F "category=happy"
+```
+
+**推荐响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "category": "calm",
+    "reason": "温馨治愈的猫咪日常适合舒缓配乐",
+    "available": true,
+    "bgm": { "id": 2, "name": "peaceful piano", "category": "calm", "durationSeconds": 60 }
+  }
+}
+```
+
+> **内置音乐库**：将免版权音乐按 `分类__名称.mp3` 命名放入 `./data/bgm/` 目录（如 `happy__sunny_morning.mp3`），启动时自动扫描注册。分类：`happy`（轻快）/ `sad`（忧伤）/ `epic`（史诗）/ `calm`（舒缓）/ `tense`（紧张）。
+
+---
+
+### 7.8 字幕系统（SRT 导出 / 效果预览）
+
+根据镜头旁白自动生成带时间轴的字幕（时间轴与 xfade 转场精确对齐：转场中点切换，相邻字幕无缝不重叠）：
+
+```bash
+# 生成 SRT 字幕文件（上传存储 + 返回内容，社媒平台可直接上传）
+curl -X POST http://localhost:8080/api/video/subtitle/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1}'
+
+# 渲染一帧字幕效果预览图（首镜头图片 + 当前比例 + 第一条字幕）
+curl -X POST http://localhost:8080/api/video/subtitle/preview \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "aspectRatio": "9:16", "style": {"fontSize": 28, "position": "bottom"}}'
+```
+
+**generate 响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "srtUrl": "/images/2026/11/07/script_1_subtitle_1730966400000.srt",
+    "srtContent": "1\n00:00:00,000 --> 00:00:03,600\n清晨的第一缕阳光\n\n...",
+    "cueCount": 5
+  }
+}
+```
+
+**preview 可选 style 参数：**
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `fontName` | string | `Microsoft YaHei`（可配 `video.subtitle.font-name`） | 字体名，需系统已安装 |
+| `fontSize` | int | `24` | 字号（1280x720 坐标系，自动等比缩放） |
+| `fontColor` | string | `#FFFFFF` | 字体颜色（#RRGGBB） |
+| `outlineColor` | string | `#000000` | 描边颜色 |
+| `outlineWidth` | int | `2` | 描边宽度（像素） |
+| `position` | string | `bottom` | 显示位置：`bottom` / `center` / `top` |
+
+**preview 响应：**
+```json
+{ "success": true, "data": { "previewUrl": "/images/2026/11/07/subtitle_preview_1730966400000.png", "width": 720, "height": 1280 } }
+```
+
+> 字幕烧录随导出进行（7.6 的 `subtitle` 参数，FFmpeg subtitles 滤镜 + libass）；前端工作流界面亦提供「烧录字幕」开关、「导出SRT」与「字幕预览」按钮。
+
+---
+
+## 八、完整测试流程
 
 ### 步骤1：获取 RSA 公钥和验证码
 ```bash
@@ -632,9 +931,38 @@ curl -X POST http://localhost:8080/api/image/generate \
 curl http://localhost:8080/api/image/records
 ```
 
+### 步骤6：AI 短视频工作流（完整链路）
+```bash
+# 1. 生成分镜脚本
+SCRIPT_ID=$(curl -s -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea":"一只橘猫的温馨日常"}' | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+
+# 2. 批量优化提示词（可选，耗时较长）
+curl -X POST http://localhost:8080/api/video/enhance-prompt/script/$SCRIPT_ID \
+  -H "Content-Type: application/json" -d '{"style":"CINEMATIC_REALISM"}'
+
+# 3. 批量并行生成图片（SSE 实时进度）
+curl -N "http://localhost:8080/api/video/images/script/$SCRIPT_ID/stream?style=CINEMATIC_REALISM"
+
+# 4. 480p 快速预览
+curl -X POST http://localhost:8080/api/video/export/preview \
+  -H "Content-Type: application/json" \
+  -d "{\"scriptId\":$SCRIPT_ID,\"aspectRatio\":\"16:9\",\"bgmId\":null}"
+
+# 5. 高清导出（可选 BGM）
+BGM_ID=$(curl -s "http://localhost:8080/api/video/bgm" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d "{\"scriptId\":$SCRIPT_ID,\"resolution\":\"1080p\",\"aspectRatio\":\"16:9\",\"bgmId\":$BGM_ID}"
+
+# 6. 查看导出历史
+curl http://localhost:8080/api/video/exports/$SCRIPT_ID
+```
+
 ---
 
-## 八、使用 Postman 测试
+## 九、使用 Postman 测试
 
 **环境变量：**
 - `base_url`: `http://localhost:8080`
@@ -669,10 +997,23 @@ curl http://localhost:8080/api/image/records
 | 23 | Generate Image | POST | `{{base_url}}/api/image/generate` | `{"prompt":"一只可爱的橘猫","size":"1024x1024","n":1}` |
 | 24 | Get Image Records | GET | `{{base_url}}/api/image/records` | - |
 | 25 | Get Image Records By Session | GET | `{{base_url}}/api/image/records/{{session_id}}` | - |
+| 26 | Generate Story Script | POST | `{{base_url}}/api/video/scripts/generate` | `{"idea":"一只橘猫的温馨日常"}` |
+| 27 | List Video Scripts | GET | `{{base_url}}/api/video/scripts` | - |
+| 28 | Get Script Detail | GET | `{{base_url}}/api/video/scripts/{{script_id}}` | - |
+| 29 | Enhance Prompt | POST | `{{base_url}}/api/video/enhance-prompt` | `{"sceneDescription":"夕阳下的橘猫","style":"CINEMATIC_REALISM"}` |
+| 30 | Enhance Script Prompts | POST | `{{base_url}}/api/video/enhance-prompt/script/{{script_id}}` | `{"style":"ANIME"}` |
+| 31 | Generate Shot Image | POST | `{{base_url}}/api/video/images/shot/{{script_id}}/{{shot_id}}` | `{"style":"CINEMATIC_REALISM"}` |
+| 32 | Batch Images (SSE) | GET | `{{base_url}}/api/video/images/script/{{script_id}}/stream?style=CINEMATIC_REALISM` | - |
+| 33 | List BGM | GET | `{{base_url}}/api/video/bgm` | - |
+| 34 | Export Preview | POST | `{{base_url}}/api/video/export/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
+| 35 | Export HD | POST | `{{base_url}}/api/video/export/hd` | `{"scriptId":1,"resolution":"1080p","aspectRatio":"9:16","bgmId":1}` |
+| 36 | Export History | GET | `{{base_url}}/api/video/exports/{{script_id}}` | - |
+| 37 | Generate SRT | POST | `{{base_url}}/api/video/subtitle/generate` | `{"scriptId":1}` |
+| 38 | Subtitle Preview | POST | `{{base_url}}/api/video/subtitle/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
 
 ---
 
-## 九、访问 H2 数据库控制台
+## 十、访问 H2 数据库控制台
 
 - URL: http://localhost:8080/h2-console
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
@@ -697,13 +1038,22 @@ SELECT * FROM model_param_presets;
 
 -- 查看图像生成记录
 SELECT * FROM image_records ORDER BY create_time DESC;
+
+-- 短视频：故事脚本与镜头
+SELECT id, title, theme, status FROM story_scripts;
+SELECT id, script_id, shot_order, image_status FROM story_shots ORDER BY script_id, shot_order;
+
+-- 短视频：提示词优化记录 / 导出记录 / BGM
+SELECT * FROM image_prompt_optimizations ORDER BY id DESC LIMIT 10;
+SELECT id, script_id, resolution, aspect_ratio, status FROM video_exports ORDER BY created_at DESC;
+SELECT id, name, category, is_built_in, user_id FROM bgm_tracks;
 ```
 
 ---
 
-## 十、配置说明
+## 十一、配置说明
 
-### 9.1 图像生成配置
+### 11.1 图像生成配置
 
 ```yaml
 spring:
@@ -712,7 +1062,7 @@ spring:
       api-key: ${DASHSCOPE_API_KEY:your-api-key}  # 阿里云百炼平台获取
 ```
 
-### 9.2 存储配置
+### 11.2 存储配置
 
 ```yaml
 storage:
@@ -732,7 +1082,7 @@ storage:
     bucket-name: ${MINIO_BUCKET:ai-images}
 ```
 
-### 9.3 模型配置
+### 11.3 模型配置
 
 ```yaml
 spring:
@@ -740,7 +1090,7 @@ spring:
     active: deepseek,openai,h2  # 可组合: ollama/openai/deepseek + h2/postgresql
 ```
 
-### 9.4 RAG 配置
+### 11.4 RAG 配置
 
 ```yaml
 rag:
@@ -751,16 +1101,43 @@ rag:
     initialize-schema: true  # 自动创建表
 ```
 
-### 9.5 上下文长度配置
+### 11.5 上下文长度配置
 
 ```yaml
 chat:
   max-context-messages: 10   # 保留最近10轮对话
 ```
 
+### 11.6 AI 短视频工作室配置
+
+```yaml
+image:
+  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  local:                              # 本地 SD WebUI 配置
+    base-url: http://127.0.0.1:7860
+    steps: 25
+    cfg-scale: 7.0
+    timeout: 120                      # 本地生成超时（秒）
+  generation:
+    parallelism: 3                     # 并行生成数（避免云端 API 限流）
+    retry-attempts: 1                 # 失败重试次数
+    retry-delay-ms: 2000              # 重试间隔（毫秒）
+    total-timeout-seconds: 300        # 批量生成总超时（秒）
+    default-size: 1280x720           # 默认图片尺寸
+
+video:
+  compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）
+  subtitle:                          # 模块 F：字幕烧录
+    font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN）
+
+bgm:
+  library-path: ./data/bgm          # 内置音乐库目录，文件名格式 category__name.mp3
+                                    #（如 happy__sunny_morning.mp3），启动时自动扫描注册
+```
+
 ---
 
-## 十一、注意事项
+## 十二、注意事项
 
 1. **登录要求**：聊天和文档接口需要先登录，未登录返回 401/403
 2. **会话归属**：每个会话绑定创建用户，用户只能操作自己的会话
@@ -774,10 +1151,16 @@ chat:
 10. **数据库持久化**：H2 文件模式存储在 `./data/chatdb.mv.db`
 11. **图像生成**：需配置 `DASHSCOPE_API_KEY`，图像自动转存到配置的存储服务
 12. **多存储切换**：通过 `storage.type` 配置切换本地/OSS/MinIO/FastDFS，无需修改业务代码
+13. **短视频依赖**：视频合成需 FFmpeg（含 ffprobe）在 PATH 中；旁白配音需 `pip install edge-tts`（未安装时自动跳过，输出无声视频）
+14. **SSE 批量生成**：使用原生 EventSource 监听 `GET /api/video/images/script/{id}/stream`（EventSource 仅支持 GET），事件类型见 7.5
+15. **提示词变化**：更新镜头 imagePrompt 后旧图片引用自动清空，需重新生成图片后才能导出视频
+16. **BGM 权限**：用户只能使用内置 BGM 和自己上传的 BGM；导出时自动降低音量（约 -16dB）并淡入淡出
+17. **导出前置条件**：所有镜头 imageStatus 必须为 READY，否则返回具体哪些镜头未就绪
+18. **字幕烧录**：需系统已安装配置的中文字体（默认微软雅黑）；无旁白时 subtitle 参数自动忽略；烧录随导出进行，无需单独调用
 
 ---
 
-## 十二、常见问题
+## 十三、常见问题
 
 **Q: 为什么聊天接口返回 401？**
 A: 需要先登录，调用 `/api/auth/login` 并确保 Cookie 被保存。
@@ -809,3 +1192,24 @@ A: 本地存储模式下图片通过 `/images/日期/文件名` 访问（如 `/i
 
 **Q: 如何切换存储方式？**
 A: 修改 `application.yml` 中的 `storage.type` 配置：`local` → `oss` / `minio` / `fastdfs`，无需重启。
+
+**Q: 短视频导出时提示 FFmpeg 错误或超时？**
+A: 确认 `ffmpeg -version` 可用（含 ffprobe）。多镜头 1080p 合成耗时较长属正常现象，超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）。BGM 混音需 ffmpeg ≥ 4.4。
+
+**Q: BGM 混音后旁白声音变小了？**
+A: 后端使用 `amix normalize=0` 保证旁白原音量，BGM 音量固定降至 15%（约 -16dB）不抢旁白；若听感不适可更换更轻柔的曲目。
+
+**Q: 如何添加内置 BGM？**
+A: 将免版权音乐按 `分类__名称.mp3` 命名放入 `./data/bgm/`（如 `calm__peaceful_piano.mp3`），重启后自动注册；也可用前端「上传」按钮或 `POST /api/video/bgm/upload` 添加。
+
+**Q: SSE 批量生成图片为什么是 GET 请求？**
+A: 浏览器原生 EventSource 仅支持 GET，故批量生成端点为 `GET /api/video/images/script/{id}/stream`，风格通过 `?style=` 查询参数传入。
+
+**Q: 9:16 竖屏导出的画面如何裁剪？**
+A: 每张图片先按目标比例 `scale + crop`（保持原始纵横比居中裁剪），再做 Ken Burns 动效，因此 16:9 图片源导出 9:16 视频不会变形。
+
+**Q: 字幕时间轴是如何计算的？**
+A: 每条字幕从上一转场中点开始、到下一转场中点结束（与 xfade 转场同步切换，相邻字幕无缝不重叠）；实际视频时长已扣除转场重叠，与画面严格对齐。
+
+**Q: 字幕烧录后乱码或字体不对？**
+A: 字幕字体需系统已安装，默认微软雅黑；Linux/Docker 可在 `video.subtitle.font-name` 改为 `Source Han Sans CN` / `Noto Sans CJK SC`，并用 `POST /api/video/subtitle/preview` 预览确认。

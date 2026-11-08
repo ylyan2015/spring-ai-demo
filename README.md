@@ -32,6 +32,7 @@
 - ✅ **图像生成记录** - 生成记录持久化存储，关联用户与聊天会话，支持历史查询
 - ✅ **AI 短视频工作室** - 创意想法 → LLM 生成分镜脚本（可编辑/拖拽排序）→ 提示词 LLM 优化（8 种风格）→ 并行生成画面（SSE 实时进度）→ 480p 快速预览 / 720p/1080p 高清导出
 - ✅ **多比例视频导出** - 16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览版带水印、正式版无水印，导出历史可追溯
+- ✅ **社媒一键导出** - 抖音/B站/小红书/快手/视频号/YT Shorts 六大平台预设（比例+分辨率+推荐时长校验）、封面帧截取、品牌 Logo 角标、批量三平台导出
 - ✅ **BGM 配乐** - 内置音乐库（按情感分类）+ LLM 智能推荐 + 自定义上传；自动降音量、淡入淡出、短曲循环
 - ✅ **字幕系统** - 旁白自动生成带时间轴字幕（时间轴与转场精确对齐），支持 SRT 单独导出与 ASS 烧录进画面，样式可定制（字体/字号/颜色/描边/位置）
 - ✅ **多图像生成后端** - DashScope 通义万相（云端）与本地 Stable Diffusion / FLUX（SD WebUI 协议）配置切换，失败自动重试
@@ -242,6 +243,7 @@ Web 界面右侧提供知识库面板：
 - 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换；SSE 实时进度条、失败自动重试、单镜头重新生成
 - 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
 - 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；支持单独导出 SRT 文件与一帧字幕效果预览
+- 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出；一键从导出视频截取封面帧
 - 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
 
 > **说明**：视频合成依赖 FFmpeg；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。
@@ -309,6 +311,7 @@ spring-ai-demo/
 │   │   ├── AuthController.java         # 认证控制器（注册/登录/验证码）
 │   │   ├── BgmController.java          # 短视频：BGM 列表/推荐/上传
 │   │   ├── SubtitleController.java    # 短视频：SRT 导出/字幕预览
+│   │   ├── SocialMediaExportController.java # 短视频：平台导出/封面截帧
 │   │   ├── ChatController.java         # 聊天控制器（REST API + SSE）
 │   │   ├── DocumentController.java     # 知识库文档管理控制器
 │   │   ├── ImageController.java        # 图像生成控制器（REST API）
@@ -359,6 +362,7 @@ spring-ai-demo/
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
 │   ├── Storyboard.java / Shot.java    # 分镜 DTO（Phase 1）
 │   ├── VisualStyle.java               # 8 种视觉风格预设（含负面提示词）
+│   ├── PlatformPreset.java           # 社媒平台预设枚举（抖音/B站/小红书等六平台）
 │   ├── ImageGenerationProgress.java   # SSE 进度事件
 │   ├── VideoScriptService.java        # 脚本生成（Phase 1）
 │   ├── VideoComposeService.java       # FFmpeg 合成 + ComposeOptions（多比例/水印/BGM 混音/字幕烧录）
@@ -621,6 +625,8 @@ image:
 
 video:
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头建议 ≥8
+  watermark:                        # 社媒导出：品牌水印
+    logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN）
 
@@ -637,6 +643,7 @@ bgm:
 - **BGM 音乐库**：将免版权音乐按 `category__name.mp3` 命名放入 `./data/bgm/` 即自动注册，也可通过前端上传按钮添加
 - **字幕**：字幕时间轴与 xfade 转场精确对齐；字体需系统已安装（默认微软雅黑，`video.subtitle.font-name` 可改）；烧录使用 FFmpeg subtitles 滤镜（libass，常用构建均已内置）
 - **导出比例**：16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览固定 480p + 水印，正式导出 720p/1080p 无水印
+- **平台导出**：平台预设自动映射 1080p 分辨率；封面默认截取最近一次成功导出的中间帧；Logo 角标需配置 `video.watermark.logo-path` 后在导出请求中传 `withLogo: true` 生效
 
 ### 完整配置示例
 
@@ -755,13 +762,16 @@ spring:
 | `/api/video/images/generators` | GET | 可用图像生成器列表（含可用性） |
 | `/api/video/images/generator` | PUT | 运行时切换图像生成器 |
 | `/api/video/export/preview` | POST | 480p 快速预览（带水印，crf 28，可选 BGM/字幕） |
-| `/api/video/export/hd` | POST | 高清导出（720p/1080p × 16:9/9:16/1:1，可选 BGM/字幕烧录） |
-| `/api/video/exports/{scriptId}` | GET | 导出历史（含失败原因） |
+| `/api/video/export/hd` | POST | 高清导出（720p/1080p × 16:9/9:16/1:1，可选 BGM/字幕烧录/Logo） |
+| `/api/video/exports/{scriptId}` | GET | 导出历史（含失败原因与封面） |
 | `/api/video/bgm` | GET | BGM 列表（内置 + 用户上传） |
 | `/api/video/bgm/recommend?theme=` | GET | LLM 按主题智能推荐 BGM |
 | `/api/video/bgm/upload` | POST | 上传自定义 BGM（multipart） |
 | `/api/video/subtitle/generate` | POST | 生成 SRT 字幕文件（时间轴按转场对齐） |
 | `/api/video/subtitle/preview` | POST | 渲染一帧字幕效果预览图（可选样式覆盖） |
+| `/api/video/export/platforms` | GET | 社媒平台预设列表（六平台规格） |
+| `/api/video/export/platform` | POST | 按平台预设一键导出（抖音/B站/小红书/快手/视频号/YT Shorts） |
+| `/api/video/cover/generate` | POST | 从导出视频截取封面帧（默认中间帧，可指定时刻/导出记录） |
 | `/api/video/generate` / `/api/video/compose` | POST | 旧一次性流程 API（保留兼容） |
 
 > 视频工作室页面：http://localhost:8080/video-studio （详见 [API_TEST.md](API_TEST.md) 第七节）
@@ -919,6 +929,13 @@ cat .env  # 确认 API Key 非占位符
   `video.subtitle.font-name: Source Han Sans CN`（或 Noto Sans CJK SC）
 - 烧录使用 FFmpeg subtitles 滤镜（libass），常用发行版构建均已内置；如报错无 libass 请更换完整版 FFmpeg
 - 也可通过 `POST /api/video/subtitle/preview` 传 `style` 字段自定义字体/字号/颜色/描边/位置后预览确认
+
+### 17. 如何启用品牌 Logo 角标与封面图？
+
+- **Logo**：将透明底 PNG（建议宽 ≤300px）放到本地路径，配置 `video.watermark.logo-path: D:/assets/logo.png`，
+  然后在前端勾选「Logo」或导出请求中传 `"withLogo": true`；未配置时自动跳过不报错
+- **封面**：导出成功后（前端结果区或导出历史）点「封面」即可从该视频截帧；默认取中间帧，
+  也可调 `POST /api/video/cover/generate` 传 `timeOffset`（秒）指定时刻、`exportId` 指定某次导出；封面地址会回写进导出记录
 
 ## 参考资料
 

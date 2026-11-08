@@ -699,7 +699,7 @@ curl -X POST http://localhost:8080/api/video/export/preview \
 # HD export (720p/1080p, optional BGM and subtitle burning)
 curl -X POST http://localhost:8080/api/video/export/hd \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true}'
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "withLogo": true}'
 
 # Export history (with failure reasons, re-downloadable)
 curl http://localhost:8080/api/video/exports/1
@@ -714,6 +714,7 @@ curl http://localhost:8080/api/video/exports/1
 | `aspectRatio` | string | No | `16:9` | Aspect ratio (16:9 / 9:16 / 1:1) |
 | `bgmId` | long | No | null | BGM to use; null means no music |
 | `subtitle` | boolean | No | false | Burn subtitles into frames (automatically ignored when no narration) |
+| `withLogo` | boolean | No | false | Overlay brand logo corner badge (silently ignored when `video.watermark.logo-path` is unconfigured) |
 
 **Resolution × ratio → output size:**
 
@@ -726,7 +727,7 @@ curl http://localhost:8080/api/video/exports/1
 > - All shots must be in READY state before exporting
 > - Preview adds a semi-transparent "PREVIEW" watermark with crf 28; formal exports have no watermark with crf 23
 > - Script status automatically becomes EXPORTED after a successful HD export
-> - Pipeline: image download → Ken Burns + xfade → Edge TTS narration (if available) → BGM mixing (optional: 15% volume + 2s fade-in / 3s fade-out) → subtitle burning (optional) → storage
+> - Pipeline: image download → Ken Burns + xfade → Edge TTS narration (if available) → BGM mixing (optional: 15% volume + 2s fade-in / 3s fade-out) → logo corner badge (optional) → subtitle burning (optional) → storage
 
 **Response (data.video):**
 ```json
@@ -820,6 +821,56 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 ```
 
 > Subtitle burning happens during export (the `subtitle` parameter in 7.6, FFmpeg subtitles filter + libass); the frontend workflow also provides a "Burn Subtitles" toggle plus "Export SRT" and "Subtitle Preview" buttons.
+
+---
+
+### 7.9 Social Media Export (Platform Presets / Cover Frame)
+
+#### Platform Preset List
+
+`GET /api/video/export/platforms` returns the six-platform specs:
+
+| name | displayName | Ratio | Resolution | Recommended Duration |
+|------|-------------|-------|------------|----------------------|
+| `DOUYIN` | Douyin (TikTok CN) | 9:16 | 1080x1920 | <=60s |
+| `BILIBILI` | Bilibili | 16:9 | 1920x1080 | unlimited |
+| `XIAOHONGSHU` | Xiaohongshu (RED) | 1:1 | 1080x1080 | <=60s |
+| `KUAISHOU` | Kuaishou | 9:16 | 1080x1920 | <=60s |
+| `WEIXIN_VIDEO` | WeChat Channels | 16:9 | 1920x1080 | unlimited |
+| `YOUTUBE_SHORTS` | YouTube Shorts | 9:16 | 1080x1920 | <=60s |
+
+#### Export by Platform
+
+```bash
+curl -X POST http://localhost:8080/api/video/export/platform \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "withLogo": false}'
+```
+
+- `platform` accepts the enum name (case-insensitive) or the Chinese display name (e.g. `"抖音"`)
+- Resolution is fixed to the 1080p tier; exceeding a platform's recommended duration is **not blocked** — the response carries a `durationWarning` hint
+- Response data: exportHd result + `platform` spec object (+ `durationWarning`)
+
+#### Generate Cover Frame
+
+```bash
+# Extract the middle frame from the latest successful export (default)
+curl -X POST http://localhost:8080/api/video/cover/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1}'
+
+# Specify an export record and a frame time
+curl -X POST http://localhost:8080/api/video/cover/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "exportId": 12, "timeOffset": 3.5}'
+```
+
+**Response:**
+```json
+{ "success": true, "data": { "coverUrl": "/images/2026/11/08/video_cover_1731000000000.jpg", "timeOffsetSeconds": 10.5, "exportId": 12 } }
+```
+
+> The cover URL is written back to the export record (a thumbnail is shown in export history); batch multi-platform export is implemented by the frontend calling `/export/platform` in parallel (no dedicated batch endpoint) — API users can invoke it concurrently themselves.
 
 ---
 
@@ -973,6 +1024,9 @@ curl http://localhost:8080/api/video/exports/$SCRIPT_ID
 | 36 | Export History | GET | `{{base_url}}/api/video/exports/{{script_id}}` | - |
 | 37 | Generate SRT | POST | `{{base_url}}/api/video/subtitle/generate` | `{"scriptId":1}` |
 | 38 | Subtitle Preview | POST | `{{base_url}}/api/video/subtitle/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
+| 39 | List Platforms | GET | `{{base_url}}/api/video/export/platforms` | - |
+| 40 | Export for Platform | POST | `{{base_url}}/api/video/export/platform` | `{"scriptId":1,"platform":"DOUYIN","subtitle":true}` |
+| 41 | Generate Cover | POST | `{{base_url}}/api/video/cover/generate` | `{"scriptId":1}` |
 
 ---
 
@@ -1090,6 +1144,8 @@ image:
 
 video:
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes)
+  watermark:                        # Social export: brand watermark
+    logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended; empty = disabled)
   subtitle:                          # Module F: subtitle burning
     font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
 
@@ -1120,6 +1176,7 @@ bgm:
 16. **BGM Permissions**: Users can only use built-in BGM and their own uploads; export automatically lowers BGM volume (~ -16dB) with fade in/out
 17. **Export Prerequisites**: All shots must be in READY state, otherwise the response lists which shots are not ready
 18. **Subtitle Burning**: Requires the configured CJK font installed (default Microsoft YaHei); the subtitle parameter is automatically ignored when no narration exists; burning happens during export, no separate call needed
+19. **Platform Export**: Presets are fixed to the 1080p tier; exceeding the recommended duration only warns without blocking; the cover defaults to the middle frame of the latest successful export and is written back to the record
 
 ---
 
@@ -1176,3 +1233,6 @@ A: Each cue starts at the previous transition's midpoint and ends at the next tr
 
 **Q: Garbled text or wrong font after subtitle burning?**
 A: The subtitle font must be installed (default Microsoft YaHei); on Linux/Docker set `video.subtitle.font-name` to `Source Han Sans CN` / `Noto Sans CJK SC`, and confirm with `POST /api/video/subtitle/preview`.
+
+**Q: How do I batch-export for multiple platforms?**
+A: The frontend "Batch Three Platforms" button issues three parallel calls to `POST /api/video/export/platform` (Douyin/Bilibili/Xiaohongshu); API users can invoke the endpoint concurrently themselves (one platform per call). FFmpeg encoding is CPU-intensive — keep concurrency to 2-3.

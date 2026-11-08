@@ -4,7 +4,7 @@
 > **定位**：AI 驱动的短视频自动生成工具，面向社交媒体投放
 > **技术栈**：Spring Boot 3.4 + Java 17 + Spring AI 1.0 + DeepSeek/Ollama + DashScope/本地SD + FFmpeg + Edge TTS
 > **创建日期**：2026-11-07
-> **最后更新**：2026-11-07（Phase 2 模块 A/B/C/D/E/F 已实现并通过代码审查）
+> **最后更新**：2026-11-08（Phase 2 模块 A/B/C/D/E/F/I 已实现，G 部分实现）
 
 ---
 
@@ -124,11 +124,12 @@ src/main/resources/templates/
 | D. 背景音乐 | ✅ 已实现 | `entity/Bgm.java`、`service/BgmService.java`（音乐库扫描 + LLM 推荐 + 上传）、`controller/BgmController.java`；混音集成在 `VideoComposeService.mixBgmIntoVideo()` | `/api/video/bgm` |
 | E. 并行图片生成 | ✅ 已实现 | `video/generator/*`（DashScope/本地 SD + 工厂）、`video/ImageGenerationProgress.java`、`service/ImageGenerationService.java`（并行 + SSE 进度 + 重试）、`controller/ImageGenerationController.java` | `/api/video/images` |
 | F. 字幕系统 | ✅ 已实现 | `video/subtitle/SubtitleService.java`（SRT/ASS 生成 + xfade 对齐时间轴）、`video/subtitle/SubtitleStyle.java`（字体/字号/颜色/描边/位置）、`controller/SubtitleController.java`；烧录集成在 `VideoComposeService.burnSubtitlesIntoVideo()`（subtitles 滤镜） | `/api/video/subtitle` |
+| I. 社交媒体导出 | ✅ 已实现 | `video/PlatformPreset.java`（六平台预设枚举）、`controller/SocialMediaExportController.java`；平台导出映射到已有 `VideoExportService.exportHd()`，封面截帧在 `VideoComposeService.renderVideoCover()`，Logo 角标在 `overlayLogoIntoVideo()` | `/api/video/export/platforms`、`/export/platform`、`/cover/generate` |
 | 前端工作流界面 | ✅ 已实现 | `templates/video-studio.html`（脚本管理/镜头编辑/拖拽排序/SSE 进度/导出面板/BGM 面板/导出历史） | - |
 | F. 字幕系统 | ✅ 已实现（见上表） | - | - |
 | G. 本地模型集成 | 🔶 部分完成 | `video/generator/LocalSdImageGenerator.java`（SD WebUI/FLUX 本地生成已可用）；Ollama LLM 已有 | - |
 | H. 视频模板系统 | ⬜ 未实现 | - | - |
-| I. 社交媒体导出优化 | 🔶 部分完成 | 多比例导出（16:9/9:16/1:1 × 480p/720p/1080p）已随模块 C 落地；平台预设/封面等未做 | - |
+| I. 社交媒体导出优化 | ✅ 已实现（见上表） | - | - |
 | J. 图片质量评估 | ⬜ 未实现 | - | - |
 
 > **实现说明**：
@@ -136,6 +137,7 @@ src/main/resources/templates/
 > 2. 模块 A 的实体命名为 `StoryScript` / `StoryShot`（即规划中的 video_project / video_shot）
 > 3. BGM 混音策略：音量降至 15%（约 -16dB）、开头 2s 淡入、结尾 3s 淡出（按实际视频时长计算，已扣除 xfade 转场重叠）、短曲自动循环
 > 4. 字幕策略（模块 F）：SRT（平台上传用）与 ASS（烧录用，subtitles 滤镜）双格式；字幕时间轴与 xfade 转场精确对齐（转场中点切换，无缝不重叠）；导出时可选烧录（`subtitle` 参数），亦可单独导出 SRT 文件；字体默认微软雅黑，可通过 `video.subtitle.font-name` 配置
+> 5. 社媒导出策略（模块 I）：平台预设映射到已有分辨率档位（零新增 FFmpeg 逻辑）；时长超平台推荐上限仅随响应提示不拦截（按实际输出时长计算，已扣除 xfade 重叠）；封面默认截取最近一次成功导出的中间帧并回写导出记录；批量多平台导出由前端 Promise.all 并行调 `/export/platform` 实现（FFmpeg 编码 CPU 密集，后端不引入异步任务表）；Logo 角标路径由 `video.watermark.logo-path` 配置、请求 `withLogo` 可选启用（未配置自动跳过）
 
 ---
 
@@ -643,7 +645,7 @@ CREATE TABLE video_template (
 
 ---
 
-### 模块 I：社交媒体导出优化（新增）
+### 模块 I：社交媒体导出优化（新增） ✅ 已实现（2026-11-08）
 
 > **这是什么**：针对不同社交媒体平台的规格要求，优化视频导出参数，包括分辨率、比例、封面图、水印等。
 >
@@ -862,7 +864,7 @@ mvn spring-boot:run
 | P0 | E. 并行图片生成 | ✅ 已完成 | 1 天 | 用户体验巨大提升 | 无 |
 | P1 | F. 字幕系统 | ✅ 已完成 | 1 天 | 社交媒体必备 | 无 |
 | P1 | B. 提示词优化器 | ✅ 已完成 | 1 天 | 显著提升图片质量 | 无 |
-| P1 | I. 社交媒体导出 | 🔶 部分完成（多比例导出已落地） | 1-2 天 | 多平台投放必备 | F |
+| P1 | I. 社交媒体导出 | ✅ 已完成（平台预设/封面/Logo/批量已落地） | 1-2 天 | 多平台投放必备 | F |
 | P2 | G. 本地模型集成 | 🔶 部分完成（本地 SD 生成已落地） | 2 天 | 降低成本、无网络依赖 | 无 |
 | P2 | C. 视频预览与导出 | ✅ 已完成 | 1-2 天 | 竖屏/横屏多场景 | I |
 | P2 | D. 背景音乐 | ✅ 已完成 | 1-2 天 | 氛围感提升 | 无 |
@@ -870,7 +872,7 @@ mvn spring-boot:run
 | P3 | J. 图片质量评估 | ⬜ 未实现 | 1-2 天 | 自动化质量保障 | G |
 
 **建议实现顺序**: A → E → F → B → I → G → C → D → H → J
-**当前进度**: A / E / B / C / D / F 已全部完成 ✅；下一步建议 I（平台导出预设）→ H（视频模板）
+**当前进度**: A / E / B / C / D / F / I 已全部完成 ✅；下一步建议 H（视频模板）→ J（图片质量评估）→ G 收尾（文档/预设提示词）
 
 ### Phase 3（Agent 化）— 长期规划
 
@@ -979,6 +981,7 @@ src/main/java/com/github/ylyan2015/springaidemo/
 │   ├── Storyboard.java / Shot.java / VideoScriptService.java / VideoController.java   # Phase 1（旧一次性流程，保留兼容）
 │   ├── VideoComposeService.java                # FFmpeg 合成 + ComposeOptions（分辨率/多比例/水印/BGM 混音/字幕烧录）
 │   ├── VisualStyle.java                        # 模块 B：8 种视觉风格预设（含负面提示词）
+│   ├── PlatformPreset.java                     # 模块 I：社媒平台预设枚举（六平台）
 │   ├── ImageGenerationProgress.java            # 模块 E：SSE 进度事件
 │   ├── subtitle/                               # 模块 F：字幕系统
 │   │   ├── SubtitleService.java                # SRT/ASS 生成 + xfade 对齐时间轴
@@ -1007,7 +1010,8 @@ src/main/java/com/github/ylyan2015/springaidemo/
     ├── StoryScriptController.java / ImagePromptOptimizerController.java
     ├── ImageGenerationController.java / VideoExportController.java
     ├── BgmController.java
-    └── SubtitleController.java                 # 模块 F：SRT 导出/字幕预览
+    ├── SubtitleController.java                 # 模块 F：SRT 导出/字幕预览
+    └── SocialMediaExportController.java       # 模块 I：平台导出/封面截帧
 
 src/main/resources/
 ├── templates/video-studio.html                # 完整工作流前端界面

@@ -116,6 +116,15 @@ public class VideoComposeService {
                 log.warn("BGM file not found, skipping BGM mix: {}", options.getBgmPath());
             }
 
+            // 模块 I：可选品牌 Logo 角标叠加（右下角，独立重编码 pass，不影响主合成滤镜链）
+            boolean hasLogo = false;
+            if (options.getLogoPath() != null && Files.exists(options.getLogoPath())) {
+                finalVideo = overlayLogoIntoVideo(finalVideo, options.getLogoPath(), options, workDir);
+                hasLogo = true;
+            } else if (options.getLogoPath() != null) {
+                log.warn("Logo file not found, skipping logo overlay: {}", options.getLogoPath());
+            }
+
             // 模块 F：可选字幕硬烧录（调用方预先生成 ASS 文本传入）
             boolean hasSubtitle = false;
             if (options.getSubtitleAss() != null && !options.getSubtitleAss().isBlank()) {
@@ -137,6 +146,7 @@ public class VideoComposeService {
             result.put("hasAudio", hasNarrationTrack || hasBgm); // 最终视频是否含音轨
             result.put("hasBgm", hasBgm);
             result.put("hasSubtitle", hasSubtitle);
+            result.put("hasLogo", hasLogo);
             return result;
 
         } catch (RuntimeException e) {
@@ -171,7 +181,7 @@ public class VideoComposeService {
         return paths;
     }
 
-    /** 下载单张图片到指定文件（含本地相对地址解析） */
+    /** 下载单张图片到指定文件（含本地相对地址解析，亦可用于视频等任意媒体下载） */
     private void downloadImageTo(String imageUrl, Path targetFile) throws Exception {
         String fullUrl = resolveImageUrl(imageUrl);
         HttpRequest request = HttpRequest.newBuilder()
@@ -549,6 +559,66 @@ public class VideoComposeService {
         return output;
     }
 
+    // ==================== Social Media Export (模块 I) ====================
+
+    /**
+     * 在视频右下角叠加品牌 Logo 角标（overlay 滤镜，独立重编码 pass）
+     * Logo 建议为透明底 PNG 且宽度 ≤300px；音频流直接 copy 保持无损
+     */
+    private Path overlayLogoIntoVideo(Path videoFile, Path logoFile, ComposeOptions options, Path workDir)
+            throws Exception {
+        Path output = workDir.resolve("video_with_logo.mp4");
+        executeCommand(List.of(
+                "ffmpeg", "-y",
+                "-i", videoFile.toAbsolutePath().toString(),
+                "-i", logoFile.toAbsolutePath().toString(),
+                "-filter_complex", "[0:v][1:v]overlay=main_w-overlay_w-10:main_h-overlay_h-10",
+                "-c:v", "libx264", "-profile:v", "high",
+                "-crf", String.valueOf(options.getCrf()),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                output.toAbsolutePath().toString()
+        ), workDir, "ffmpeg overlay logo");
+        return output;
+    }
+
+    /**
+     * 从已导出视频截取封面帧（模块 I）
+     * 内部闭环：下载视频 → FFmpeg -ss 截帧（-q:v 2 高质量 JPEG）→ 上传存储 → 清理临时目录
+     *
+     * @param videoUrl         已导出视频访问地址
+     * @param timeOffsetSeconds 截帧时刻（秒）；timeOffset 传记录的「实际视频时长」可截取中间帧
+     * @return 封面图访问地址
+     */
+    public String renderVideoCover(String videoUrl, double timeOffsetSeconds) throws Exception {
+        Path workDir = Files.createTempDirectory("video-cover-");
+        try {
+            Path video = workDir.resolve("source.mp4");
+            downloadImageTo(videoUrl, video);
+
+            Path cover = workDir.resolve("cover.jpg");
+            executeCommand(List.of(
+                    "ffmpeg", "-y",
+                    "-ss", String.format("%.3f", Math.max(0, timeOffsetSeconds)),
+                    "-i", video.toAbsolutePath().toString(),
+                    "-vframes", "1", "-q:v", "2",
+                    cover.toAbsolutePath().toString()
+            ), workDir, "ffmpeg video cover");
+
+            String fileName = "video_cover_" + System.currentTimeMillis() + ".jpg";
+            String fileId;
+            try (var is = Files.newInputStream(cover)) {
+                fileId = storageService.upload(is, fileName, "image/jpeg");
+            }
+            String coverUrl = storageService.getAccessUrl(fileId);
+            log.info("Video cover rendered at {}s: {}", String.format("%.1f", timeOffsetSeconds), coverUrl);
+            return coverUrl;
+        } finally {
+            cleanupDir(workDir);
+        }
+    }
+
     // ==================== Storage ====================
 
     /** 存储结果：访问地址 + 文件大小 */
@@ -578,6 +648,7 @@ public class VideoComposeService {
         private String watermark;
         private Path bgmPath;
         private String subtitleAss;
+        private Path logoPath;
 
         public ComposeOptions width(int width) { this.width = width; return this; }
         public ComposeOptions height(int height) { this.height = height; return this; }
@@ -585,6 +656,7 @@ public class VideoComposeService {
         public ComposeOptions watermark(String watermark) { this.watermark = watermark; return this; }
         public ComposeOptions bgmPath(Path bgmPath) { this.bgmPath = bgmPath; return this; }
         public ComposeOptions subtitleAss(String subtitleAss) { this.subtitleAss = subtitleAss; return this; }
+        public ComposeOptions logoPath(Path logoPath) { this.logoPath = logoPath; return this; }
 
         public int getWidth() { return width; }
         public int getHeight() { return height; }
@@ -592,6 +664,7 @@ public class VideoComposeService {
         public String getWatermark() { return watermark; }
         public Path getBgmPath() { return bgmPath; }
         public String getSubtitleAss() { return subtitleAss; }
+        public Path getLogoPath() { return logoPath; }
     }
 
     // ==================== Utilities ====================

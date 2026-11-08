@@ -736,7 +736,7 @@ curl -X POST http://localhost:8080/api/video/export/preview \
 # 高清导出（720p/1080p，可选 BGM 与字幕烧录）
 curl -X POST http://localhost:8080/api/video/export/hd \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true}'
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "withLogo": true}'
 
 # 导出历史（含失败原因，可重新下载）
 curl http://localhost:8080/api/video/exports/1
@@ -751,6 +751,7 @@ curl http://localhost:8080/api/video/exports/1
 | `aspectRatio` | string | 否 | `16:9` | 画面比例（16:9 / 9:16 / 1:1） |
 | `bgmId` | long | 否 | null | 使用的 BGM，null 表示不配乐 |
 | `subtitle` | boolean | 否 | false | 是否烧录字幕（无旁白时自动忽略） |
+| `withLogo` | boolean | 否 | false | 是否叠加品牌 Logo 角标（未配置 `video.watermark.logo-path` 时自动忽略） |
 
 **分辨率 × 比例 → 输出尺寸：**
 
@@ -763,7 +764,7 @@ curl http://localhost:8080/api/video/exports/1
 > - 所有镜头图片必须为 READY 状态才可导出
 > - 预览版叠加半透明 "PREVIEW" 水印、crf 28；正式版无水印、crf 23
 > - 高清导出成功后脚本状态自动变为 EXPORTED
-> - 合成流程：图片下载 → Ken Burns 动效 + xfade 转场 → Edge TTS 旁白（可用时）→ BGM 混音（可选，音量 15% + 2s 淡入/3s 淡出）→ 字幕烧录（可选）→ 存储
+> - 合成流程：图片下载 → Ken Burns 动效 + xfade 转场 → Edge TTS 旁白（可用时）→ BGM 混音（可选，音量 15% + 2s 淡入/3s 淡出）→ Logo 角标（可选）→ 字幕烧录（可选）→ 存储
 
 **响应（data.video 部分）：**
 ```json
@@ -856,6 +857,56 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 ```
 
 > 字幕烧录随导出进行（7.6 的 `subtitle` 参数，FFmpeg subtitles 滤镜 + libass）；前端工作流界面亦提供「烧录字幕」开关、「导出SRT」与「字幕预览」按钮。
+
+---
+
+### 7.9 社交媒体导出（平台预设 / 封面截帧）
+
+#### 平台预设列表
+
+`GET /api/video/export/platforms` 返回六平台规格：
+
+| name | displayName | 比例 | 分辨率 | 推荐时长 |
+|------|-------------|------|--------|----------|
+| `DOUYIN` | 抖音 | 9:16 | 1080x1920 | ≤60s |
+| `BILIBILI` | B站 | 16:9 | 1920x1080 | 无限制 |
+| `XIAOHONGSHU` | 小红书 | 1:1 | 1080x1080 | ≤60s |
+| `KUAISHOU` | 快手 | 9:16 | 1080x1920 | ≤60s |
+| `WEIXIN_VIDEO` | 视频号 | 16:9 | 1920x1080 | 无限制 |
+| `YOUTUBE_SHORTS` | YouTube Shorts | 9:16 | 1080x1920 | ≤60s |
+
+#### 按平台导出
+
+```bash
+curl -X POST http://localhost:8080/api/video/export/platform \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "withLogo": false}'
+```
+
+- `platform` 支持枚举名（大小写不敏感）或中文显示名（如 `"抖音"`）
+- 分辨率固定映射 1080p 档位；时长超平台推荐上限**不拦截**，响应附 `durationWarning` 提示
+- 响应 data：exportHd 结果 + `platform` 规格对象（+ `durationWarning`）
+
+#### 生成封面帧
+
+```bash
+# 从最近一次成功导出截取中间帧（默认）
+curl -X POST http://localhost:8080/api/video/cover/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1}'
+
+# 指定导出记录与截帧时刻
+curl -X POST http://localhost:8080/api/video/cover/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "exportId": 12, "timeOffset": 3.5}'
+```
+
+**响应：**
+```json
+{ "success": true, "data": { "coverUrl": "/images/2026/11/08/video_cover_1731000000000.jpg", "timeOffsetSeconds": 10.5, "exportId": 12 } }
+```
+
+> 封面地址回写导出记录（导出历史可见缩略图）；批量多平台导出由前端并行调用 `/export/platform` 实现（无独立批量端点），API 用户可自行并发调用。
 
 ---
 
@@ -1010,6 +1061,9 @@ curl http://localhost:8080/api/video/exports/$SCRIPT_ID
 | 36 | Export History | GET | `{{base_url}}/api/video/exports/{{script_id}}` | - |
 | 37 | Generate SRT | POST | `{{base_url}}/api/video/subtitle/generate` | `{"scriptId":1}` |
 | 38 | Subtitle Preview | POST | `{{base_url}}/api/video/subtitle/preview` | `{"scriptId":1,"aspectRatio":"16:9"}` |
+| 39 | List Platforms | GET | `{{base_url}}/api/video/export/platforms` | - |
+| 40 | Export for Platform | POST | `{{base_url}}/api/video/export/platform` | `{"scriptId":1,"platform":"DOUYIN","subtitle":true}` |
+| 41 | Generate Cover | POST | `{{base_url}}/api/video/cover/generate` | `{"scriptId":1}` |
 
 ---
 
@@ -1127,6 +1181,8 @@ image:
 
 video:
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）
+  watermark:                        # 社媒导出：品牌水印
+    logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN）
 
@@ -1157,6 +1213,7 @@ bgm:
 16. **BGM 权限**：用户只能使用内置 BGM 和自己上传的 BGM；导出时自动降低音量（约 -16dB）并淡入淡出
 17. **导出前置条件**：所有镜头 imageStatus 必须为 READY，否则返回具体哪些镜头未就绪
 18. **字幕烧录**：需系统已安装配置的中文字体（默认微软雅黑）；无旁白时 subtitle 参数自动忽略；烧录随导出进行，无需单独调用
+19. **平台导出**：平台预设固定映射 1080p 档位；时长超推荐上限仅提示不拦截；封面默认取最近一次成功导出的中间帧并回写导出记录
 
 ---
 
@@ -1213,3 +1270,6 @@ A: 每条字幕从上一转场中点开始、到下一转场中点结束（与 x
 
 **Q: 字幕烧录后乱码或字体不对？**
 A: 字幕字体需系统已安装，默认微软雅黑；Linux/Docker 可在 `video.subtitle.font-name` 改为 `Source Han Sans CN` / `Noto Sans CJK SC`，并用 `POST /api/video/subtitle/preview` 预览确认。
+
+**Q: 如何批量导出多个平台？**
+A: 前端「批量三平台」按钮并行调用三次 `POST /api/video/export/platform`（抖音/B站/小红书）；API 用户可自行并发调用该接口（每次一个平台）。FFmpeg 编码为 CPU 密集型，并发 2-3 个即可。

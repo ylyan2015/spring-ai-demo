@@ -60,6 +60,7 @@
         .action-bar .divider { width: 1px; height: 24px; background: #2a2a3e; }
         .action-bar label.subtitle-toggle { font-size: 13px; color: #ccc; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; white-space: nowrap; }
         .action-bar label.subtitle-toggle input { accent-color: #4a6cf7; }
+        .export-item img.cover-thumb { height: 48px; border-radius: 4px; border: 1px solid #2a2a3e; vertical-align: middle; }
         .status { text-align: center; padding: 40px; color: #888; font-size: 15px; }
         .status.loading { color: #4a6cf7; } .status.error { color: #f74a4a; }
 
@@ -185,6 +186,9 @@ let currentBgmId = '';      // 当前选中的 BGM
 let currentAspect = '16:9'; // 导出画面比例
 let currentResolution = '720p'; // 高清导出分辨率
 let currentSubtitle = true; // 导出时是否烧录字幕（模块 F）
+let currentWithLogo = false; // 导出时是否叠加品牌 Logo 角标（模块 I，需服务端配置）
+let currentPlatform = '';  // 社媒平台预设（模块 I；空 = 自定义比例/分辨率）
+let platformList = [];     // 平台预设列表（GET /export/platforms 加载）
 
 // ==================== 基础工具 ====================
 function esc(t) { if (!t) return ''; var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
@@ -238,7 +242,7 @@ async function init() {
             '<div class="status error">请先 <a href="/login" style="color:#4a6cf7;">登录</a> 后使用短视频工作室</div>';
         return;
     }
-    await Promise.all([loadStyles(), loadGenerators(), loadBgmList()]);
+    await Promise.all([loadStyles(), loadGenerators(), loadBgmList(), loadPlatforms()]);
     await loadScriptList();
 }
 window.addEventListener('DOMContentLoaded', init);
@@ -380,19 +384,29 @@ function renderScript() {
     h += '<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'bgmFileInput\').click()" title="上传自定义 BGM（mp3/wav/ogg/m4a/flac）">上传</button>';
     h += '<input type="file" id="bgmFileInput" accept=".mp3,.wav,.ogg,.m4a,.flac" style="display:none" onchange="uploadBgmFile(this)">';
     h += '<label class="subtitle-toggle"><input type="checkbox" id="subtitleToggle"' + (currentSubtitle ? ' checked' : '') + ' onchange="currentSubtitle=this.checked" title="将旁白烧录进视频画面（社媒静音观看友好，无旁白时自动忽略）"> 烧录字幕</label>';
+    h += '<label class="subtitle-toggle"><input type="checkbox" id="logoToggle"' + (currentWithLogo ? ' checked' : '') + ' onchange="currentWithLogo=this.checked" title="叠加品牌 Logo 角标（需服务端配置 video.watermark.logo-path，未配置时自动忽略）"> Logo</label>';
+    h += '<span class="divider"></span>';
+    h += '<span class="bar-label">平台</span>';
+    h += '<select id="platformSelect" onchange="onPlatformSelect(this)" title="社媒平台预设：自动套用比例/分辨率并校验推荐时长；选「自定义」则使用右侧手动设置">';
+    h += '<option value="">自定义</option>';
+    platformList.forEach(function(p) {
+        h += '<option value="' + esc(p.name) + '"' + (currentPlatform === p.name ? ' selected' : '') + '>' + esc(p.displayName) + ' ' + esc(p.aspectRatio) + '</option>';
+    });
+    h += '</select>';
     h += '<span class="divider"></span>';
     h += '<span class="bar-label">比例</span>';
-    h += '<select id="aspectSelect" onchange="currentAspect=this.value">';
+    h += '<select id="aspectSelect" onchange="currentAspect=this.value"' + (currentPlatform ? ' disabled' : '') + '>';
     h += '<option value="16:9"' + (currentAspect === '16:9' ? ' selected' : '') + '>16:9 横屏(B站)</option>';
     h += '<option value="9:16"' + (currentAspect === '9:16' ? ' selected' : '') + '>9:16 竖屏(抖音)</option>';
     h += '<option value="1:1"' + (currentAspect === '1:1' ? ' selected' : '') + '>1:1 方形(小红书)</option>';
     h += '</select>';
-    h += '<select id="resolutionSelect" onchange="currentResolution=this.value" title="高清导出分辨率（预览固定 480p）">';
+    h += '<select id="resolutionSelect" onchange="currentResolution=this.value" title="高清导出分辨率（预览固定 480p）"' + (currentPlatform ? ' disabled' : '') + '>';
     h += '<option value="720p"' + (currentResolution === '720p' ? ' selected' : '') + '>720p</option>';
     h += '<option value="1080p"' + (currentResolution === '1080p' ? ' selected' : '') + '>1080p</option>';
     h += '</select>';
     h += '<button class="btn btn-sm btn-green" id="previewBtn" onclick="exportVideo(true)" ' + (!allReady || exporting ? 'disabled' : '') + '>快速预览(480p)</button>';
     h += '<button class="btn btn-sm" id="exportBtn" onclick="exportVideo(false)" ' + (!allReady || exporting ? 'disabled' : '') + '>高清导出</button>';
+    h += '<button class="btn btn-sm btn-ghost" id="batchExportBtn" onclick="batchExport()" ' + (!allReady || exporting ? 'disabled' : '') + ' title="一键并行导出抖音(9:16)/B站(16:9)/小红书(1:1) 三个 1080p 版本">批量三平台</button>';
     h += '<button class="btn btn-sm btn-ghost" id="srtBtn" onclick="exportSrt()" ' + (batchGenerating ? 'disabled' : '') + ' title="单独导出 SRT 字幕文件（社媒平台上传用，不烧录画面）">导出SRT</button>';
     h += '<button class="btn btn-sm btn-ghost" id="subtitlePreviewBtn" onclick="previewSubtitle()" ' + (batchGenerating ? 'disabled' : '') + ' title="按当前比例生成一帧字幕效果预览图（需首镜头已生成图片）">字幕预览</button>';
     h += '<span class="info" id="imageCountInfo">已生成: ' + readyCount + '/' + total + ' 张图片 · 镜头卡片可拖拽排序</span>';
@@ -744,23 +758,41 @@ async function exportVideo(preview) {
     if (!allShotsReady()) { toast('请先生成所有镜头的图片', 'error'); return; }
     const previewBtn = document.getElementById('previewBtn');
     const exportBtn = document.getElementById('exportBtn');
+    const batchBtn = document.getElementById('batchExportBtn');
     const bgmId = document.getElementById('bgmSelect') ? document.getElementById('bgmSelect').value : currentBgmId;
 
-    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle };
+    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle, withLogo: currentWithLogo };
     if (!preview) body.resolution = currentResolution;
+
+    // 模块 I：选了平台预设时走平台导出（比例/分辨率由后端映射，同时校验推荐时长）
+    let url;
+    if (!preview && currentPlatform) {
+        url = '/api/video/export/platform';
+        body.platform = currentPlatform;
+        delete body.aspectRatio;
+        delete body.resolution;
+    } else {
+        url = preview ? '/api/video/export/preview' : '/api/video/export/hd';
+    }
+
+    const platformName = currentPlatform ? (platformList.find(function(p) { return p.name === currentPlatform; }) || {}).displayName : '';
 
     exporting = true;
     if (previewBtn) { previewBtn.disabled = true; previewBtn.textContent = '生成中...'; }
     if (exportBtn) { exportBtn.disabled = true; exportBtn.textContent = '生成中...'; }
+    if (batchBtn) batchBtn.disabled = true;
     showProgress(preview
         ? '正在生成 480p 快速预览（低分辨率 + 水印，快速确认效果）...'
-        : '正在导出高清视频（' + currentResolution + ' ' + currentAspect + '，可能需要 1-5 分钟）...', true);
+        : (currentPlatform
+            ? '正在按「' + esc(platformName) + '」平台规格导出 1080p 视频（可能需要 1-5 分钟）...'
+            : '正在导出高清视频（' + currentResolution + ' ' + currentAspect + '，可能需要 1-5 分钟）...'), true);
 
-    const data = await post(preview ? '/api/video/export/preview' : '/api/video/export/hd', body);
+    const data = await post(url, body);
 
     exporting = false;
     if (previewBtn) { previewBtn.disabled = false; previewBtn.textContent = '快速预览(480p)'; }
     if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = '高清导出'; }
+    if (batchBtn) batchBtn.disabled = false;
     hideProgress();
 
     if (!data.success) {
@@ -775,6 +807,7 @@ async function exportVideo(preview) {
     }
     loadScriptList(true); // 高清导出后脚本状态变为 EXPORTED，刷新列表徽章
     toast(preview ? '预览生成完成，确认效果后可高清导出' : '高清导出完成', 'success');
+    if (data.data && data.data.durationWarning) toast(data.data.durationWarning, 'error');
 }
 
 function renderVideoResult(video, exportInfo) {
@@ -786,13 +819,101 @@ function renderVideoResult(video, exportInfo) {
     if (video.hasNarration) tags.push('含旁白配音');
     if (video.hasBgm && exportInfo) tags.push('BGM: ' + esc(exportInfo.bgmName || ''));
     if (video.hasSubtitle) tags.push('含烧录字幕');
+    if (video.hasLogo) tags.push('含Logo');
+    if (exportInfo && exportInfo.platform) tags.push('平台: ' + esc(exportInfo.platform.displayName));
     if (exportInfo && exportInfo.hasWatermark) tags.push('<span class="badge badge-PENDING">预览版·带水印</span>');
     if (video.fileSizeBytes) tags.push((video.fileSizeBytes / 1048576).toFixed(1) + ' MB');
-    a.innerHTML = '<div class="video-result"><h3>' + (exportInfo && exportInfo.hasWatermark ? '快速预览完成' : '高清导出完成') + '</h3>' +
+    a.innerHTML = '<div class="video-result"><h3>' + (exportInfo && exportInfo.hasWatermark ? '快速预览完成' : (exportInfo && exportInfo.platform ? esc(exportInfo.platform.displayName) + ' 平台导出完成' : '高清导出完成')) + '</h3>' +
         '<video controls autoplay src="' + video.videoUrl + '">您的浏览器不支持视频播放</video><br>' +
         '<a class="download-link" href="' + video.videoUrl + '" download>下载视频</a>' +
+        '<button class="btn btn-sm btn-ghost" onclick="generateCover(' + (exportInfo ? exportInfo.id : 'null') + ')">生成封面</button>' +
         '<div class="meta-tags">' + tags.join(' | ') + '</div></div>';
     a.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ==================== 社交媒体导出（模块 I） ====================
+async function loadPlatforms() {
+    const data = await api('/api/video/export/platforms');
+    if (data.success && data.data) platformList = data.data;
+}
+
+function onPlatformSelect(sel) {
+    currentPlatform = sel.value;
+    const aspectSel = document.getElementById('aspectSelect');
+    const resSel = document.getElementById('resolutionSelect');
+    if (aspectSel) aspectSel.disabled = !!currentPlatform;
+    if (resSel) resSel.disabled = !!currentPlatform;
+    if (currentPlatform) {
+        const p = platformList.find(function(x) { return x.name === currentPlatform; });
+        if (p) toast('已选 ' + p.displayName + '：' + p.width + 'x' + p.height + '（' + p.aspectRatio + '）' + (p.maxDurationSeconds > 0 ? '，推荐时长 ≤' + p.maxDurationSeconds + 's' : ''), '');
+    }
+}
+
+async function batchExport() {
+    if (!currentScript) return;
+    if (exporting) { toast('正在导出中，请稍候', 'error'); return; }
+    if (!allShotsReady()) { toast('请先生成所有镜头的图片', 'error'); return; }
+    const bgmId = document.getElementById('bgmSelect') ? document.getElementById('bgmSelect').value : currentBgmId;
+    const platforms = ['DOUYIN', 'BILIBILI', 'XIAOHONGSHU'];
+
+    exporting = true;
+    const previewBtn = document.getElementById('previewBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const batchBtn = document.getElementById('batchExportBtn');
+    if (previewBtn) previewBtn.disabled = true;
+    if (exportBtn) exportBtn.disabled = true;
+    if (batchBtn) { batchBtn.disabled = true; batchBtn.textContent = '导出中...'; }
+    showProgress('正在并行导出 抖音(9:16) / B站(16:9) / 小红书(1:1) 三个 1080p 版本（可能需要数分钟）...', true);
+
+    const body = { scriptId: currentScript.id, bgmId: bgmId || null, subtitle: currentSubtitle, withLogo: currentWithLogo };
+    const results = await Promise.allSettled(platforms.map(function(p) {
+        return post('/api/video/export/platform', Object.assign({}, body, { platform: p }));
+    }));
+
+    exporting = false;
+    if (previewBtn) previewBtn.disabled = false;
+    if (exportBtn) exportBtn.disabled = false;
+    if (batchBtn) { batchBtn.disabled = false; batchBtn.textContent = '批量三平台'; }
+    hideProgress();
+
+    const nameOf = function(p) { const x = platformList.find(function(i) { return i.name === p; }); return x ? x.displayName : p; };
+    let okCount = 0;
+    let h = '<div class="export-history"><h3>批量导出结果</h3>';
+    results.forEach(function(r, i) {
+        const p = platforms[i];
+        h += '<div class="export-item">';
+        if (r.status === 'fulfilled' && r.value.success) {
+            okCount++;
+            const d = r.value.data;
+            h += '<span class="badge badge-EXPORTED">' + esc(nameOf(p)) + '</span>';
+            h += '<span>' + d.video.totalDuration + 's' + (d.video.fileSizeBytes ? ' · ' + (d.video.fileSizeBytes / 1048576).toFixed(1) + ' MB' : '') + '</span>';
+            if (d.durationWarning) h += '<span class="failed-text">' + esc(d.durationWarning) + '</span>';
+            h += '<a href="' + esc(d.video.videoUrl) + '" download>下载</a>';
+            h += '<button class="btn btn-sm btn-ghost" onclick="generateCover(' + d.id + ')">封面</button>';
+        } else {
+            const msg = r.status === 'fulfilled' ? ((r.value && r.value.message) || '导出失败') : '请求异常';
+            h += '<span class="badge badge-FAILED">' + esc(nameOf(p)) + '</span><span class="failed-text">' + esc(msg) + '</span>';
+        }
+        h += '</div>';
+    });
+    h += '</div>';
+    const area = document.getElementById('videoResultArea');
+    if (area) { area.innerHTML = h; area.scrollIntoView({ behavior: 'smooth' }); }
+    loadExportHistory();
+    loadScriptList(true);
+    toast('批量导出完成：成功 ' + okCount + '/' + platforms.length + '，可在导出历史中下载各版本', okCount === platforms.length ? 'success' : 'error');
+}
+
+async function generateCover(exportId) {
+    if (!currentScript) return;
+    const body = { scriptId: currentScript.id };
+    if (exportId) body.exportId = exportId;
+    toast('正在从导出视频截取封面帧（默认中间帧）...', '');
+    const data = await post('/api/video/cover/generate', body);
+    if (!data.success) { toast(data.message || '封面生成失败', 'error'); return; }
+    window.open(data.data.coverUrl, '_blank');
+    toast('封面已生成（截取自 ' + data.data.timeOffsetSeconds + 's 处），已同步到导出记录', 'success');
+    loadExportHistory();
 }
 
 // ==================== 字幕系统（模块 F） ====================
@@ -847,8 +968,10 @@ async function loadExportHistory() {
             else h += '<span class="badge badge-EXPORTED">正式版</span>';
             if (e.bgmName) h += '<span>BGM: ' + esc(e.bgmName) + '</span>';
             if (e.hasSubtitle) h += '<span>含字幕</span>';
+            if (e.hasLogo) h += '<span>含Logo</span>';
             if (e.fileSizeBytes) h += '<span>' + (e.fileSizeBytes / 1048576).toFixed(1) + ' MB</span>';
-            if (e.videoUrl) h += '<a href="' + esc(e.videoUrl) + '" download>下载</a> <a href="' + esc(e.videoUrl) + '" target="_blank">播放</a>';
+            if (e.videoUrl) h += '<a href="' + esc(e.videoUrl) + '" download>下载</a> <a href="' + esc(e.videoUrl) + '" target="_blank">播放</a> <button class="btn btn-sm btn-ghost" onclick="generateCover(' + e.id + ')" title="从本次导出视频截取封面帧">封面</button>';
+            if (e.coverUrl) h += '<a href="' + esc(e.coverUrl) + '" target="_blank" title="查看大图"><img class="cover-thumb" src="' + esc(e.coverUrl) + '" alt="封面"></a>';
         }
         h += '</div>';
     });

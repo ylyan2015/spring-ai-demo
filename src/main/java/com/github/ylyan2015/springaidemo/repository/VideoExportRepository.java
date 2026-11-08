@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 视频导出记录数据访问层
@@ -17,4 +18,11 @@ public interface VideoExportRepository extends JpaRepository<VideoExport, Long> 
 
     /** 查询用户的所有导出记录 */
     List<VideoExport> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+    /** 最近一次成功导出（模块 I：封面生成缺省取最新成品视频） */
+    Optional<VideoExport> findFirstByScriptIdAndUserIdAndStatusOrderByCreatedAtDesc(
+            Long scriptId, Long userId, String status);
+
+    /** 按 ID 定位并校验归属（封面生成可指定某次导出） */
+    Optional<VideoExport> findByIdAndScriptIdAndUserId(Long id, Long scriptId, Long userId);
 }

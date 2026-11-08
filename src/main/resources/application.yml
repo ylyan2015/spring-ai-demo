@@ -76,6 +76,8 @@ image:
 # 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
 video:
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
+  watermark:                        # 模块 I：品牌水印
+    logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN / Noto Sans CJK SC）
 

@@ -76,13 +76,14 @@ public class VideoExportController {
             Long bgmId = toLong(request.get("bgmId"));
             String aspectRatio = (String) request.get("aspectRatio");
             boolean subtitle = toBoolean(request.get("subtitle"), false);
+            boolean withLogo = toBoolean(request.get("withLogo"), false);
 
             Map<String, Object> data;
             if (preview) {
                 data = videoExportService.exportPreview(scriptId, aspectRatio, bgmId, subtitle);
             } else {
                 data = videoExportService.exportHd(scriptId,
-                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle);
+                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle, withLogo);
             }
 
             result.put("success", true);

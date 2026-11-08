@@ -68,6 +68,14 @@ public class VideoExport {
     @Column(name = "has_subtitle", nullable = false)
     private Boolean hasSubtitle = false;
 
+    /** 是否叠加了品牌 Logo 角标 */
+    @Column(name = "has_logo", nullable = false)
+    private Boolean hasLogo = false;
+
+    /** 封面图地址（模块 I：从本条导出视频截帧生成） */
+    @Column(name = "cover_url", length = 500)
+    private String coverUrl;
+
     /** 导出状态: SUCCESS / FAILED */
     @Column(name = "status", nullable = false, length = 20)
     private String status = "SUCCESS";
@@ -125,6 +133,12 @@ public class VideoExport {
 
     public Boolean getHasSubtitle() { return hasSubtitle; }
     public void setHasSubtitle(Boolean hasSubtitle) { this.hasSubtitle = hasSubtitle; }
+
+    public Boolean getHasLogo() { return hasLogo; }
+    public void setHasLogo(Boolean hasLogo) { this.hasLogo = hasLogo; }
+
+    public String getCoverUrl() { return coverUrl; }
+    public void setCoverUrl(String coverUrl) { this.coverUrl = coverUrl; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

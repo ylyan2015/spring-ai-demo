@@ -32,6 +32,7 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **Image Generation Records** - Generation records persisted in database, associated with users and chat sessions, supports history query
 - ✅ **AI Short Video Studio** - Idea → LLM-generated storyboard (editable/drag-sortable) → LLM prompt enhancement (8 visual styles) → parallel image generation (SSE real-time progress) → 480p quick preview / 720p/1080p HD export
 - ✅ **Multi-Ratio Video Export** - 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview with watermark, formal exports without, export history traceable
+- ✅ **One-Click Social Media Export** - Six platform presets (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts: ratio + resolution + recommended-duration check), cover frame extraction, brand logo corner badge, batch three-platform export
 - ✅ **BGM Scoring** - Built-in music library (categorized by mood) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
 - ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position)
 - ✅ **Multiple Image Generation Backends** - DashScope Tongyi Wanxiang (cloud) and local Stable Diffusion / FLUX (SD WebUI protocol) switching via config, with automatic retry on failure
@@ -221,6 +222,7 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 - 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX; SSE real-time progress bar, automatic retry, per-shot regeneration
 - 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc.), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
 - 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); standalone SRT export and single-frame subtitle preview supported
+- 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export; one-click cover frame extraction from exported video
 - 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
 
 > **Note**: Video composition requires FFmpeg; narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`).
@@ -265,6 +267,7 @@ spring-ai-demo/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
 │   │   ├── BgmController.java          # Video studio: BGM list/recommend/upload
 │   │   ├── SubtitleController.java    # Video studio: SRT export/subtitle preview
+│   │   ├── SocialMediaExportController.java # Video studio: platform export/cover frame
 │   │   ├── ChatController.java         # Chat controller (REST API + SSE)
 │   │   ├── DocumentController.java     # Knowledge base document controller
 │   │   ├── ImageController.java        # Image generation controller (REST API)
@@ -315,6 +318,7 @@ spring-ai-demo/
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
 │   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1)
 │   ├── VisualStyle.java               # 8 visual style presets (with negative prompts)
+│   ├── PlatformPreset.java           # Social platform preset enum (six platforms)
 │   ├── ImageGenerationProgress.java   # SSE progress event
 │   ├── VideoScriptService.java        # Script generation (Phase 1)
 │   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
@@ -464,6 +468,8 @@ image:
 
 video:
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
+  watermark:                        # Social export: brand watermark
+    logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended, bottom-right; empty = disabled)
   subtitle:                          # Module F: subtitle burning
     font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
 
@@ -480,6 +486,7 @@ bgm:
 - **BGM music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/` for auto-registration, or upload via the frontend button
 - **Subtitles**: Timeline precisely aligned with xfade transitions; font must be installed (default Microsoft YaHei, configurable via `video.subtitle.font-name`); burning uses the FFmpeg subtitles filter (libass, included in common builds)
 - **Export ratios**: 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview is fixed 480p + watermark, formal exports 720p/1080p without watermark
+- **Platform export**: Presets automatically map to 1080p resolution; cover defaults to the middle frame of the latest successful export; the logo corner badge requires `video.watermark.logo-path` and `withLogo: true` in the export request
 
 #### RAG Storage Modes
 
@@ -617,13 +624,16 @@ spring:
 | `/api/video/images/generators` | GET | Available image generators (with availability) |
 | `/api/video/images/generator` | PUT | Switch image generator at runtime |
 | `/api/video/export/preview` | POST | 480p quick preview (watermarked, crf 28, optional BGM/subtitles) |
-| `/api/video/export/hd` | POST | HD export (720p/1080p × 16:9/9:16/1:1, optional BGM/subtitle burning) |
-| `/api/video/exports/{scriptId}` | GET | Export history (with failure reasons) |
+| `/api/video/export/hd` | POST | HD export (720p/1080p × 16:9/9:16/1:1, optional BGM/subtitle burning/logo) |
+| `/api/video/exports/{scriptId}` | GET | Export history (with failure reasons and covers) |
 | `/api/video/bgm` | GET | BGM list (built-in + user uploads) |
 | `/api/video/bgm/recommend?theme=` | GET | LLM smart BGM recommendation by theme |
 | `/api/video/bgm/upload` | POST | Upload custom BGM (multipart) |
 | `/api/video/subtitle/generate` | POST | Generate SRT subtitle file (timeline aligned with transitions) |
 | `/api/video/subtitle/preview` | POST | Render a single-frame subtitle preview image (optional style override) |
+| `/api/video/export/platforms` | GET | Social platform preset list (six-platform specs) |
+| `/api/video/export/platform` | POST | One-click export by platform preset (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts) |
+| `/api/video/cover/generate` | POST | Extract cover frame from exported video (middle frame by default, configurable time/export record) |
 | `/api/video/generate` / `/api/video/compose` | POST | Legacy one-shot workflow API (kept for compat) |
 
 > Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)
@@ -746,6 +756,13 @@ to add custom BGM (mp3/wav/ogg/m4a/flac supported).
   `video.subtitle.font-name: Source Han Sans CN` (or Noto Sans CJK SC)
 - Burning uses the FFmpeg subtitles filter (libass), included in common distribution builds; if libass is missing, install a full FFmpeg build
 - You can also customize font/size/color/outline/position via the `style` field of `POST /api/video/subtitle/preview` and preview the result
+
+### 15. How to Enable the Brand Logo Corner Badge and Cover Images?
+
+- **Logo**: Place a transparent PNG (width <=300px recommended) at a local path and set `video.watermark.logo-path: D:/assets/logo.png`,
+  then check "Logo" in the frontend or send `"withLogo": true` in the export request; it is silently skipped when unconfigured
+- **Cover**: After a successful export, click "Cover" (result area or export history) to extract a frame; the middle frame is used by default,
+  or call `POST /api/video/cover/generate` with `timeOffset` (seconds) and `exportId` to specify; the cover URL is written back to the export record
 
 ## References
 

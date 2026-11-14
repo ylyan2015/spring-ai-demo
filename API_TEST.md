@@ -984,6 +984,145 @@ curl -X DELETE http://localhost:8080/api/video/templates/9
 
 ---
 
+### 7.11 Agent 工具清单（Phase 3 切片1：服务 Tool 化）
+
+六项核心能力已用 Spring AI `FunctionToolCallback` 包装为 LLM 可调用工具（`video/agent/VideoAgentToolFactory`），本端点提供工具内省（名称/描述/输入 JSON Schema）；工具执行入口见 7.12 导演 Agent 对话：
+
+```bash
+# 工具清单（只读内省，匿名可访问；工具执行时的登录校验由服务层保障）
+curl http://localhost:8080/api/video/agent/tools
+```
+
+**已注册工具：**
+
+| 工具名 | 用途 | 关键入参 |
+|--------|------|----------|
+| `generateStoryboard` | 生成分镜脚本并保存（可选模板） | `idea`（必填）、`templateId`（可选） |
+| `enhancePrompt` | 中文场景描述 → 英文图像提示词 | `sceneDescription`、`style`（可选） |
+| `generateImage` | 单镜头图片生成（含重试/可选质量评估） | `scriptId`、`shotId`、`style`（可选） |
+| `evaluateImage` | 图片质量三维评分（0-10） | `imageUrl`（仅本服务存储相对路径，如 /images/…，拒绝外部 URL，SSRF 防护）、`prompt` |
+| `exportVideo` | 视频合成导出（预览/高清） | `scriptId`、`preview`、`resolution`、`aspectRatio`、`bgmId`、`subtitle`、`subtitleLanguage`、`withLogo` |
+| `recommendBgm` | 按主题情感推荐 BGM | `theme` |
+
+**响应示例（data 数组单元素）：**
+```json
+{
+  "name": "generateStoryboard",
+  "description": "根据创意想法生成分镜脚本并保存，返回脚本ID与镜头列表；可选模板ID按模板风格生成",
+  "inputSchema": "{\"type\":\"object\",\"properties\":{\"idea\":{\"type\":\"string\",\"description\":\"...\"},...}}"
+}
+```
+
+> 工具在请求线程内同步执行（登录身份可用）；执行失败返回 `{success:false, message}` 而非抛异常，便于 LLM 感知并调整策略。工具内部复用现有 REST 接口同款服务逻辑（权限校验/重试/质量评估等行为一致）。
+
+---
+
+### 7.12 导演 Agent 对话（Phase 3 切片2：ReAct + 人工确认点）
+
+`DirectorAgentService` 用 `ChatClient.mutate()` 挂载导演 System Prompt 与上述六工具，Spring AI 内建 tool-calling 循环即 ReAct（思考→调用工具→观察→继续）；`exportVideo` 经 `ConfirmationGateToolCallback` 人工确认闸门。前端工作室页面底部内置「AI 导演」对话面板（含确认按钮）。
+
+**请求参数（POST /api/video/agent/chat，需登录 Cookie）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `message` | string | 是 | 用户消息（空白拒绝） |
+| `sessionId` | string | 否 | 会话ID；缺省自动生成并在响应中返回，后续请求携带以延续上下文 |
+| `confirmedTools` | string[] | 否 | 本次请求显式确认放行的工具名（如 `["exportVideo"]`），仅对当次请求生效 |
+
+```bash
+# 第一轮：普通对话/创作指令
+curl -X POST http://localhost:8080/api/video/agent/chat \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"message":"帮我做一个猫咪日常的治愈系短片，3个镜头"}'
+
+# 清空对话历史
+curl -X DELETE http://localhost:8080/api/video/agent/chat/{sessionId} -b "JSESSIONID=..."
+```
+
+**响应示例（含待确认项）：**
+```json
+{
+  "success": true,
+  "data": {
+    "reply": "已生成分镜脚本（ID: 5，3 个镜头）。下一步建议逐镜头生成图片…导出前需要你确认。",
+    "sessionId": "b7b55c50-…",
+    "pendingConfirmations": [
+      { "tool": "exportVideo", "input": "{\"scriptId\":5,\"preview\":true,…}", "reason": "导出视频将执行 FFmpeg 合成（耗时数分钟）" }
+    ]
+  }
+}
+```
+
+**确认流程（两轮）：**
+1. 用户请求导出 → Agent 调用 `exportVideo` 被闸门拦截，工具返回 `{success:false, requiresConfirmation:true}`，Agent 转述操作与参数并请求确认；响应 `pendingConfirmations` 非空，前端渲染「确认执行 exportVideo」按钮
+2. 用户点击确认 → 前端重发同一消息并携带 `confirmedTools:["exportVideo"]` → 闸门放行，工具真实执行（预览/高清合成），结果由 Agent 转述
+
+```bash
+# 第二轮：显式确认放行
+curl -X POST http://localhost:8080/api/video/agent/chat \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"message":"确认导出","sessionId":"b7b55c50-…","confirmedTools":["exportVideo"]}'
+```
+
+> 说明：仅 `exportVideo` 设闸（耗时数分钟）；generateImage 等创作循环工具不设闸。对话历史为内存态（重启清空），按 userId:sessionId 隔离，上限 20 条消息；同步执行于请求线程，多轮工具调用时单次请求可能耗时较长（建议客户端超时 ≥ 120s）。未登录/空消息返回 400 `{success:false,message}`。
+
+---
+
+### 7.13 多 Agent 编排（Phase 3 切片3：专家拆分 + 异步流水线）
+
+编剧/美术/音频/剪辑四专家 Agent（`SpecialistAgentFactory`，各自 System Prompt + 工具子集）以「专家即工具」委托给导演；`AgentOrchestrationService` 在专用线程池异步执行一键成片流水线，SecurityContext 提交时捕获、工作线程显式传播（依赖登录身份的工具在异步线程内正常可用）。
+
+**专家分工（工具子集映射现有 6 工具；TTS/混音已内嵌于 exportVideo 管线，不另设工具）：**
+
+| 专家 | 委托工具 | 工具子集 |
+|------|---------|---------|
+| 编剧 | `delegateToScreenwriter` | generateStoryboard, enhancePrompt |
+| 美术 | `delegateToArtist` | generateImage, evaluateImage |
+| 音频 | `delegateToAudio` | recommendBgm |
+| 剪辑 | `delegateToEditor` | exportVideo（带确认闸门） |
+
+**端点（均需登录 Cookie，服务层校验）：**
+
+| 端点 | 说明 |
+|------|------|
+| `POST /api/video/agent/orchestrate` | 提交任务，body `{idea（必填）, templateId（可选）}`，立即返回 `{taskId, status:RUNNING}` |
+| `GET /api/video/agent/orchestrate/{taskId}` | 轮询状态：`{taskId, status, reply, pendingConfirmations, error}` |
+| `POST /api/video/agent/orchestrate/{taskId}/confirm` | 仅 AWAITING_CONFIRMATION 可用（CAS 原子迁移，并发/重复确认仅一次生效），携 confirmedTools=[exportVideo] 续跑；续跑回放原始任务+上轮回复+待确认入参，确保执行的是用户确认的那个操作 |
+
+**状态机：** `RUNNING → COMPLETED / FAILED`；闸门触发时 `RUNNING → AWAITING_CONFIRMATION →(confirm)→ RUNNING → COMPLETED / FAILED`。任务内存态（重启清空）上限 100 条，按 userId 归属校验（越权 400）。
+
+```bash
+# 1. 提交一键成片
+curl -X POST http://localhost:8080/api/video/agent/orchestrate \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"idea":"猫咪日常治愈系短片，3个镜头"}'
+# → {"success":true,"data":{"taskId":"cea1b607-…","status":"RUNNING",…}}
+
+# 2. 轮询（建议 3s 间隔）
+curl http://localhost:8080/api/video/agent/orchestrate/cea1b607-… -b "JSESSIONID=..."
+
+# 3. 待确认时续跑
+curl -X POST http://localhost:8080/api/video/agent/orchestrate/cea1b607-…/confirm -b "JSESSIONID=..."
+```
+
+**响应示例（AWAITING_CONFIRMATION）：**
+```json
+{
+  "success": true,
+  "data": {
+    "taskId": "ad2c6556-…",
+    "status": "AWAITING_CONFIRMATION",
+    "reply": "脚本与图片已就绪。导出将执行 FFmpeg 合成（耗时数分钟），请确认…",
+    "pendingConfirmations": [ { "tool": "exportVideo", "input": "{\"scriptId\":1,\"preview\":true,…}", "reason": "…" } ],
+    "error": null
+  }
+}
+```
+
+> 委托链闸门行为：专家侧无 confirmedTools，剪辑专家的 exportVideo 必被拦截，由专家转述、导演汇总请求确认；confirm 续跑时导演直接调用自己的 exportVideo（已确认放行）完成导出。前端工作室「AI 导演」面板提供「一键流水线」按钮（提交后 3s 轮询，待确认时渲染确认按钮）。多轮委托耗时较长（分钟级），异步执行不阻塞 HTTP 请求；未登录/空 idea/越权/状态不符均返回 400。
+
+---
+
 ## 八、完整测试流程
 
 ### 步骤1：获取 RSA 公钥和验证码
@@ -1138,6 +1277,12 @@ curl http://localhost:8080/api/video/exports/$SCRIPT_ID
 | 39 | List Platforms | GET | `{{base_url}}/api/video/export/platforms` | - |
 | 40 | Export for Platform | POST | `{{base_url}}/api/video/export/platform` | `{"scriptId":1,"platform":"DOUYIN","subtitle":true}` |
 | 41 | Generate Cover | POST | `{{base_url}}/api/video/cover/generate` | `{"scriptId":1}` |
+| 42 | List Agent Tools | GET | `{{base_url}}/api/video/agent/tools` | - |
+| 43 | Director Agent Chat | POST | `{{base_url}}/api/video/agent/chat` | `{"message":"帮我做一个猫咪日常短片","sessionId":"可选","confirmedTools":["exportVideo"]}` |
+| 44 | Clear Director Chat | DELETE | `{{base_url}}/api/video/agent/chat/{{agent_session_id}}` | - |
+| 45 | Submit Orchestration | POST | `{{base_url}}/api/video/agent/orchestrate` | `{"idea":"猫咪日常治愈系短片","templateId":null}` |
+| 46 | Orchestration Status | GET | `{{base_url}}/api/video/agent/orchestrate/{{task_id}}` | - |
+| 47 | Confirm Orchestration | POST | `{{base_url}}/api/video/agent/orchestrate/{{task_id}}/confirm` | - |
 
 ---
 
@@ -1301,6 +1446,9 @@ bgm:
 18. **字幕烧录**：需系统已安装配置的中文字体（默认微软雅黑）；无旁白时 subtitle 参数自动忽略；烧录随导出进行，无需单独调用
 19. **平台导出**：平台预设固定映射 1080p 档位；时长超推荐上限仅提示不拦截；封面默认取最近一次成功导出的中间帧并回写导出记录
 20. **图片质量评估**：`image.quality.enabled` 默认 false（关闭时生成流程不变）；开启后低分自动重试≤2 次并保留最高分，评分随镜头 qualityScore 字段返回；未配多模态 API 时降级为规则评估，评估异常不阻塞生成
+21. **Agent 工具**：`GET /api/video/agent/tools` 仅内省不执行（匿名可读，沿用 /api/video/** 现有策略）；工具执行入口为 7.12 导演对话，执行时登录校验由服务层保障；工具同步执行于请求线程，异步编排时才需 SecurityContext 传播
+22. **导演 Agent**：`POST /api/video/agent/chat` 需登录（服务层校验，匿名 400）；仅 `exportVideo` 设人工确认闸门，`confirmedTools` 仅对当次请求生效（无服务端 pending 令牌）；对话历史内存态重启清空、上限 20 条；多轮工具调用耗时较长，客户端超时建议 ≥ 120s
+23. **多 Agent 编排**：`/orchestrate` 系列需登录；任务内存态重启清空、上限 100（逐出时原子复检，运行中任务不可被逐出）、按 userId 归属校验；异步工作线程显式传播 SecurityContext（工具内登录身份可用）；confirm 仅 AWAITING_CONFIRMATION 状态可用且 CAS 防并发双重执行，续跑携带原始任务与待确认入参；专家委托无状态（taskDescription 需携带完整上下文）；evaluateImage 工具仅接受存储相对路径（`agent.tools.self-base-url` 解析同源）；前端 3s 轮询，流水线分钟级耗时属正常
 
 ---
 

@@ -949,6 +949,145 @@ curl -X DELETE http://localhost:8080/api/video/templates/9
 
 ---
 
+### 7.11 Agent Tool List (Phase 3 Slice 1: Service Toolification)
+
+Six core capabilities are wrapped as LLM-callable tools via Spring AI `FunctionToolCallback` (`video/agent/VideoAgentToolFactory`); this endpoint provides tool introspection (name/description/input JSON Schema). The tool execution entry point is the director-agent chat in 7.12:
+
+```bash
+# Tool list (read-only introspection, anonymously accessible; login checks at tool execution are enforced by the service layer)
+curl http://localhost:8080/api/video/agent/tools
+```
+
+**Registered tools:**
+
+| Tool name | Purpose | Key inputs |
+|-----------|---------|------------|
+| `generateStoryboard` | Generate and persist a storyboard script (optional template) | `idea` (required), `templateId` (optional) |
+| `enhancePrompt` | Chinese scene description -> English image prompt | `sceneDescription`, `style` (optional) |
+| `generateImage` | Single-shot image generation (with retry / optional quality evaluation) | `scriptId`, `shotId`, `style` (optional) |
+| `evaluateImage` | Three-dimension image quality scoring (0-10) | `imageUrl` (only this service's storage relative paths, e.g. /images/…; external URLs rejected, SSRF protection), `prompt` |
+| `exportVideo` | Video composition export (preview/HD) | `scriptId`, `preview`, `resolution`, `aspectRatio`, `bgmId`, `subtitle`, `subtitleLanguage`, `withLogo` |
+| `recommendBgm` | Theme/sentiment-based BGM recommendation | `theme` |
+
+**Response example (single element of the data array):**
+```json
+{
+  "name": "generateStoryboard",
+  "description": "根据创意想法生成分镜脚本并保存，返回脚本ID与镜头列表；可选模板ID按模板风格生成",
+  "inputSchema": "{\"type\":\"object\",\"properties\":{\"idea\":{\"type\":\"string\",\"description\":\"...\"},...}}"
+}
+```
+
+> Tools execute synchronously within the request thread (login identity available); execution failures return `{success:false, message}` instead of throwing, so the LLM can perceive failures and adjust its strategy. Tools reuse the same service logic as the existing REST endpoints (ownership checks / retries / quality evaluation behave identically).
+
+---
+
+### 7.12 Director Agent Chat (Phase 3 Slice 2: ReAct + Human Confirmation)
+
+`DirectorAgentService` uses `ChatClient.mutate()` to mount the director system prompt and the six tools above; Spring AI's built-in tool-calling loop is ReAct (think → call tool → observe → continue). `exportVideo` is protected by the `ConfirmationGateToolCallback` human confirmation gate. The studio page has a built-in "AI Director" chat panel at the bottom (with confirm buttons).
+
+**Request parameters (POST /api/video/agent/chat, login Cookie required):**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | Yes | User message (blank rejected) |
+| `sessionId` | string | No | Session ID; auto-generated when omitted and returned in the response — carry it in subsequent requests to continue the context |
+| `confirmedTools` | string[] | No | Tool names explicitly confirmed for this request (e.g. `["exportVideo"]`); effective only for the current request |
+
+```bash
+# Round 1: plain chat / creative instruction
+curl -X POST http://localhost:8080/api/video/agent/chat \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"message":"Make a heartwarming cat daily-life short video, 3 shots"}'
+
+# Clear conversation history
+curl -X DELETE http://localhost:8080/api/video/agent/chat/{sessionId} -b "JSESSIONID=..."
+```
+
+**Response example (with pending confirmations):**
+```json
+{
+  "success": true,
+  "data": {
+    "reply": "Storyboard generated (ID: 5, 3 shots). Next: generate images per shot… export requires your confirmation.",
+    "sessionId": "b7b55c50-…",
+    "pendingConfirmations": [
+      { "tool": "exportVideo", "input": "{\"scriptId\":5,\"preview\":true,…}", "reason": "导出视频将执行 FFmpeg 合成（耗时数分钟）" }
+    ]
+  }
+}
+```
+
+**Confirmation flow (two rounds):**
+1. User asks to export → the agent's `exportVideo` call is intercepted by the gate; the tool returns `{success:false, requiresConfirmation:true}`; the agent relays the operation and parameters and asks for confirmation; the response's `pendingConfirmations` is non-empty and the frontend renders a "Confirm exportVideo" button
+2. User clicks confirm → the frontend resends the same message with `confirmedTools:["exportVideo"]` → the gate passes and the tool actually executes (preview/HD composition); the agent relays the result
+
+```bash
+# Round 2: explicit confirmation
+curl -X POST http://localhost:8080/api/video/agent/chat \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"message":"Confirm export","sessionId":"b7b55c50-…","confirmedTools":["exportVideo"]}'
+```
+
+> Notes: only `exportVideo` is gated (takes minutes); creative-loop tools such as generateImage are not gated. Conversation history is in-memory (cleared on restart), isolated per userId:sessionId, capped at 20 messages; execution is synchronous in the request thread — multi-round tool calls can make a single request slow (client timeout >= 120s recommended). Not logged in / blank message returns 400 `{success:false,message}`.
+
+---
+
+### 7.13 Multi-Agent Orchestration (Phase 3 Slice 3: Specialist Split + Async Pipeline)
+
+Four specialist agents — screenwriter / artist / audio / editor (`SpecialistAgentFactory`, each with its own system prompt + tool subset) — are delegated to the director as "specialist-as-tool"; `AgentOrchestrationService` runs the one-click pipeline asynchronously on a dedicated thread pool, capturing the SecurityContext at submission and explicitly propagating it to worker threads (login-dependent tools work inside async threads).
+
+**Specialist responsibilities (tool subsets mapped to the existing 6 tools; TTS/mixing are embedded in the exportVideo pipeline, no extra tools):**
+
+| Specialist | Delegate tool | Tool subset |
+|------------|---------------|-------------|
+| Screenwriter | `delegateToScreenwriter` | generateStoryboard, enhancePrompt |
+| Artist | `delegateToArtist` | generateImage, evaluateImage |
+| Audio | `delegateToAudio` | recommendBgm |
+| Editor | `delegateToEditor` | exportVideo (with confirmation gate) |
+
+**Endpoints (login Cookie required, service-layer checks):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/video/agent/orchestrate` | Submit a task, body `{idea (required), templateId (optional)}`, immediately returns `{taskId, status:RUNNING}` |
+| `GET /api/video/agent/orchestrate/{taskId}` | Poll status: `{taskId, status, reply, pendingConfirmations, error}` |
+| `POST /api/video/agent/orchestrate/{taskId}/confirm` | Only valid in AWAITING_CONFIRMATION (atomic CAS transition; concurrent/duplicate confirms take effect only once); resumes with confirmedTools=[exportVideo]; the resume replays the original task + previous reply + pending operation inputs, ensuring the confirmed operation is exactly what gets executed |
+
+**State machine:** `RUNNING → COMPLETED / FAILED`; when the gate triggers: `RUNNING → AWAITING_CONFIRMATION →(confirm)→ RUNNING → COMPLETED / FAILED`. Tasks are in-memory (cleared on restart), capped at 100, with per-userId ownership checks (cross-user access returns 400).
+
+```bash
+# 1. Submit one-click pipeline
+curl -X POST http://localhost:8080/api/video/agent/orchestrate \
+  -H "Content-Type: application/json" -b "JSESSIONID=..." \
+  -d '{"idea":"A heartwarming cat daily-life short, 3 shots"}'
+# → {"success":true,"data":{"taskId":"cea1b607-…","status":"RUNNING",…}}
+
+# 2. Poll (3s interval recommended)
+curl http://localhost:8080/api/video/agent/orchestrate/cea1b607-… -b "JSESSIONID=..."
+
+# 3. Resume when awaiting confirmation
+curl -X POST http://localhost:8080/api/video/agent/orchestrate/cea1b607-…/confirm -b "JSESSIONID=..."
+```
+
+**Response example (AWAITING_CONFIRMATION):**
+```json
+{
+  "success": true,
+  "data": {
+    "taskId": "ad2c6556-…",
+    "status": "AWAITING_CONFIRMATION",
+    "reply": "Script and images are ready. Export will run FFmpeg composition (takes minutes), please confirm…",
+    "pendingConfirmations": [ { "tool": "exportVideo", "input": "{\"scriptId\":1,\"preview\":true,…}", "reason": "…" } ],
+    "error": null
+  }
+}
+```
+
+> Gate behavior in the delegation chain: specialists have no confirmedTools, so the editor's exportVideo is always intercepted; the specialist relays it and the director asks the user for confirmation; on confirm-resume the director calls its own exportVideo directly (confirmed, gate passes) to finish the export. The studio's "AI Director" panel provides a "One-click Pipeline" button (3s polling after submission, confirm buttons rendered when awaiting confirmation). Multi-round delegation is slow (minutes); async execution never blocks the HTTP request. Not logged in / blank idea / cross-user / wrong state all return 400.
+
+---
+
 ## VIII. Complete Testing Workflow
 
 ### Step 1: Get RSA public key and captcha
@@ -1102,6 +1241,12 @@ curl http://localhost:8080/api/video/exports/$SCRIPT_ID
 | 39 | List Platforms | GET | `{{base_url}}/api/video/export/platforms` | - |
 | 40 | Export for Platform | POST | `{{base_url}}/api/video/export/platform` | `{"scriptId":1,"platform":"DOUYIN","subtitle":true}` |
 | 41 | Generate Cover | POST | `{{base_url}}/api/video/cover/generate` | `{"scriptId":1}` |
+| 42 | List Agent Tools | GET | `{{base_url}}/api/video/agent/tools` | - |
+| 43 | Director Agent Chat | POST | `{{base_url}}/api/video/agent/chat` | `{"message":"Make a cat daily-life short video","sessionId":"optional","confirmedTools":["exportVideo"]}` |
+| 44 | Clear Director Chat | DELETE | `{{base_url}}/api/video/agent/chat/{{agent_session_id}}` | - |
+| 45 | Submit Orchestration | POST | `{{base_url}}/api/video/agent/orchestrate` | `{"idea":"A heartwarming cat daily-life short","templateId":null}` |
+| 46 | Orchestration Status | GET | `{{base_url}}/api/video/agent/orchestrate/{{task_id}}` | - |
+| 47 | Confirm Orchestration | POST | `{{base_url}}/api/video/agent/orchestrate/{{task_id}}/confirm` | - |
 
 ---
 
@@ -1265,6 +1410,9 @@ bgm:
 18. **Subtitle Burning**: Requires the configured CJK font installed (default Microsoft YaHei); the subtitle parameter is automatically ignored when no narration exists; burning happens during export, no separate call needed
 19. **Platform Export**: Presets are fixed to the 1080p tier; exceeding the recommended duration only warns without blocking; the cover defaults to the middle frame of the latest successful export and is written back to the record
 20. **Image Quality Evaluation**: `image.quality.enabled` defaults to false (generation flow unchanged when off); when enabled, low scores trigger <=2 retries keeping the best score, returned via the shot's qualityScore field; falls back to rule-based evaluation without a multimodal API, and evaluation errors never block generation
+21. **Agent Tools**: `GET /api/video/agent/tools` is introspection-only, no execution (anonymously readable, following the existing /api/video/** policy); the tool execution entry point is the director chat in 7.12, with login checks at execution enforced by the service layer; tools run synchronously in the request thread — SecurityContext propagation is only needed for async orchestration
+22. **Director Agent**: `POST /api/video/agent/chat` requires login (service-layer check, anonymous gets 400); only `exportVideo` has a human confirmation gate, and `confirmedTools` is effective only for the current request (no server-side pending token); conversation history is in-memory, cleared on restart, capped at 20 messages; multi-round tool calls can be slow — client timeout >= 120s recommended
+23. **Multi-Agent Orchestration**: the `/orchestrate` endpoints require login; tasks are in-memory, cleared on restart, capped at 100 (eviction re-checks status atomically — running tasks are never evicted), with per-userId ownership checks; async worker threads explicitly propagate the SecurityContext (login identity available inside tools); confirm is only valid in AWAITING_CONFIRMATION with CAS guarding against concurrent double execution, and the resume carries the original task plus pending operation inputs; specialist delegation is stateless (taskDescription must carry full context); the evaluateImage tool only accepts storage relative paths (resolved same-origin via `agent.tools.self-base-url`); the frontend polls every 3s — minute-level pipeline duration is normal
 
 ---
 

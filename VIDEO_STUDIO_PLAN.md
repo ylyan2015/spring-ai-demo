@@ -4,7 +4,7 @@
 > **定位**：AI 驱动的短视频自动生成工具，面向社交媒体投放
 > **技术栈**：Spring Boot 3.4 + Java 17 + Spring AI 1.0 + DeepSeek/Ollama + DashScope/本地SD + FFmpeg + Edge TTS
 > **创建日期**：2026-11-07
-> **最后更新**：2026-11-14（Phase 2 全部完成：S1 补齐 + 模块 H 模板 + G 收尾本地模型风格预设 + J 图片质量评估；仅剩 Phase 3 Agent 化）
+> **最后更新**：2026-11-14（Phase 2 全部完成；Phase 3 全部完成：切片1 服务 Tool 化 + 切片2 导演 Agent + 切片3 多 Agent 编排：6 工具 + 内省 + ReAct 对话 + 确认闸门 + 四专家委托 + 异步流水线）
 > **2026-11-14 FFmpeg 落地**：本机安装 `D:/Program Files/ffmpeg`（≥4.3，含 xfade/libass/libx264），可执行文件路径改为 `video.ffmpeg-path` / `video.ffprobe-path` 配置项。同时修复 `VideoComposeService` 三处只有真跑 FFmpeg 才会暴露的缺陷：xfade 输出标签被写在滤镜名之前（解析成第三个输入）、zoompan 的 z 表达式误用不存在的 `t` 变量（应为 `on` 帧号）、多镜头命令缺 `-t` 导致 `-loop 1` 无限输入永不收尾。回归测试见 `VideoComposeFfmpegTest`。
 > **2026-11-14 旁白配音打通**：本机已有 Python 3.14.6（无需重装），补装 edge-tts 7.3.1；`video.python-command` 指向解释器绝对路径后，edge-tts 合成 → apad 补静音拼接 → 音画合并全链路跑通，产物含 aac 音轨。联网用例默认跳过，`-Dtts=true` 执行。
 > **2026-11-14 S5 部署加固**：Docker 镜像补齐短视频运行依赖——Dockerfile 加装 ffmpeg/python3+edge-tts（venv）/font-noto-cjk，预置 BGM 入镜像（.dockerignore 放行 data/bgm/）；compose 补 DASHSCOPE_API_KEY 与 FFMPEG_PATH/FFPROBE_PATH/PYTHON_CMD 注入、appdata/uploads 命名卷；docker profile 字幕字体自动切 Noto Sans CJK SC。本机无 Docker，镜像构建验证待有 Docker 的环境执行。
@@ -781,6 +781,11 @@ CREATE TABLE video_template (
 ## 四、后续规划（Phase 3 — Agent 化）
 
 > 这一阶段的目标是将整个视频生成流水线建模为 **Multi-Agent 工作流**，与 nexus-ai 的 Agent 模块深度整合。
+
+> **切片1 实现落点（2026-11-14）✅**：`video/agent/AgentToolRequests.java`（6 个输入 record，@ToolParam 描述进入 JSON Schema）+ `video/agent/VideoAgentToolFactory.java`（FunctionToolCallback 包装 generateStoryboard/enhancePrompt/generateImage/evaluateImage/exportVideo/recommendBgm，异常转 {success:false,message} 供 LLM 感知）+ `controller/VideoAgentController.java`（GET /api/video/agent/tools 内省，只读匿名可读，沿用 /api/video/** permitAll 策略，执行时登录校验由服务层保障）。测试：VideoAgentToolFactoryTest（13）+ VideoAgentControllerTest（2）。
+> **API 演进注记**：本章早期代码示例中的 `FunctionCallback` 为 Spring AI 1.0.0-M 系列旧 API，1.0.0 GA 已移除，实际实现用 `org.springframework.ai.tool.function.FunctionToolCallback`（builder 签名已经 javap 核实）。
+> **切片2 实现落点（2026-11-14）✅**：`video/agent/ConfirmationGateToolCallback.java`（ToolCallback 装饰器：未确认拦截 exportVideo，返回 requiresConfirmation JSON + 待确认项记入 ToolContext）+ `video/agent/DirectorAgentService.java`（ModelService.getChatClient().mutate() 挂导演 System Prompt 与六工具，Spring AI 内建 tool-calling 循环即 ReAct；历史按 userId:sessionId 内存隔离上限 20 条；同步执行于请求线程）+ `VideoAgentController` 追加 POST /api/video/agent/chat（message/sessionId/confirmedTools）与 DELETE /chat/{sessionId} + 前端工作室「AI 导演」面板（对话 + 确认按钮）。确认为请求级显式放行（confirmedTools 经 ToolContext，无服务端 pending 令牌）。测试：ConfirmationGateToolCallbackTest（5）+ DirectorAgentServiceTest（8）+ VideoAgentControllerChatTest（3），全量 92 绿；真实 DeepSeek 冒烟：纯对话/recommendBgm 工具调用/闸门拦截→确认放行→错误转述/匿名拒绝均通过。
+> **切片3 实现落点（2026-11-14）✅**：`video/agent/SpecialistAgentFactory.java`（编剧/美术/音频/剪辑四专家：各自 System Prompt + 工具子集，以 delegateToXxx 「专家即工具」委托给导演，无状态单轮 ReAct；剪辑专家 exportVideo 带闸门）+ `video/agent/AgentOrchestrationService.java`（一键成片异步编排：专用线程池与图片工作池分离，SecurityContext 提交时捕获、工作线程 setContext+finally clearContext；任务表内存态上限 100 按 userId 归属校验；状态机 RUNNING/COMPLETED/AWAITING_CONFIRMATION/FAILED，confirm 携 confirmedTools 续跑）+ 导演工具装配 6+4=10 + 控制器 POST /orchestrate、GET /orchestrate/{taskId}、POST /orchestrate/{taskId}/confirm + 前端「一键流水线」按钮（3s 轮询 + 确认续跑）。规格 4.2 中 editShot/generateTts/mixAudio 等未 Tool 化能力不新增（TTS/混音已内嵌 exportVideo 管线）。测试：SpecialistAgentFactoryTest（7）+ AgentOrchestrationServiceTest（8）+ VideoAgentControllerOrchestrationTest（3）+ 导演新增 1，全量 111 绿；真实 DeepSeek 冒烟：异步流水线（编剧/音频专家真实委托）/SecurityContext 传播/闸门暂停→confirm 续跑/越权与匿名拒绝均 PASS。提交前代码审查修复 2 Major + 3 Minor + 2 Nit（confirm 续跑上下文回放/CAS 防并发确认/evict 原子复检/evaluateImage SSRF 防护/会话历史同步/线程池关闭钩子/会话表上限），新增 7 回归测试全量 118 绿，详见切片3 计划文档审查修复记录。Phase 3 Agent 化全部完成。
 
 ### 4.1 Agent 角色设计
 

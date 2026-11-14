@@ -12,3 +12,7 @@ target/
 
 # Docker env (API keys)
 .env
+
+# Runtime artifacts（H2 数据库文件与本地存储生成文件）
+data/chatdb.*
+uploads/

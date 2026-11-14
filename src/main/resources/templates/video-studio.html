@@ -176,6 +176,19 @@
         <div id="scriptArea"></div>
         <!-- 空状态 -->
         <div id="emptyArea"><div class="status">选择已有脚本，或点击「+ 新建脚本」输入创意开始</div></div>
+
+        <!-- AI 导演（Phase 3 切片2） -->
+        <div class="input-section" id="agentPanel">
+            <h3 style="color:#fff;font-size:16px;margin-bottom:10px">🤖 AI 导演 <span style="font-size:12px;color:#888;font-weight:normal">（对话式生成 · 导出需确认）</span></h3>
+            <div id="agentLog" style="max-height:260px;overflow-y:auto;background:#12121f;border-radius:8px;padding:10px;margin-bottom:8px;font-size:13px"></div>
+            <div id="agentConfirmBar" style="display:none;margin-bottom:8px"></div>
+            <div style="display:flex;gap:8px">
+                <input id="agentInput" placeholder="例如：帮我做一个猫咪日常的治愈系短片" style="flex:1;background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px" onkeydown="if(event.key==='Enter')sendAgentMessage()">
+                <button class="btn" id="agentSendBtn" onclick="sendAgentMessage()">发送</button>
+                <button class="btn btn-ghost" onclick="clearAgentChat()">清空</button>
+                <button class="btn btn-green" id="agentPipelineBtn" onclick="startAgentPipeline()" title="多 Agent 异步流水线：编剧→美术→音频→剪辑，导出需确认">一键流水线</button>
+            </div>
+        </div>
     </div>
     <div class="toast" id="toast"></div>
 <script>
@@ -1092,6 +1105,121 @@ async function loadExportHistory() {
     });
     h += '</div>';
     area.innerHTML = h;
+}
+
+// ==================== AI 导演（Phase 3 切片2） ====================
+let agentSessionId = null;   // 导演会话ID（服务端生成，内存态历史）
+let agentLastMessage = '';   // 最近一次用户消息（确认重发用）
+let agentBusy = false;       // 是否正在等待导演回复
+
+function appendAgentLog(role, text) {
+    const log = document.getElementById('agentLog');
+    const color = role === 'user' ? '#4a6cf7' : (role === 'error' ? '#f74a4a' : '#2ecc71');
+    log.innerHTML += '<div style="margin-bottom:6px"><b style="color:' + color + '">' +
+        (role === 'user' ? '我' : (role === 'error' ? '错误' : '导演')) + '：</b>' + esc(text) + '</div>';
+    log.scrollTop = log.scrollHeight;
+}
+
+async function sendAgentMessage(confirmedTools) {
+    const input = document.getElementById('agentInput');
+    const msg = confirmedTools ? agentLastMessage : input.value.trim();
+    if (!msg || agentBusy) return;
+    agentLastMessage = msg;
+    if (!confirmedTools) { input.value = ''; appendAgentLog('user', msg); }
+    agentBusy = true;
+    document.getElementById('agentSendBtn').disabled = true;
+    document.getElementById('agentConfirmBar').style.display = 'none';
+    appendAgentLog('director', '思考中...');
+    try {
+        const body = { message: msg, sessionId: agentSessionId };
+        if (confirmedTools) body.confirmedTools = confirmedTools;
+        const data = await post('/api/video/agent/chat', body);
+        const log = document.getElementById('agentLog');
+        log.removeChild(log.lastChild); // 移除“思考中”
+        if (!data.success) { appendAgentLog('error', data.message || '对话失败'); return; }
+        agentSessionId = data.data.sessionId;
+        appendAgentLog('director', data.data.reply || '(无回复)');
+        const pending = data.data.pendingConfirmations || [];
+        if (pending.length > 0) {
+            const bar = document.getElementById('agentConfirmBar');
+            bar.innerHTML = '';
+            pending.forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-orange btn-sm';
+                btn.textContent = '确认执行 ' + p.tool;
+                btn.onclick = () => sendAgentMessage([p.tool]);
+                bar.appendChild(btn);
+            });
+            bar.style.display = 'block';
+        }
+        loadScriptList(true); // 工具可能新建了脚本，刷新列表
+    } finally {
+        agentBusy = false;
+        document.getElementById('agentSendBtn').disabled = false;
+    }
+}
+
+async function clearAgentChat() {
+    if (agentSessionId) await api('/api/video/agent/chat/' + agentSessionId, { method: 'DELETE' });
+    agentSessionId = null;
+    document.getElementById('agentLog').innerHTML = '';
+    document.getElementById('agentConfirmBar').style.display = 'none';
+}
+
+// ==================== 一键流水线（Phase 3 切片3：多 Agent 异步编排） ====================
+let agentPipelineTaskId = null; // 编排任务ID
+let agentPipelineTimer = null;  // 轮询定时器
+
+async function startAgentPipeline() {
+    const idea = document.getElementById('agentInput').value.trim();
+    if (!idea) { toast('请先在输入框填写创意想法', 'error'); return; }
+    if (agentPipelineTimer) { toast('已有流水线在运行', 'error'); return; }
+    document.getElementById('agentInput').value = '';
+    appendAgentLog('user', '[一键流水线] ' + idea);
+    const data = await post('/api/video/agent/orchestrate', { idea: idea });
+    if (!data.success) { appendAgentLog('error', data.message || '提交失败'); return; }
+    agentPipelineTaskId = data.data.taskId;
+    appendAgentLog('director', '流水线已提交（任务 ' + agentPipelineTaskId.slice(0, 8) + '…），后台执行中…');
+    document.getElementById('agentPipelineBtn').disabled = true;
+    agentPipelineTimer = setInterval(pollAgentPipeline, 3000);
+}
+
+async function pollAgentPipeline() {
+    if (!agentPipelineTaskId) return;
+    const data = await api('/api/video/agent/orchestrate/' + agentPipelineTaskId);
+    if (!data.success) { stopAgentPipeline(); appendAgentLog('error', data.message || '查询失败'); return; }
+    const t = data.data;
+    if (t.status === 'RUNNING') return; // 继续轮询
+    stopAgentPipeline();
+    if (t.status === 'FAILED') { appendAgentLog('error', '流水线失败：' + (t.error || '未知原因')); return; }
+    appendAgentLog('director', t.reply || '(无回复)');
+    if (t.status === 'AWAITING_CONFIRMATION') {
+        const bar = document.getElementById('agentConfirmBar');
+        bar.innerHTML = '';
+        (t.pendingConfirmations || []).forEach(p => {
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-orange btn-sm';
+            btn.textContent = '确认执行 ' + p.tool;
+            btn.onclick = () => confirmAgentPipeline();
+            bar.appendChild(btn);
+        });
+        bar.style.display = 'block';
+    }
+    loadScriptList(true);
+}
+
+async function confirmAgentPipeline() {
+    document.getElementById('agentConfirmBar').style.display = 'none';
+    const data = await post('/api/video/agent/orchestrate/' + agentPipelineTaskId + '/confirm', {});
+    if (!data.success) { appendAgentLog('error', data.message || '确认失败'); return; }
+    appendAgentLog('director', '已确认，继续执行…');
+    document.getElementById('agentPipelineBtn').disabled = true;
+    agentPipelineTimer = setInterval(pollAgentPipeline, 3000);
+}
+
+function stopAgentPipeline() {
+    if (agentPipelineTimer) { clearInterval(agentPipelineTimer); agentPipelineTimer = null; }
+    document.getElementById('agentPipelineBtn').disabled = false;
 }
 
 // Ctrl+Enter 快捷生成

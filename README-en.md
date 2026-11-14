@@ -222,6 +222,9 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 - 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
 - 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX (local models auto-apply SD1.5/SDXL/FLUX style presets); SSE real-time progress bar, automatic retry, per-shot regeneration
 - ✅ **Image Quality Evaluation** (optional) - Multimodal LLM scores clarity/relevance/aesthetics (0-10); low-scoring images are automatically regenerated (<=2 retries, best score kept); falls back to rule-based evaluation without a multimodal API; quality badge shown on shot cards (enable via `image.quality.enabled`, off by default)
+- 🤖 **Agent Toolification** (Phase 3 slice 1) - Six core capabilities (storyboard generation / prompt enhancement / image generation / quality evaluation / video export / BGM recommendation) wrapped as Spring AI tools (FunctionToolCallback), with a tool-list introspection endpoint, laying the foundation for director-agent orchestration
+- 🎬 **AI Director Chat** (Phase 3 slice 2) - ChatClient with the six tools mounted performs automatic ReAct orchestration (think → call tool → observe → continue); a built-in chat panel on the studio page; video export is protected by a human confirmation gate (frontend confirm button / explicit `confirmedTools` in the request); conversation history is isolated in memory per user + session (max 20 messages, cleared on restart)
+- 🎭 **Multi-Agent Orchestration** (Phase 3 slice 3) - Four specialist agents (screenwriter / artist / audio / editor, each with its own system prompt + tool subset) delegated to the director as "specialist-as-tool"; a "one-click pipeline" runs asynchronous orchestration (submit → poll → confirm to resume) on a dedicated thread pool with explicit SecurityContext propagation; tasks are in-memory (max 100) with per-user ownership checks
 - 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc., 5 pre-generated royalty-free tracks), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
 - 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); subtitle language selectable: Chinese / English / bilingual (LLM translation, narration audio stays Chinese); standalone SRT export and single-frame subtitle preview supported
 - 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
@@ -281,7 +284,8 @@ spring-ai-demo/
 │   │   ├── StoryScriptController.java  # Video studio: storyboard/shot CRUD/reorder
 │   │   ├── TimeZoneController.java     # Timezone controller (IP geolocation)
 │   │   ├── VideoExportController.java  # Video studio: preview/HD export/history/ZIP package
-│   │   └── VideoTemplateController.java # Video studio: template list/apply/custom (module H)
+│   │   ├── VideoTemplateController.java # Video studio: template list/apply/custom (module H)
+│   │   └── VideoAgentController.java   # Video studio: agent introspection / director chat / multi-agent orchestration (Phase 3 slices 1/2/3)
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
 │   │   ├── BgmService.java             # Video studio: BGM library/LLM recommend/upload
@@ -336,6 +340,13 @@ spring-ai-demo/
 │   ├── quality/                      # Module J: image quality evaluation
 │   │   ├── ImageQualityService.java   # Multimodal scoring + rule fallback
 │   │   └── ImageQualityScore.java     # Score DTO (3 dimensions 0-10 + overall average)
+│   ├── agent/                        # Phase 3 slices 1/2/3: toolification + director + multi-agent orchestration
+│   │   ├── AgentToolRequests.java     # Tool input records (@ToolParam descriptions, incl. DelegateTask)
+│   │   ├── VideoAgentToolFactory.java # FunctionToolCallback wrappers over existing services
+│   │   ├── ConfirmationGateToolCallback.java # Human confirmation gate (blocks unconfirmed exportVideo)
+│   │   ├── DirectorAgentService.java  # Director agent (ChatClient + tools ReAct + session history)
+│   │   ├── SpecialistAgentFactory.java # Four specialist agents + delegateToXxx tools (slice 3)
+│   │   └── AgentOrchestrationService.java # Async orchestration (SecurityContext propagation + task registry + confirm resume)
 │   └── generator/                     # Image generation abstraction (strategy + factory)
 │       ├── ImageGenerator.java / GeneratedImage.java
 │       ├── DashScopeImageGenerator.java  # Cloud Tongyi Wanxiang
@@ -659,6 +670,12 @@ spring:
 | `/api/video/export/platforms` | GET | Social platform preset list (six-platform specs) |
 | `/api/video/export/platform` | POST | One-click export by platform preset (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts) |
 | `/api/video/cover/generate` | POST | Extract cover frame from exported video (middle frame by default, configurable time/export record) |
+| `/api/video/agent/tools` | GET | Agent tool list (name/description/input schema, Phase 3 slice 1) |
+| `/api/video/agent/chat` | POST | AI director chat (ReAct tool orchestration; exportVideo requires confirmedTools, Phase 3 slice 2) |
+| `/api/video/agent/chat/{sessionId}` | DELETE | Clear director conversation history (Phase 3 slice 2) |
+| `/api/video/agent/orchestrate` | POST | One-click pipeline: submit a multi-agent async orchestration task (Phase 3 slice 3) |
+| `/api/video/agent/orchestrate/{taskId}` | GET | Query orchestration task status (polling, Phase 3 slice 3) |
+| `/api/video/agent/orchestrate/{taskId}/confirm` | POST | Confirm to resume: pass the exportVideo gate (Phase 3 slice 3) |
 | `/api/video/generate` / `/api/video/compose` | POST | Legacy one-shot workflow API (kept for compat) |
 
 > Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)

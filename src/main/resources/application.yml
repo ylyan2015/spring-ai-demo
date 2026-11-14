@@ -82,6 +82,12 @@ image:
     threshold: 6.0                     # 及格阈值（0-10），低于该分自动重新生成
     max-retries: 2                     # 低分图片最大重试次数（始终保留得分最高的一张）
 
+# Agent 工具配置（Phase 3）
+agent:
+  tools:
+    self-base-url: http://localhost:8080  # 本服务访问基址：evaluateImage 工具仅接受存储相对路径（/images/…），
+                                          # 解析为同源绝对 URL（SSRF 防护）；部署时按实际对外地址修改
+
 # 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
 video:
   # FFmpeg / ffprobe 可执行文件位置。Windows 下建议写绝对路径，避免依赖系统 PATH；

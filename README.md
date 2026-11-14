@@ -243,6 +243,9 @@ Web 界面右侧提供知识库面板：
 - 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
 - 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换（本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）；SSE 实时进度条、失败自动重试、单镜头重新生成
 - ✅ **图片质量评估**（可选）- 多模态 LLM 按清晰度/相关性/美学三维打分（0-10），低分自动重新生成（≤2 次，保留最高分）；未配多模态 API 时降级为规则评估；镜头卡片显示质量徽章（`image.quality.enabled` 开启，默认关闭）
+- 🤖 **Agent 工具化**（Phase 3 切片1）- 六项核心能力（脚本生成/提示词优化/图片生成/质量评估/视频导出/BGM 推荐）已包装为 Spring AI 工具（FunctionToolCallback），提供工具清单内省端点，为导演 Agent 编排奠基
+- 🎬 **AI 导演对话**（Phase 3 切片2）- ChatClient 挂载六工具自动 ReAct 编排（思考→调用工具→观察→继续），工作室页面内置对话面板；导出视频设人工确认闸门（前端确认按钮/请求 confirmedTools 显式放行）；对话历史按用户+会话内存隔离（上限 20 条，重启清空）
+- 🎭 **多 Agent 编排**（Phase 3 切片3）- 编剧/美术/音频/剪辑四专家 Agent（各自 System Prompt + 工具子集）以「专家即工具」委托给导演；「一键流水线」异步编排（提交→轮询→确认续跑），专用线程池显式传播 SecurityContext；任务内存态上限 100、按用户归属校验
 - 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等，预置 5 首合成免版权音乐），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
 - 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；字幕语言可选中文/English/中英双语（LLM 翻译，配音仍为中文）；支持单独导出 SRT 文件与一帧字幕效果预览
 - 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出，支持 ZIP 打包下载（含封面 + 清单）；一键从导出视频截取封面帧
@@ -325,7 +328,8 @@ spring-ai-demo/
 │   │   ├── StoryScriptController.java  # 短视频：分镜脚本/镜头增删改/排序
 │   │   ├── TimeZoneController.java     # 时区控制器（IP定位）
 │   │   ├── VideoExportController.java  # 短视频：预览/高清导出/导出历史/ZIP打包
-│   │   └── VideoTemplateController.java # 短视频：视频模板列表/应用/自定义（模块 H）
+│   │   ├── VideoTemplateController.java # 短视频：视频模板列表/应用/自定义（模块 H）
+│   │   └── VideoAgentController.java   # 短视频：Agent 内省/导演对话/多 Agent 编排（Phase 3 切片1/2/3）
 │   ├── service/
 │   │   ├── AuthService.java            # 认证服务（注册/登录逻辑）
 │   │   ├── BgmService.java             # 短视频：BGM 音乐库/LLM推荐/上传
@@ -380,6 +384,13 @@ spring-ai-demo/
 │   ├── quality/                      # 模块 J：图片质量评估
 │   │   ├── ImageQualityService.java   # 多模态评分 + 规则降级
 │   │   └── ImageQualityScore.java     # 评分 DTO（三维 0-10 + 综合均值）
+│   ├── agent/                        # Phase 3 切片1/2/3：工具化 + 导演 + 多 Agent 编排
+│   │   ├── AgentToolRequests.java     # 工具输入 record（@ToolParam 描述，含 DelegateTask）
+│   │   ├── VideoAgentToolFactory.java # FunctionToolCallback 包装现有服务
+│   │   ├── ConfirmationGateToolCallback.java # 人工确认闸门（exportVideo 未确认时拦截）
+│   │   ├── DirectorAgentService.java  # 导演 Agent（ChatClient 挂工具 ReAct + 会话历史）
+│   │   ├── SpecialistAgentFactory.java # 四专家 Agent + delegateToXxx 委托工具（切片3）
+│   │   └── AgentOrchestrationService.java # 异步编排（SecurityContext 传播 + 任务表 + 确认续跑）
 │   └── generator/                     # 图片生成抽象（策略+工厂）
 │       ├── ImageGenerator.java / GeneratedImage.java
 │       ├── DashScopeImageGenerator.java  # 云端通义万相
@@ -797,6 +808,12 @@ spring:
 | `/api/video/export/platforms` | GET | 社媒平台预设列表（六平台规格） |
 | `/api/video/export/platform` | POST | 按平台预设一键导出（抖音/B站/小红书/快手/视频号/YT Shorts） |
 | `/api/video/cover/generate` | POST | 从导出视频截取封面帧（默认中间帧，可指定时刻/导出记录） |
+| `/api/video/agent/tools` | GET | Agent 工具清单（名称/描述/输入 Schema，Phase 3 切片1） |
+| `/api/video/agent/chat` | POST | AI 导演对话（ReAct 工具编排；exportVideo 需 confirmedTools 确认，Phase 3 切片2） |
+| `/api/video/agent/chat/{sessionId}` | DELETE | 清空导演对话历史（Phase 3 切片2） |
+| `/api/video/agent/orchestrate` | POST | 一键成片：提交多 Agent 异步编排任务（Phase 3 切片3） |
+| `/api/video/agent/orchestrate/{taskId}` | GET | 查询编排任务状态（轮询，Phase 3 切片3） |
+| `/api/video/agent/orchestrate/{taskId}/confirm` | POST | 确认续跑：放行 exportVideo 闸门（Phase 3 切片3） |
 | `/api/video/generate` / `/api/video/compose` | POST | 旧一次性流程 API（保留兼容） |
 
 > 视频工作室页面：http://localhost:8080/video-studio （详见 [API_TEST.md](API_TEST.md) 第七节）

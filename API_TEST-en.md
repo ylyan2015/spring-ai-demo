@@ -625,6 +625,8 @@ curl -X PUT http://localhost:8080/api/video/scripts/1/shots/reorder \
   -d '{"shotIds": [13, 11, 12]}'
 ```
 
+> **cameraMovement mapping** (honored at compose time): contains "固定/静止" (static) = no motion; contains "拉" (pull) = zoom out; contains "平移/横移" (pan) = horizontal pan; otherwise (push-in / default) = zoom in. zoompan is supersampled to eliminate per-frame integer-truncation jitter (factor adaptive to resolution: 480p 4x / 720p 3x / 1080p 2x, intermediate long edge <=3840; `video.motion.supersample-factor` is the cap); amount controlled by `video.motion.zoom-amount`.
+
 > Note: when imagePrompt changes, the server automatically clears imageUrl/imageFileId and resets imageStatus to PENDING; images must be regenerated.
 
 ---
@@ -677,6 +679,11 @@ curl http://localhost:8080/api/video/images/generators
 # Switch generator at runtime (type: dashscope / local)
 curl -X PUT "http://localhost:8080/api/video/images/generator?type=local"
 ```
+
+> **Available types**: `dashscope` (default Wanxiang) / `local` / `zhipu` / `siliconflow` / `openai` / `ark`.
+> The latter four share one OpenAI-compatible implementation (Zhipu CogView / SiliconFlow Kolors·FLUX / OpenAI gpt-image-1 / Volcano Ark Seedream);
+> keys via env vars `ZHIPU_API_KEY` / `SILICONFLOW_API_KEY` / `OPENAI_API_KEY` / `ARK_API_KEY` (empty key = shown unavailable);
+> negative prompts appended to prompt, sizes mapped by aspect ratio to each provider's enum, temp image URLs downloaded and re-stored.
 
 **Batch parallel generation (SSE; native EventSource supports GET only):**
 
@@ -1361,7 +1368,20 @@ chat:
 
 ```yaml
 image:
-  generator: dashscope               # Image source: dashscope (cloud Tongyi Wanxiang) / local (local SD/FLUX)
+  generator: dashscope               # Image source: dashscope (default) / local / zhipu / siliconflow / openai / ark
+  compat:                            # Four OpenAI-compatible providers (keys via env vars, empty = unavailable; see README)
+    zhipu:
+      api-key: ${ZHIPU_API_KEY:}
+      model: cogview-3-flash
+    siliconflow:
+      api-key: ${SILICONFLOW_API_KEY:}
+      model: Kwai-Kolors/Kolors
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: gpt-image-1
+    ark:
+      api-key: ${ARK_API_KEY:}
+      model: doubao-seedream-4-0-250828
   local:                              # Local SD WebUI config
     base-url: http://127.0.0.1:7860
     steps: 25
@@ -1388,6 +1408,9 @@ video:
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (BGM duration probing)
   python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows)
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes)
+  motion:
+    zoom-amount: 0.06                # Camera-motion zoom amount; smaller = steadier
+    supersample-factor: 4            # zoompan supersampling cap (anti-jitter); adaptive: 1080p→2x / 720p→3x / 480p→4x; 1 = off
   watermark:                        # Social export: brand watermark
     logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended; empty = disabled)
   subtitle:                          # Module F: subtitle burning

@@ -382,12 +382,7 @@ public class VideoExportService {
         // 组装合成入参（兼容 VideoComposeService 的 Map 结构）
         List<Map<String, Object>> shotMaps = new ArrayList<>();
         for (StoryShot shot : shots) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("imageUrl", shot.getImageUrl());
-            m.put("durationSeconds", shot.getDurationSeconds() == null ? 5 : shot.getDurationSeconds());
-            m.put("narration", shot.getNarration());
-            m.put("imagePrompt", shot.getImagePrompt());
-            shotMaps.add(m);
+            shotMaps.add(toComposeMap(shot));
         }
 
         int[] size = resolveDimensions(resolution, aspectRatio);
@@ -434,6 +429,17 @@ public class VideoExportService {
         log.info("Export {} done: url={}, size={} bytes", record.getId(),
                 video.get("videoUrl"), video.get("fileSizeBytes"));
         return result;
+    }
+
+    /** 组装单镜头合成入参；cameraMovement 必须贯穿，否则运镜滤镜回退默认 zoom in（固定镜头仍缩放） */
+    static Map<String, Object> toComposeMap(StoryShot shot) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("imageUrl", shot.getImageUrl());
+        m.put("durationSeconds", shot.getDurationSeconds() == null ? 5 : shot.getDurationSeconds());
+        m.put("narration", shot.getNarration());
+        m.put("imagePrompt", shot.getImagePrompt());
+        m.put("cameraMovement", shot.getCameraMovement());
+        return m;
     }
 
     /** 导出记录公共字段（saveExportRecord 参数收敛，避免 16+ 参数方法签名） */

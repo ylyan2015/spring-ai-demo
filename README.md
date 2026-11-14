@@ -239,9 +239,9 @@ Web 界面右侧提供知识库面板：
 完整工作流：**创意想法 → 分镜脚本 → 提示词优化 → 并行生成画面（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出**
 
 - 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除；可选视频模板（8 个内置风格 + 自定义）一键生成对应风格脚本，脚本可另存为模板
-- 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序
+- 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序；镜头运动真实生效（固定=纯静态、推进/推近=zoom in、拉远=zoom out、平移=水平 pan），zoompan 超采样消除逐帧截断抖动
 - 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
-- 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换（本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）；SSE 实时进度条、失败自动重试、单镜头重新生成
+- 🖼️ **并行图片生成** - 六源一键切换：通义万相（默认）/ 本地 SD/FLUX / 智谱 CogView / 硅基流动 / OpenAI / 火山方舟 Seedream（后四家走通用 OpenAI 兼容实现，本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）；SSE 实时进度条、失败自动重试、单镜头重新生成
 - ✅ **图片质量评估**（可选）- 多模态 LLM 按清晰度/相关性/美学三维打分（0-10），低分自动重新生成（≤2 次，保留最高分）；未配多模态 API 时降级为规则评估；镜头卡片显示质量徽章（`image.quality.enabled` 开启，默认关闭）
 - 🤖 **Agent 工具化**（Phase 3 切片1）- 六项核心能力（脚本生成/提示词优化/图片生成/质量评估/视频导出/BGM 推荐）已包装为 Spring AI 工具（FunctionToolCallback），提供工具清单内省端点，为导演 Agent 编排奠基
 - 🎬 **AI 导演对话**（Phase 3 切片2）- ChatClient 挂载六工具自动 ReAct 编排（思考→调用工具→观察→继续），工作室页面内置对话面板；导出视频设人工确认闸门（前端确认按钮/请求 confirmedTools 显式放行）；对话历史按用户+会话内存隔离（上限 20 条，重启清空）
@@ -638,7 +638,23 @@ storage:
 
 ```yaml
 image:
-  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  generator: dashscope               # 图像生成源：dashscope（默认）/ local / zhipu / siliconflow / openai / ark
+  # OpenAI 兼容 images 协议四家（通用实现）：Key 经环境变量注入，空 Key 前端显示不可用；
+  # 负面词自动拼接进 prompt（协议无 negative 参数）；尺寸按宽高比映射到各家枚举（fixed-sizes 留空=透传）；
+  # 响应 url/b64_json 双格式自适应，临时链接自动下载转存到存储服务
+  compat:
+    zhipu:
+      api-key: ${ZHIPU_API_KEY:}        # 智谱 BigModel；cogview-3-flash 免费档
+      model: cogview-3-flash
+    siliconflow:
+      api-key: ${SILICONFLOW_API_KEY:}  # 硅基流动；Kolors 免费档 / FLUX.1-schnell
+      model: Kwai-Kolors/Kolors
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: gpt-image-1
+    ark:
+      api-key: ${ARK_API_KEY:}          # 火山方舟；Seedream 中文语义/文字渲染强
+      model: doubao-seedream-4-0-250828
   local:                               # 本地 Stable Diffusion WebUI / ComfyUI 配置
     base-url: http://127.0.0.1:7860    # 本地服务 API 地址
     model: stable-diffusion            # 本地模型名称
@@ -666,6 +682,9 @@ video:
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe 路径（BGM 时长探测用）
   python-command: ${PYTHON_CMD:python}  # 运行 edge-tts 的 Python 解释器（Windows 建议绝对路径，避开微软商店别名桩）
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头建议 ≥8
+  motion:
+    zoom-amount: 0.06                # 运镜缩放幅度；越小画面越稳
+    supersample-factor: 4            # zoompan 超采样倍数上限（消抖）；自适应封顶中间长边≤3840：1080p→2×/720p→3×/480p→4×；1=关闭
   watermark:                        # 社媒导出：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录

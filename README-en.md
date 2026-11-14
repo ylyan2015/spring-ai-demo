@@ -36,7 +36,7 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **BGM Scoring** - Built-in music library (categorized by mood, 5 pre-generated royalty-free tracks) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
 - ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position); multilingual subtitles (Chinese / English / bilingual, LLM translation)
 - ✅ **Video Template System** - 8 built-in style templates (product showcase / storytelling / knowledge / travel / food / emotional quotes / tech / fitness), one-click apply to generate styled scripts, save custom templates
-- ✅ **Multiple Image Generation Backends** - DashScope Tongyi Wanxiang (cloud) and local Stable Diffusion / FLUX (SD WebUI protocol) switching via config, with automatic retry on failure
+- ✅ **Multiple Image Generation Backends** - Six sources switchable via config or UI: DashScope Tongyi Wanxiang (default), local SD/FLUX, Zhipu CogView, SiliconFlow, OpenAI, Volcano Ark Seedream (the latter four share one OpenAI-compatible implementation); automatic retry on failure
 
 ## Technology Stack
 
@@ -218,7 +218,7 @@ Visit http://localhost:8080/video-studio to use it (login required):
 Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Image Generation (SSE real-time progress) → Quick Preview / BGM Scoring / Multi-Ratio HD Export**
 
 - 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting; optional video templates (8 built-in styles + custom) generate styled scripts in one click, scripts can be saved as templates
-- 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort
+- 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort; camera movement is honored (static = no motion, push-in = zoom in, pull-back = zoom out, pan = horizontal move), with zoompan supersampling to eliminate per-frame truncation jitter
 - 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
 - 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX (local models auto-apply SD1.5/SDXL/FLUX style presets); SSE real-time progress bar, automatic retry, per-shot regeneration
 - ✅ **Image Quality Evaluation** (optional) - Multimodal LLM scores clarity/relevance/aesthetics (0-10); low-scoring images are automatically regenerated (<=2 retries, best score kept); falls back to rule-based evaluation without a multimodal API; quality badge shown on shot cards (enable via `image.quality.enabled`, off by default)
@@ -481,7 +481,23 @@ Configuration for the video workflow (script → images → BGM → export) is c
 
 ```yaml
 image:
-  generator: dashscope               # Image source: dashscope (cloud) / local (local SD/FLUX)
+  generator: dashscope               # Image source: dashscope (default) / local / zhipu / siliconflow / openai / ark
+  # Four OpenAI-compatible images providers (one generic implementation): keys via env vars (empty = unavailable in UI);
+  # negative prompts appended to prompt (protocol has no negative param); sizes mapped by aspect ratio to each
+  # provider's enum (empty fixed-sizes = pass-through); url/b64_json responses auto-handled, temp URLs downloaded and re-stored
+  compat:
+    zhipu:
+      api-key: ${ZHIPU_API_KEY:}        # Zhipu BigModel; cogview-3-flash free tier
+      model: cogview-3-flash
+    siliconflow:
+      api-key: ${SILICONFLOW_API_KEY:}  # SiliconFlow; Kolors free tier / FLUX.1-schnell
+      model: Kwai-Kolors/Kolors
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: gpt-image-1
+    ark:
+      api-key: ${ARK_API_KEY:}          # Volcano Ark; Seedream strong Chinese semantics/text rendering
+      model: doubao-seedream-4-0-250828
   local:                               # Local Stable Diffusion WebUI / ComfyUI config
     base-url: http://127.0.0.1:7860    # Local service API address
     model: stable-diffusion            # Local model name
@@ -509,6 +525,9 @@ video:
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (used to probe BGM duration)
   python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows to avoid the Microsoft Store alias stub)
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
+  motion:
+    zoom-amount: 0.06                # Camera-motion zoom amount; smaller = steadier
+    supersample-factor: 4            # zoompan supersampling cap (anti-jitter); adaptive to resolution, intermediate long edge <=3840: 1080p→2x / 720p→3x / 480p→4x; 1 = off
   watermark:                        # Social export: brand watermark
     logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended, bottom-right; empty = disabled)
   subtitle:                          # Module F: subtitle burning

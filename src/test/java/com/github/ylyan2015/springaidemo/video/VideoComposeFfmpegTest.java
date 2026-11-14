@@ -139,6 +139,66 @@ class VideoComposeFfmpegTest {
         }
     }
 
+    /**
+     * 运镜修复实跑：固定镜头（无 zoompan）+ 推近镜头（超采样 zoompan）组合合成，
+     * 验证新滤镜链在真实 FFmpeg 下可跑且时长仍被 xfade/-t 正确约束。
+     */
+    @Test
+    void composesWithCameraMovementStaticAndZoomIn() throws Exception {
+        ByteArrayOutputStream stored = new ByteArrayOutputStream();
+        VideoComposeService service = newService(stored);
+
+        List<Map<String, Object>> shots = List.of(
+                Map.of("order", 1, "imageUrl", "http://127.0.0.1:" + imagePort + "/images/a.png",
+                        "durationSeconds", 3, "narration", "", "cameraMovement", "固定微距"),
+                Map.of("order", 2, "imageUrl", "http://127.0.0.1:" + imagePort + "/images/b.png",
+                        "durationSeconds", 3, "narration", "", "cameraMovement", "缓慢推进"));
+
+        Map<String, Object> result = service.compose(shots);
+
+        assertEquals(5, result.get("totalDuration"));
+        Path outFile = Files.createTempFile("compose-motion", ".mp4");
+        try {
+            Files.write(outFile, stored.toByteArray());
+            assertTrue(Math.abs(probeDuration(outFile) - 5.2) < 0.3,
+                    "运镜滤镜链合成时长失控: " + probeDuration(outFile));
+        } finally {
+            Files.deleteIfExists(outFile);
+        }
+    }
+
+    /**
+     * 1080p 自适应降倍实跑：中间长边封顶 3840（2×），验证高分辨率下可合成且时长受约束；
+     * 顺带覆盖 pan 运镜实跑缺口。审查 Major 修复回归。
+     */
+    @Test
+    void composes1080pWithAdaptiveSupersampling() throws Exception {
+        ByteArrayOutputStream stored = new ByteArrayOutputStream();
+        VideoComposeService service = newService(stored);
+
+        List<Map<String, Object>> shots = List.of(
+                Map.of("order", 1, "imageUrl", "http://127.0.0.1:" + imagePort + "/images/a.png",
+                        "durationSeconds", 3, "narration", "", "cameraMovement", "固定"),
+                Map.of("order", 2, "imageUrl", "http://127.0.0.1:" + imagePort + "/images/b.png",
+                        "durationSeconds", 3, "narration", "", "cameraMovement", "缓慢推进"),
+                Map.of("order", 3, "imageUrl", "http://127.0.0.1:" + imagePort + "/images/c.png",
+                        "durationSeconds", 3, "narration", "", "cameraMovement", "缓慢平移"));
+
+        Map<String, Object> result = service.compose(shots,
+                new VideoComposeService.ComposeOptions().width(1920).height(1080));
+
+        assertEquals(7, result.get("totalDuration"), "3×3s − 2×0.8s = 7.4 四舍五入 7");
+        assertEquals(1920, result.get("width"));
+        Path outFile = Files.createTempFile("compose-1080p", ".mp4");
+        try {
+            Files.write(outFile, stored.toByteArray());
+            assertTrue(Math.abs(probeDuration(outFile) - 7.4) < 0.3,
+                    "1080p 合成时长失控: " + probeDuration(outFile));
+        } finally {
+            Files.deleteIfExists(outFile);
+        }
+    }
+
     private static VideoComposeService newService(ByteArrayOutputStream sink) {
         StorageService storage = Mockito.mock(StorageService.class);
         when(storage.upload(any(InputStream.class), anyString(), anyString())).thenAnswer(inv -> {

@@ -58,6 +58,18 @@ public class VideoComposeService {
     @Value("${video.python-command:python}")
     private String pythonCommand;
 
+    /** 运镜缩放幅度（占画面比例）；越小画面越稳 */
+    @Value("${video.motion.zoom-amount:0.06}")
+    private double zoomAmount = 0.06;
+
+    /** zoompan 超采样倍数上限：先放大再 zoom 消除逐帧整数截断抖动；1=关闭（更快但有抖动）；
+     *  实际倍数按分辨率自适应封顶中间长边 ≤3840（1080p→2×/720p→3×/480p→4×），控内存与耗时 */
+    @Value("${video.motion.supersample-factor:4}")
+    private int supersampleFactor = 4;
+
+    /** 超采样中间分辨率长边上限（4K）：防 1080p×4 达 7680×4320 的内存/超时风险（审查 Major） */
+    private static final int MAX_INTERMEDIATE_LONG_EDGE = 3840;
+
     public VideoComposeService(StorageService storageService) {
         this.storageService = storageService;
     }
@@ -103,6 +115,10 @@ public class VideoComposeService {
             List<String> narrations = shots.stream()
                     .map(s -> (String) s.getOrDefault("narration", ""))
                     .toList();
+            // 运镜字段贯穿到滤镜层：固定=静态、推/拉/pan 按设置生效（不再按序号奇偶交替）
+            List<String> movements = shots.stream()
+                    .map(s -> (String) s.getOrDefault("cameraMovement", ""))
+                    .toList();
 
             boolean hasNarration = narrations.stream().anyMatch(n -> n != null && !n.isBlank());
             boolean ttsAvailable = hasNarration && isEdgeTtsAvailable();
@@ -120,7 +136,7 @@ public class VideoComposeService {
                         - (imageFiles.size() - 1) * XFADE_DURATION;
             int totalDuration = (int) Math.round(exactDuration);
 
-            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, workDir, options, exactDuration);
+            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, movements, workDir, options, exactDuration);
 
             Path finalVideo;
             boolean hasNarrationTrack = false;
@@ -241,13 +257,47 @@ public class VideoComposeService {
 
     // ==================== FFmpeg Video Composition ====================
 
-    private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, Path workDir,
-                                        ComposeOptions options, double exactDuration)
+    /**
+     * 运镜滤镜段（接在 scale+crop 之后）：按 cameraMovement 字段映射——
+     * 固定/静止=纯静态（无 zoompan）；拉=zoom out；平移/横移=水平 pan；其余（推近/推进/缺省）=zoom in。
+     * zoompan 前超采样放大 supersampleFactor 倍、s= 目标尺寸缩回输出：
+     * 小图上 zoompan 的 x/y 逐帧整数截断会产生 ±1px 高频抖动（画面“晃”），超采样将截断误差降到亚像素级。
+     */
+    static String motionFilter(String movement, int frames, int fps, int width, int height,
+                               double zoomAmount, int supersampleFactor) {
+        String m = movement == null ? "" : movement;
+        if (m.contains("固定") || m.contains("静止")) {
+            return String.format("fps=%d", fps);
+        }
+        String pre = "";
+        int factor = Math.max(1, Math.min(supersampleFactor, MAX_INTERMEDIATE_LONG_EDGE / Math.max(width, height)));
+        if (factor > 1) {
+            pre = String.format("scale=iw*%d:ih*%d:flags=lanczos,", factor, factor);
+        }
+        String za = String.format("%.2f", zoomAmount);
+        String top = String.format("%.2f", 1 + zoomAmount);
+        String x = "iw/2-(iw/zoom/2)";
+        String y = "ih/2-(ih/zoom/2)";
+        String z;
+        if (m.contains("拉")) {
+            z = String.format("max(%s-%s*on/%d,1.0)", top, za, frames);
+        } else if (m.contains("平移") || m.contains("横移")) {
+            z = top;
+            x = String.format("(iw-iw/zoom)*on/%d", frames);
+        } else {
+            z = String.format("min(1+%s*on/%d,%s)", za, frames, top);
+        }
+        return pre + String.format("zoompan=z='%s':x='%s':y='%s':d=1:s=%dx%d:fps=%d",
+                z, x, y, width, height, fps);
+    }
+
+    private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, List<String> movements,
+                                        Path workDir, ComposeOptions options, double exactDuration)
             throws Exception {
         Path output = workDir.resolve("output_video.mp4");
 
         if (images.size() == 1) {
-            buildSingleImageVideo(images.get(0), durations.get(0), output, options);
+            buildSingleImageVideo(images.get(0), durations.get(0), movements.get(0), output, options);
             return output;
         }
 
@@ -265,19 +315,13 @@ public class VideoComposeService {
         StringBuilder filter = new StringBuilder();
 
         for (int i = 0; i < images.size(); i++) {
-            // zoompan 的 z 表达式没有 t（秒）变量，只有 on（当前输出帧号）；
-            // 跑满 1.06 倍需要 duration*FPS 帧
-            String zoomExpr = i % 2 == 0
-                    ? String.format("min(1+0.06*on/%d,1.06)", durations.get(i) * FPS)
-                    : String.format("max(1.06-0.06*on/%d,1.0)", durations.get(i) * FPS);
-
-            // 先按目标比例居中裁剪，再 zoompan 动效，避免非 16:9 比例下画面变形
+            // 先按目标比例居中裁剪，再按运镜字段加动效（超采样消抖），避免非 16:9 比例下画面变形
             filter.append(String.format(
-                    "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-                            + "zoompan=z='%s':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
+                    "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
                             + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
                     i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
-                    zoomExpr, options.getWidth(), options.getHeight(), FPS, i));
+                    motionFilter(movements.get(i), durations.get(i) * FPS, FPS,
+                            options.getWidth(), options.getHeight(), zoomAmount, supersampleFactor), i));
         }
 
         double offset = 0;
@@ -335,14 +379,14 @@ public class VideoComposeService {
         return output;
     }
 
-    private void buildSingleImageVideo(Path image, int duration, Path output, ComposeOptions options)
+    private void buildSingleImageVideo(Path image, int duration, String movement, Path output, ComposeOptions options)
             throws Exception {
         String vf = String.format(
-                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-                        + "zoompan=z='min(1+0.06*on/%d,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
+                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
                         + "setpts=PTS-STARTPTS,format=yuva420p",
                 options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
-                duration * FPS, options.getWidth(), options.getHeight(), FPS);
+                motionFilter(movement, duration * FPS, FPS, options.getWidth(), options.getHeight(),
+                        zoomAmount, supersampleFactor));
         if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
             vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
                             + ":x=(w-text_w)/2:y=(h-text_h)/2",

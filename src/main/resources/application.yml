@@ -80,7 +80,32 @@ rag:
 
 # 图像生成配置（模块 C：AI 图像生成系统）
 image:
-  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  generator: dashscope               # 图像生成源：dashscope（默认）/ local / zhipu / siliconflow / openai / ark；前端下拉可运行时切换
+  # OpenAI 兼容 images/generations 协议提供者（一个通用实现覆盖四家）：
+  # Key 经环境变量注入，空 Key 时该提供者在前端显示不可用；
+  # fixed-sizes 为受支持尺寸枚举（按宽高比就近映射），留空 = 任意尺寸透传；
+  # 协议无 negative_prompt 参数，负面词自动拼接进 prompt
+  compat:
+    zhipu:
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      api-key: ${ZHIPU_API_KEY:}
+      model: cogview-3-flash          # 免费档；付费高质量可改 cogview-4
+      fixed-sizes: 1024x1024,1344x768,768x1344,1152x864,864x1152,1440x720,720x1440
+    siliconflow:
+      base-url: https://api.siliconflow.cn/v1
+      api-key: ${SILICONFLOW_API_KEY:}
+      model: Kwai-Kolors/Kolors       # 免费档；或 black-forest-labs/FLUX.1-schnell
+      fixed-sizes: ""
+    openai:
+      base-url: https://api.openai.com/v1
+      api-key: ${OPENAI_API_KEY:}
+      model: gpt-image-1
+      fixed-sizes: 1024x1024,1536x1024,1024x1536
+    ark:
+      base-url: https://ark.cn-beijing.volces.com/api/v3
+      api-key: ${ARK_API_KEY:}
+      model: doubao-seedream-4-0-250828   # 中文语义/文字渲染强；或 4-5/5-0 版本
+      fixed-sizes: ""
   local:                               # 本地 Stable Diffusion WebUI / ComfyUI / OllamaDiffuser 配置
     base-url: http://127.0.0.1:7860    # 本地服务 API 地址
     model: stable-diffusion            # 本地模型名称
@@ -120,6 +145,9 @@ video:
   # "应用执行别名"桩（返回退出码 49），必要时用环境变量 PYTHON_CMD 指定真实解释器绝对路径
   python-command: ${PYTHON_CMD:python}
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
+  motion:                            # 静图运镜动效（镜头运动字段生效：固定=静态/推/拉/平移）
+    zoom-amount: 0.06                # 缩放幅度（占画面比例）；越小画面越稳
+    supersample-factor: 4            # zoompan 超采样倍数上限（消抖）；按分辨率自适应封顶中间长边≤3840：1080p→2×/720p→3×/480p→4×；1=关闭
   watermark:                        # 模块 I：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录

@@ -662,6 +662,8 @@ curl -X PUT http://localhost:8080/api/video/scripts/1/shots/reorder \
   -d '{"shotIds": [13, 11, 12]}'
 ```
 
+> **cameraMovement 运镜映射**（合成时真实生效）：含「固定/静止」=纯静态无动效；含「拉」=zoom out；含「平移/横移」=水平 pan；其余（推进/推近/缺省）=zoom in。zoompan 前超采样消除逐帧整数截断抖动（倍数按分辨率自适应：480p 4×/720p 3×/1080p 2×，中间长边≤3840，`video.motion.supersample-factor` 为上限），幅度由 `video.motion.zoom-amount` 控制。
+
 > 提示词变化后旧图片失效：更新 imagePrompt 时服务端会自动清空 imageUrl/imageFileId 并将 imageStatus 置回 PENDING，需重新生成图片。
 
 ---
@@ -714,6 +716,11 @@ curl http://localhost:8080/api/video/images/generators
 # 运行时切换生成器（type: dashscope / local）
 curl -X PUT "http://localhost:8080/api/video/images/generator?type=local"
 ```
+
+> **可用 type**：`dashscope`（默认万相）/ `local` / `zhipu` / `siliconflow` / `openai` / `ark`。
+> 后四家为通用 OpenAI 兼容实现（智谱 CogView / 硅基流动 Kolors·FLUX / OpenAI gpt-image-1 / 火山方舟 Seedream），
+> Key 经环境变量 `ZHIPU_API_KEY` / `SILICONFLOW_API_KEY` / `OPENAI_API_KEY` / `ARK_API_KEY` 注入，空 Key 时列表显示不可用；
+> 负面词自动拼接进 prompt，尺寸按宽高比映射到各家枚举，临时图片 URL 自动下载转存。
 
 **批量并行生成（SSE，浏览器原生 EventSource 仅支持 GET）：**
 
@@ -1397,7 +1404,20 @@ chat:
 
 ```yaml
 image:
-  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  generator: dashscope               # 图像生成源：dashscope（默认）/ local / zhipu / siliconflow / openai / ark
+  compat:                            # OpenAI 兼容四家（Key 环境变量注入，空=不可用；详见 README 配置节）
+    zhipu:
+      api-key: ${ZHIPU_API_KEY:}
+      model: cogview-3-flash
+    siliconflow:
+      api-key: ${SILICONFLOW_API_KEY:}
+      model: Kwai-Kolors/Kolors
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: gpt-image-1
+    ark:
+      api-key: ${ARK_API_KEY:}
+      model: doubao-seedream-4-0-250828
   local:                              # 本地 SD WebUI 配置
     base-url: http://127.0.0.1:7860
     steps: 25
@@ -1424,6 +1444,9 @@ video:
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe 路径（BGM 时长探测）
   python-command: ${PYTHON_CMD:python}  # 运行 edge-tts 的 Python 解释器（Windows 建议绝对路径）
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）
+  motion:
+    zoom-amount: 0.06                # 运镜缩放幅度；越小越稳
+    supersample-factor: 4            # zoompan 超采样上限（消抖）；自适应：1080p→2×/720p→3×/480p→4×；1=关闭
   watermark:                        # 社媒导出：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px；留空禁用）
   subtitle:                          # 模块 F：字幕烧录

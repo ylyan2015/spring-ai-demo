@@ -570,12 +570,17 @@ curl http://localhost:8080/api/image/records/your-session-id
 
 ### 7.1 生成分镜脚本
 
-输入创意想法，LLM 生成多镜头分镜脚本并持久化保存：
+输入创意想法，LLM 生成多镜头分镜脚本并持久化保存（可选 `templateId` 应用视频模板，见 7.10）：
 
 ```bash
 curl -X POST http://localhost:8080/api/video/scripts/generate \
   -H "Content-Type: application/json" \
   -d '{"idea": "一只橘猫的温馨日常，适合社交平台投放"}'
+
+# 应用视频模板生成（风格引导注入 System Prompt）
+curl -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "一只橘猫的温馨日常", "templateId": 2}'
 ```
 
 **响应：**
@@ -733,10 +738,10 @@ curl -X POST http://localhost:8080/api/video/export/preview \
   -H "Content-Type: application/json" \
   -d '{"scriptId": 1, "aspectRatio": "16:9", "bgmId": null, "subtitle": true}'
 
-# 高清导出（720p/1080p，可选 BGM 与字幕烧录）
+# 高清导出（720p/1080p，可选 BGM 与字幕烧录，字幕语言可选 zh/en/bilingual）
 curl -X POST http://localhost:8080/api/video/export/hd \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "withLogo": true}'
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "subtitleLanguage": "bilingual", "withLogo": true}'
 
 # 导出历史（含失败原因，可重新下载）
 curl http://localhost:8080/api/video/exports/1
@@ -751,6 +756,7 @@ curl http://localhost:8080/api/video/exports/1
 | `aspectRatio` | string | 否 | `16:9` | 画面比例（16:9 / 9:16 / 1:1） |
 | `bgmId` | long | 否 | null | 使用的 BGM，null 表示不配乐 |
 | `subtitle` | boolean | 否 | false | 是否烧录字幕（无旁白时自动忽略） |
+| `subtitleLanguage` | string | 否 | `zh` | 字幕语言：`zh` 原文 / `en` 英文（LLM 翻译）/ `bilingual` 中英双语；配音仍为中文原文 |
 | `withLogo` | boolean | 否 | false | 是否叠加品牌 Logo 角标（未配置 `video.watermark.logo-path` 时自动忽略） |
 
 **分辨率 × 比例 → 输出尺寸：**
@@ -808,13 +814,13 @@ curl -X POST http://localhost:8080/api/video/bgm/upload \
 }
 ```
 
-> **内置音乐库**：将免版权音乐按 `分类__名称.mp3` 命名放入 `./data/bgm/` 目录（如 `happy__sunny_morning.mp3`），启动时自动扫描注册。分类：`happy`（轻快）/ `sad`（忧伤）/ `epic`（史诗）/ `calm`（舒缓）/ `tense`（紧张）。
+> **内置音乐库**：将免版权音乐按 `分类__名称.mp3` 命名放入 `./data/bgm/` 目录（如 `happy__sunny_morning.mp3`），启动时自动扫描注册。分类：`happy`（轻快）/ `sad`（忧伤）/ `epic`（史诗）/ `calm`（舒缓）/ `tense`（紧张）。项目已预置 5 首程序合成的免版权和弦垫音（每分类 1 首，约 42s），可用 `tools/generate-preset-bgm.ps1` 重新生成或替换为真实音乐。
 
 ---
 
-### 7.8 字幕系统（SRT 导出 / 效果预览）
+### 7.8 字幕系统（SRT 导出 / 效果预览 / 多语言）
 
-根据镜头旁白自动生成带时间轴的字幕（时间轴与 xfade 转场精确对齐：转场中点切换，相邻字幕无缝不重叠）：
+根据镜头旁白自动生成带时间轴的字幕（时间轴与 xfade 转场精确对齐：转场中点切换，相邻字幕无缝不重叠）；支持多语言：`zh` 原文 / `en` 英文（LLM 翻译）/ `bilingual` 中英双语双行：
 
 ```bash
 # 生成 SRT 字幕文件（上传存储 + 返回内容，社媒平台可直接上传）
@@ -822,10 +828,15 @@ curl -X POST http://localhost:8080/api/video/subtitle/generate \
   -H "Content-Type: application/json" \
   -d '{"scriptId": 1}'
 
-# 渲染一帧字幕效果预览图（首镜头图片 + 当前比例 + 第一条字幕）
+# 生成英文字幕（LLM 翻译旁白，失败自动回退原文）
+curl -X POST http://localhost:8080/api/video/subtitle/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "language": "en"}'
+
+# 渲染一帧字幕效果预览图（首镜头图片 + 当前比例 + 第一条字幕，可指定语言）
 curl -X POST http://localhost:8080/api/video/subtitle/preview \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "aspectRatio": "9:16", "style": {"fontSize": 28, "position": "bottom"}}'
+  -d '{"scriptId": 1, "aspectRatio": "9:16", "language": "bilingual", "style": {"fontSize": 28, "position": "bottom"}}'
 ```
 
 **generate 响应：**
@@ -835,7 +846,8 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
   "data": {
     "srtUrl": "/images/2026/11/07/script_1_subtitle_1730966400000.srt",
     "srtContent": "1\n00:00:00,000 --> 00:00:03,600\n清晨的第一缕阳光\n\n...",
-    "cueCount": 5
+    "cueCount": 5,
+    "language": "zh"
   }
 }
 ```
@@ -856,7 +868,7 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 { "success": true, "data": { "previewUrl": "/images/2026/11/07/subtitle_preview_1730966400000.png", "width": 720, "height": 1280 } }
 ```
 
-> 字幕烧录随导出进行（7.6 的 `subtitle` 参数，FFmpeg subtitles 滤镜 + libass）；前端工作流界面亦提供「烧录字幕」开关、「导出SRT」与「字幕预览」按钮。
+> 字幕烧录随导出进行（7.6 的 `subtitle` + `subtitleLanguage` 参数，FFmpeg subtitles 滤镜 + libass）；前端工作流界面亦提供「烧录字幕」开关、字幕语言下拉（中文/English/双语）、「导出SRT」与「字幕预览」按钮。翻译结果按原文内存缓存，同一旁白重复导出不重复调用 LLM。
 
 ---
 
@@ -880,7 +892,7 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 ```bash
 curl -X POST http://localhost:8080/api/video/export/platform \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "withLogo": false}'
+  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "subtitleLanguage": "zh", "withLogo": false}'
 ```
 
 - `platform` 支持枚举名（大小写不敏感）或中文显示名（如 `"抖音"`）
@@ -906,7 +918,67 @@ curl -X POST http://localhost:8080/api/video/cover/generate \
 { "success": true, "data": { "coverUrl": "/images/2026/11/08/video_cover_1731000000000.jpg", "timeOffsetSeconds": 10.5, "exportId": 12 } }
 ```
 
-> 封面地址回写导出记录（导出历史可见缩略图）；批量多平台导出由前端并行调用 `/export/platform` 实现（无独立批量端点），API 用户可自行并发调用。
+> 封面地址回写导出记录（导出历史可见缩略图）；批量多平台导出由前端并行调用 `/export/platform` 实现，API 用户可自行并发调用；导出完成后可用下方 ZIP 打包端点一次性下载。
+
+#### 批量打包下载（ZIP）
+
+```bash
+# 将多条导出记录的视频（+已有封面）打包为 ZIP 流式下载
+curl -X POST http://localhost:8080/api/video/export/batch-download \
+  -H "Content-Type: application/json" \
+  -d '{"exportIds": [12, 13, 14]}' \
+  -o video_exports.zip
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `exportIds` | long[] | 是 | 导出记录 ID 列表，1-10 条，仅限当前用户的成功导出 |
+
+- 响应：`application/zip` 流（`Content-Disposition: attachment`）；校验失败返回 JSON 错误
+- ZIP 内容：`{序号}_{分辨率}_{比例}_{导出ID}.mp4`（如 `01_1080p_9x16_12.mp4`）+ 对应封面（若有）+ `manifest.txt` 清单（分辨率/比例/时长/BGM/字幕语言）
+- 前端：批量三平台导出结果区与导出历史区均提供「打包下载」按钮
+
+---
+
+### 7.10 视频模板（模块 H：预设风格 / 应用 / 自定义）
+
+系统启动时幂等预置 8 个内置模板：产品展示 / 故事讲述 / 知识科普 / 风景旅拍 / 美食制作 / 情感语录 / 科技数码 / 运动健身。应用模板 = 将模板的风格引导（stylePrefix + 推荐镜头数）注入脚本生成 System Prompt。
+
+```bash
+# 模板列表（系统内置 + 当前用户自定义）
+curl http://localhost:8080/api/video/templates
+
+# 模板详情
+curl http://localhost:8080/api/video/templates/1
+
+# 应用模板生成分镜脚本（响应 data 与 7.1 脚本结构一致）
+curl -X POST http://localhost:8080/api/video/templates/1/apply \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "一款无线耳机的种草短片"}'
+
+# 保存自定义模板
+curl -X POST http://localhost:8080/api/video/templates/custom \
+  -H "Content-Type: application/json" \
+  -d '{"name": "我的治愈风", "category": "story", "description": "温暖治愈系", "shotCount": 5, "stylePrefix": "warm healing cinematic style, soft light", "defaultBgmCategory": "calm"}'
+
+# 删除自定义模板（系统内置模板不可删）
+curl -X DELETE http://localhost:8080/api/video/templates/9
+```
+
+**模板字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | 模板名称（必填） |
+| `category` | string | 分类：product/story/knowledge/travel/food/emotion/tech/fitness/other |
+| `description` | string | 模板描述（前端选择提示） |
+| `shotCount` | int | 推荐镜头数（默认 5） |
+| `stylePrefix` | string | 风格引导（英文，注入脚本生成 System Prompt） |
+| `defaultBgmCategory` | string | 推荐 BGM 分类（happy/sad/epic/calm/tense） |
+| `defaultVoice` | string | 推荐 TTS 声音（预留） |
+| `isSystem` | boolean | 是否系统内置（只读，内置模板禁删） |
+
+> 自定义模板仅创建者可见可删；前端新建脚本区提供模板下拉，脚本头部提供「另存为模板」（镜头数 + 当前视觉风格）。
 
 ---
 

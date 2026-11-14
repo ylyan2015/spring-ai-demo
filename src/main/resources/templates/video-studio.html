@@ -152,6 +152,13 @@
 
         <!-- 创意输入区（新建模式显示） -->
         <div class="input-section" id="ideaSection" style="display:none;">
+            <label>视频模板（可选，模块 H）</label>
+            <div class="input-row">
+                <select id="templateSelect" onchange="onTemplateSelect()" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px;min-width:280px;">
+                    <option value="">不使用模板（自由创作）</option>
+                </select>
+            </div>
+            <div id="templateHint" style="font-size:12px;color:#888;margin:4px 0 8px;"></div>
             <label>创意想法</label>
             <div class="input-row">
                 <textarea id="ideaInput" placeholder="描述你的短视频创意，例如：一个关于猫咪日常生活的温馨短片..." rows="2"></textarea>
@@ -186,9 +193,12 @@ let currentBgmId = '';      // 当前选中的 BGM
 let currentAspect = '16:9'; // 导出画面比例
 let currentResolution = '720p'; // 高清导出分辨率
 let currentSubtitle = true; // 导出时是否烧录字幕（模块 F）
+let currentSubtitleLang = 'zh'; // 字幕语言：zh 原文 / en 英文 / bilingual 中英双语（模块 F）
 let currentWithLogo = false; // 导出时是否叠加品牌 Logo 角标（模块 I，需服务端配置）
 let currentPlatform = '';  // 社媒平台预设（模块 I；空 = 自定义比例/分辨率）
 let platformList = [];     // 平台预设列表（GET /export/platforms 加载）
+let templates = [];        // 视频模板列表（模块 H）
+let currentTemplateId = ''; // 当前选中的视频模板（空 = 自由创作）
 
 // ==================== 基础工具 ====================
 function esc(t) { if (!t) return ''; var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
@@ -242,7 +252,7 @@ async function init() {
             '<div class="status error">请先 <a href="/login" style="color:#4a6cf7;">登录</a> 后使用短视频工作室</div>';
         return;
     }
-    await Promise.all([loadStyles(), loadGenerators(), loadBgmList(), loadPlatforms()]);
+    await Promise.all([loadStyles(), loadGenerators(), loadBgmList(), loadPlatforms(), loadTemplates()]);
     await loadScriptList();
 }
 window.addEventListener('DOMContentLoaded', init);
@@ -275,6 +285,52 @@ async function switchGenerator() {
 }
 
 function currentStyle() { return document.getElementById('styleSelect').value; }
+
+// ==================== 视频模板（模块 H） ====================
+async function loadTemplates() {
+    const data = await api('/api/video/templates');
+    if (!data.success) return;
+    templates = data.data || [];
+    const sel = document.getElementById('templateSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">不使用模板（自由创作）</option>' +
+        templates.map(function(t) {
+            return '<option value="' + t.id + '"' + (String(currentTemplateId) === String(t.id) ? ' selected' : '') + '>' +
+                esc(t.name) + '（' + esc(t.category || 'other') + (t.isSystem ? '·内置' : '·自定义') + '）</option>';
+        }).join('');
+    onTemplateSelect();
+}
+
+function onTemplateSelect() {
+    const sel = document.getElementById('templateSelect');
+    currentTemplateId = sel ? sel.value : '';
+    const hint = document.getElementById('templateHint');
+    if (!hint) return;
+    const t = templates.find(function(x) { return String(x.id) === String(currentTemplateId); });
+    hint.textContent = t
+        ? (t.description || '') + '（推荐 ' + t.shotCount + ' 个镜头' + (t.defaultBgmCategory ? '，配乐风格 ' + t.defaultBgmCategory : '') + '）'
+        : '';
+}
+
+async function saveAsTemplate() {
+    if (!currentScript) return;
+    const name = prompt('自定义模板名称:', (currentScript.title || '我的模板') + ' 风格');
+    if (!name || !name.trim()) return;
+    const styleName = currentStyle();
+    const style = styles.find(function(s) { return s.name === styleName; });
+    const body = {
+        name: name.trim(),
+        category: 'other',
+        description: '从脚本「' + (currentScript.title || currentScript.id) + '」另存',
+        shotCount: (currentScript.shots || []).length || 5,
+        stylePrefix: style ? style.promptPrefix : '',
+        defaultBgmCategory: ''
+    };
+    const data = await post('/api/video/templates/custom', body);
+    if (!data.success) { toast(data.message || '模板保存失败', 'error'); return; }
+    toast('自定义模板已保存，新建脚本时可选用', 'success');
+    await loadTemplates();
+}
 
 // ==================== 脚本列表与加载 ====================
 async function loadScriptList(keepSelection) {
@@ -321,7 +377,10 @@ async function generateScript() {
     const btn = document.getElementById('generateBtn');
     btn.disabled = true; btn.textContent = '生成中...';
     showProgress('正在生成分镜脚本，请稍候（约 15-30 秒）...', true);
-    const data = await post('/api/video/scripts/generate', { idea });
+    // 模块 H：选中模板时走模板应用接口（风格引导注入 System Prompt）
+    const data = currentTemplateId
+        ? await post('/api/video/templates/' + currentTemplateId + '/apply', { idea })
+        : await post('/api/video/scripts/generate', { idea });
     btn.disabled = false; btn.textContent = '生成分镜脚本';
     hideProgress();
     if (!data.success) { toast(data.message || '生成失败', 'error'); return; }
@@ -369,6 +428,7 @@ function renderScript() {
     h += '<div><h2>' + esc(sc.title) + '<span class="badge badge-' + esc(sc.status) + '">' + esc(sc.status) + '</span></h2>';
     h += '<div class="meta">' + esc(sc.theme || '') + ' | ' + total + ' 个镜头 | 总时长 ' + totalDuration + 's</div></div>';
     h += '<div class="head-actions"><button class="btn btn-sm btn-ghost" onclick="renameScript()">重命名</button>';
+    h += '<button class="btn btn-sm btn-ghost" onclick="saveAsTemplate()" title="将当前脚本的镜头数与视觉风格另存为自定义模板">另存为模板</button>';
     h += '<button class="btn btn-sm btn-red" onclick="deleteScript()">删除脚本</button></div>';
     h += '</div>';
 
@@ -384,6 +444,11 @@ function renderScript() {
     h += '<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'bgmFileInput\').click()" title="上传自定义 BGM（mp3/wav/ogg/m4a/flac）">上传</button>';
     h += '<input type="file" id="bgmFileInput" accept=".mp3,.wav,.ogg,.m4a,.flac" style="display:none" onchange="uploadBgmFile(this)">';
     h += '<label class="subtitle-toggle"><input type="checkbox" id="subtitleToggle"' + (currentSubtitle ? ' checked' : '') + ' onchange="currentSubtitle=this.checked" title="将旁白烧录进视频画面（社媒静音观看友好，无旁白时自动忽略）"> 烧录字幕</label>';
+    h += '<select id="subtitleLangSelect" onchange="currentSubtitleLang=this.value" title="字幕语言：英文/双语由 LLM 翻译旁白生成（TTS 配音仍为中文原文）">';
+    h += '<option value="zh"' + (currentSubtitleLang === 'zh' ? ' selected' : '') + '>字幕:中文</option>';
+    h += '<option value="en"' + (currentSubtitleLang === 'en' ? ' selected' : '') + '>字幕:English</option>';
+    h += '<option value="bilingual"' + (currentSubtitleLang === 'bilingual' ? ' selected' : '') + '>字幕:双语</option>';
+    h += '</select>';
     h += '<label class="subtitle-toggle"><input type="checkbox" id="logoToggle"' + (currentWithLogo ? ' checked' : '') + ' onchange="currentWithLogo=this.checked" title="叠加品牌 Logo 角标（需服务端配置 video.watermark.logo-path，未配置时自动忽略）"> Logo</label>';
     h += '<span class="divider"></span>';
     h += '<span class="bar-label">平台</span>';
@@ -761,7 +826,7 @@ async function exportVideo(preview) {
     const batchBtn = document.getElementById('batchExportBtn');
     const bgmId = document.getElementById('bgmSelect') ? document.getElementById('bgmSelect').value : currentBgmId;
 
-    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle, withLogo: currentWithLogo };
+    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle, subtitleLanguage: currentSubtitleLang, withLogo: currentWithLogo };
     if (!preview) body.resolution = currentResolution;
 
     // 模块 I：选了平台预设时走平台导出（比例/分辨率由后端映射，同时校验推荐时长）
@@ -865,7 +930,7 @@ async function batchExport() {
     if (batchBtn) { batchBtn.disabled = true; batchBtn.textContent = '导出中...'; }
     showProgress('正在并行导出 抖音(9:16) / B站(16:9) / 小红书(1:1) 三个 1080p 版本（可能需要数分钟）...', true);
 
-    const body = { scriptId: currentScript.id, bgmId: bgmId || null, subtitle: currentSubtitle, withLogo: currentWithLogo };
+    const body = { scriptId: currentScript.id, bgmId: bgmId || null, subtitle: currentSubtitle, subtitleLanguage: currentSubtitleLang, withLogo: currentWithLogo };
     const results = await Promise.allSettled(platforms.map(function(p) {
         return post('/api/video/export/platform', Object.assign({}, body, { platform: p }));
     }));
@@ -878,6 +943,7 @@ async function batchExport() {
 
     const nameOf = function(p) { const x = platformList.find(function(i) { return i.name === p; }); return x ? x.displayName : p; };
     let okCount = 0;
+    const okIds = [];
     let h = '<div class="export-history"><h3>批量导出结果</h3>';
     results.forEach(function(r, i) {
         const p = platforms[i];
@@ -885,6 +951,7 @@ async function batchExport() {
         if (r.status === 'fulfilled' && r.value.success) {
             okCount++;
             const d = r.value.data;
+            okIds.push(d.id);
             h += '<span class="badge badge-EXPORTED">' + esc(nameOf(p)) + '</span>';
             h += '<span>' + d.video.totalDuration + 's' + (d.video.fileSizeBytes ? ' · ' + (d.video.fileSizeBytes / 1048576).toFixed(1) + ' MB' : '') + '</span>';
             if (d.durationWarning) h += '<span class="failed-text">' + esc(d.durationWarning) + '</span>';
@@ -896,6 +963,9 @@ async function batchExport() {
         }
         h += '</div>';
     });
+    if (okIds.length) {
+        h += '<div class="export-item"><button class="btn btn-sm" onclick="downloadBatchZip([' + okIds.join(',') + '])" title="将本次批量导出的视频（含已生成封面）打包为 ZIP 下载">打包下载 ZIP（' + okIds.length + ' 个视频）</button></div>';
+    }
     h += '</div>';
     const area = document.getElementById('videoResultArea');
     if (area) { area.innerHTML = h; area.scrollIntoView({ behavior: 'smooth' }); }
@@ -916,19 +986,46 @@ async function generateCover(exportId) {
     loadExportHistory();
 }
 
+// 批量打包下载（模块 I）：将选中导出记录的视频+封面打包为 ZIP
+async function downloadBatchZip(ids) {
+    if (!ids || !ids.length) { toast('没有可打包的导出记录', 'error'); return; }
+    toast('正在打包 ' + ids.length + ' 个视频（含封面），请稍候...', '');
+    try {
+        const resp = await fetch('/api/video/export/batch-download', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exportIds: ids })
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(function() { return { message: 'HTTP ' + resp.status }; });
+            toast(err.message || '打包下载失败', 'error'); return;
+        }
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'video_exports_' + Date.now() + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
+        toast('打包下载完成（' + (blob.size / 1048576).toFixed(1) + ' MB）', 'success');
+    } catch (e) {
+        toast('打包下载失败: ' + e.message, 'error');
+    }
+}
+
 // ==================== 字幕系统（模块 F） ====================
 async function exportSrt() {
     if (!currentScript) return;
     const btn = document.getElementById('srtBtn');
     if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
-    const data = await post('/api/video/subtitle/generate', { scriptId: currentScript.id });
+    const data = await post('/api/video/subtitle/generate', { scriptId: currentScript.id, language: currentSubtitleLang });
     if (btn) { btn.disabled = false; btn.textContent = '导出SRT'; }
     if (!data.success) { toast(data.message || '字幕生成失败', 'error'); return; }
     // 生成 Blob 并触发下载（同时后端已存一份到存储服务）
     const blob = new Blob([data.data.srtContent], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (currentScript.title || ('script_' + currentScript.id)) + '.srt';
+    a.download = (currentScript.title || ('script_' + currentScript.id)) + (currentSubtitleLang === 'zh' ? '' : '_' + currentSubtitleLang) + '.srt';
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -940,7 +1037,7 @@ async function previewSubtitle() {
     if (!currentScript) return;
     const btn = document.getElementById('subtitlePreviewBtn');
     if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
-    const data = await post('/api/video/subtitle/preview', { scriptId: currentScript.id, aspectRatio: currentAspect });
+    const data = await post('/api/video/subtitle/preview', { scriptId: currentScript.id, aspectRatio: currentAspect, language: currentSubtitleLang });
     if (btn) { btn.disabled = false; btn.textContent = '字幕预览'; }
     if (!data.success) { toast(data.message || '字幕预览失败', 'error'); return; }
     window.open(data.data.previewUrl, '_blank');
@@ -956,7 +1053,12 @@ async function loadExportHistory() {
     if (!data.success) { area.innerHTML = ''; return; }
     const list = data.data || [];
     if (!list.length) { area.innerHTML = ''; return; }
-    let h = '<div class="export-history"><h3>导出历史</h3>';
+    const zipIds = list.filter(function(e) { return e.status !== 'FAILED' && e.videoUrl; }).slice(0, 10).map(function(e) { return e.id; });
+    let h = '<div class="export-history"><h3>导出历史';
+    if (zipIds.length) {
+        h += ' <button class="btn btn-sm btn-ghost" onclick="downloadBatchZip([' + zipIds.join(',') + '])" title="将最近 ' + zipIds.length + ' 条成功导出的视频（含封面）打包为 ZIP 下载">打包下载全部</button>';
+    }
+    h += '</h3>';
     list.forEach(e => {
         h += '<div class="export-item' + (e.status === 'FAILED' ? ' failed' : '') + '">';
         h += '<span>' + esc((e.createdAt || '').replace('T', ' ').substring(0, 19)) + '</span>';
@@ -967,7 +1069,7 @@ async function loadExportHistory() {
             if (e.hasWatermark) h += '<span class="badge badge-PENDING">预览</span>';
             else h += '<span class="badge badge-EXPORTED">正式版</span>';
             if (e.bgmName) h += '<span>BGM: ' + esc(e.bgmName) + '</span>';
-            if (e.hasSubtitle) h += '<span>含字幕</span>';
+            if (e.hasSubtitle) h += '<span>含字幕' + (e.subtitleLanguage && e.subtitleLanguage !== 'zh' ? '(' + (e.subtitleLanguage === 'en' ? 'English' : '双语') + ')' : '') + '</span>';
             if (e.hasLogo) h += '<span>含Logo</span>';
             if (e.fileSizeBytes) h += '<span>' + (e.fileSizeBytes / 1048576).toFixed(1) + ' MB</span>';
             if (e.videoUrl) h += '<a href="' + esc(e.videoUrl) + '" download>下载</a> <a href="' + esc(e.videoUrl) + '" target="_blank">播放</a> <button class="btn btn-sm btn-ghost" onclick="generateCover(' + e.id + ')" title="从本次导出视频截取封面帧">封面</button>';

@@ -32,9 +32,10 @@
 - ✅ **图像生成记录** - 生成记录持久化存储，关联用户与聊天会话，支持历史查询
 - ✅ **AI 短视频工作室** - 创意想法 → LLM 生成分镜脚本（可编辑/拖拽排序）→ 提示词 LLM 优化（8 种风格）→ 并行生成画面（SSE 实时进度）→ 480p 快速预览 / 720p/1080p 高清导出
 - ✅ **多比例视频导出** - 16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览版带水印、正式版无水印，导出历史可追溯
-- ✅ **社媒一键导出** - 抖音/B站/小红书/快手/视频号/YT Shorts 六大平台预设（比例+分辨率+推荐时长校验）、封面帧截取、品牌 Logo 角标、批量三平台导出
-- ✅ **BGM 配乐** - 内置音乐库（按情感分类）+ LLM 智能推荐 + 自定义上传；自动降音量、淡入淡出、短曲循环
-- ✅ **字幕系统** - 旁白自动生成带时间轴字幕（时间轴与转场精确对齐），支持 SRT 单独导出与 ASS 烧录进画面，样式可定制（字体/字号/颜色/描边/位置）
+- ✅ **社媒一键导出** - 抖音/B站/小红书/快手/视频号/YT Shorts 六大平台预设（比例+分辨率+推荐时长校验）、封面帧截取、品牌 Logo 角标、批量三平台导出 + ZIP 打包下载
+- ✅ **BGM 配乐** - 内置音乐库（按情感分类，预置 5 首合成免版权音乐）+ LLM 智能推荐 + 自定义上传；自动降音量、淡入淡出、短曲循环
+- ✅ **字幕系统** - 旁白自动生成带时间轴字幕（时间轴与转场精确对齐），支持 SRT 单独导出与 ASS 烧录进画面，样式可定制（字体/字号/颜色/描边/位置），多语言字幕（中文/English/中英双语，LLM 翻译）
+- ✅ **视频模板系统** - 8 个内置风格模板（产品展示/故事讲述/知识科普/风景旅拍/美食制作/情感语录/科技数码/运动健身），一键应用生成对应风格脚本，支持另存自定义模板
 - ✅ **多图像生成后端** - DashScope 通义万相（云端）与本地 Stable Diffusion / FLUX（SD WebUI 协议）配置切换，失败自动重试
 
 ## 技术栈
@@ -237,16 +238,16 @@ Web 界面右侧提供知识库面板：
 
 完整工作流：**创意想法 → 分镜脚本 → 提示词优化 → 并行生成画面（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出**
 
-- 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除
+- 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除；可选视频模板（8 个内置风格 + 自定义）一键生成对应风格脚本，脚本可另存为模板
 - 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序
 - 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
 - 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换；SSE 实时进度条、失败自动重试、单镜头重新生成
-- 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
-- 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；支持单独导出 SRT 文件与一帧字幕效果预览
-- 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出；一键从导出视频截取封面帧
+- 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等，预置 5 首合成免版权音乐），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
+- 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；字幕语言可选中文/English/中英双语（LLM 翻译，配音仍为中文）；支持单独导出 SRT 文件与一帧字幕效果预览
+- 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出，支持 ZIP 打包下载（含封面 + 清单）；一键从导出视频截取封面帧
 - 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
 
-> **说明**：视频合成依赖 FFmpeg；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。
+> **说明**：视频合成依赖 FFmpeg；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
 
 #### 5. 使用 API 测试
 
@@ -322,7 +323,8 @@ spring-ai-demo/
 │   │   ├── PageController.java         # 页面控制器（Web 路由）
 │   │   ├── StoryScriptController.java  # 短视频：分镜脚本/镜头增删改/排序
 │   │   ├── TimeZoneController.java     # 时区控制器（IP定位）
-│   │   └── VideoExportController.java  # 短视频：预览/高清导出/导出历史
+│   │   ├── VideoExportController.java  # 短视频：预览/高清导出/导出历史/ZIP打包
+│   │   └── VideoTemplateController.java # 短视频：视频模板列表/应用/自定义（模块 H）
 │   ├── service/
 │   │   ├── AuthService.java            # 认证服务（注册/登录逻辑）
 │   │   ├── BgmService.java             # 短视频：BGM 音乐库/LLM推荐/上传
@@ -333,7 +335,8 @@ spring-ai-demo/
 │   │   ├── ImagePromptOptimizerService.java # 短视频：LLM 提示词优化
 │   │   ├── RagService.java             # RAG 服务（文档解析/向量化/检索）
 │   │   ├── StoryScriptService.java     # 短视频：脚本生成/编辑/排序
-│   │   └── VideoExportService.java     # 短视频：预览/高清导出/导出历史
+│   │   ├── VideoExportService.java     # 短视频：预览/高清导出/导出历史/ZIP打包
+│   │   └── VideoTemplateService.java   # 短视频：模板预置/应用/自定义（模块 H）
 │   ├── entity/
 │   │   ├── Bgm.java                    # BGM 实体（短视频模块 D）
 │   │   ├── Conversation.java           # 会话实体（绑定userId）
@@ -344,7 +347,8 @@ spring-ai-demo/
 │   │   ├── RagDocument.java            # RAG 文档元信息实体（持久化）
 │   │   ├── StoryScript.java / StoryShot.java # 脚本/镜头实体（模块 A）
 │   │   ├── User.java                   # 用户实体
-│   │   └── VideoExport.java            # 视频导出记录实体（模块 C）
+│   │   ├── VideoExport.java            # 视频导出记录实体（模块 C）
+│   │   └── VideoTemplate.java          # 视频模板实体（模块 H）
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # 图像生成异常
 │   │   └── StorageException.java         # 存储异常
@@ -358,7 +362,8 @@ spring-ai-demo/
 │       ├── RagDocumentRepository.java  # RAG 文档元信息数据访问
 │       ├── StoryScriptRepository.java / StoryShotRepository.java # 脚本/镜头数据访问（模块 A）
 │       ├── UserRepository.java         # 用户数据访问
-│       └── VideoExportRepository.java  # 导出记录数据访问（模块 C）
+│       ├── VideoExportRepository.java  # 导出记录数据访问（模块 C）
+│       └── VideoTemplateRepository.java # 视频模板数据访问（模块 H）
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
 │   ├── Storyboard.java / Shot.java    # 分镜 DTO（Phase 1）
 │   ├── VisualStyle.java               # 8 种视觉风格预设（含负面提示词）
@@ -368,7 +373,7 @@ spring-ai-demo/
 │   ├── VideoComposeService.java       # FFmpeg 合成 + ComposeOptions（多比例/水印/BGM 混音/字幕烧录）
 │   ├── VideoController.java           # 旧一次性流程 API（保留兼容）
 │   ├── subtitle/                     # 模块 F：字幕系统
-│   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴
+│   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴 + 多语言翻译
 │   │   ├── SubtitleStyle.java         # 字幕样式（字体/字号/颜色/描边/位置）
 │   │   └── SubtitleCue.java           # 字幕条目（文本 + 起止毫秒）
 │   └── generator/                     # 图片生成抽象（策略+工厂）
@@ -403,6 +408,7 @@ spring-ai-demo/
 │   ├── application-deepseek.yml        # DeepSeek 模型配置
 │   └── application-docker.yml          # Docker 部署配置
 ├── pom.xml                             # Maven 配置文件
+├── tools/generate-preset-bgm.ps1       # 预置 BGM 素材生成脚本（FFmpeg 合成免版权音乐）
 ├── Dockerfile                          # Docker 多阶段构建
 ├── docker-compose.yml                  # docker-compose 服务编排
 ├── .env.example                        # API Key 环境变量模板

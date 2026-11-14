@@ -206,6 +206,14 @@ public class VideoComposeService {
         return "http://localhost:" + serverPort + url;
     }
 
+    /**
+     * 公共媒体下载入口（模块 I：批量打包下载复用）
+     * 通过访问 URL 下载，兼容 local/oss/minio/fastdfs 四种存储后端
+     */
+    public void downloadMediaTo(String mediaUrl, Path targetFile) throws Exception {
+        downloadImageTo(mediaUrl, targetFile);
+    }
+
     // ==================== FFmpeg Video Composition ====================
 
     private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, Path workDir,

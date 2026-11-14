@@ -129,7 +129,7 @@ public class BgmService {
      * 查询可用 BGM 列表（内置 + 当前用户上传），可按分类过滤
      */
     public List<Map<String, Object>> listBgm(String category, Long userId) {
-        List<Bgm> all = bgmRepository.findByIsBuiltInTrueOrUserIdOrderByCreatedAtDesc(true, userId);
+        List<Bgm> all = bgmRepository.findByIsBuiltInTrueOrUserIdOrderByCreatedAtDesc(userId);
         return all.stream()
                 .filter(b -> category == null || category.isBlank() || b.getCategory().equalsIgnoreCase(category))
                 .map(this::toMap)

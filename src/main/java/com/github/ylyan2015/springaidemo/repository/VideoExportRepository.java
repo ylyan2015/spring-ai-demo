@@ -25,4 +25,7 @@ public interface VideoExportRepository extends JpaRepository<VideoExport, Long> 
 
     /** 按 ID 定位并校验归属（封面生成可指定某次导出） */
     Optional<VideoExport> findByIdAndScriptIdAndUserId(Long id, Long scriptId, Long userId);
+
+    /** 按 ID 定位并校验归属（批量打包下载，跨脚本选择导出记录） */
+    Optional<VideoExport> findByIdAndUserId(Long id, Long userId);
 }

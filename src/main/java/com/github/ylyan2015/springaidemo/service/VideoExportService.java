@@ -17,9 +17,14 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * 视频预览与导出服务类
@@ -72,10 +77,13 @@ public class VideoExportService {
      * @param aspectRatio 画面比例（16:9 / 9:16 / 1:1）
      * @param bgmId       使用的 BGM（可选）
      * @param subtitle    是否烧录字幕（无旁白时自动忽略）
+     * @param subtitleLanguage 字幕语言 zh/en/bilingual（模块 F）
      */
-    public Map<String, Object> exportPreview(Long scriptId, String aspectRatio, Long bgmId, boolean subtitle) {
+    public Map<String, Object> exportPreview(Long scriptId, String aspectRatio, Long bgmId, boolean subtitle,
+                                             String subtitleLanguage) {
         Long userId = getCurrentUserId();
-        return doExport(scriptId, userId, "480p", normalizeAspect(aspectRatio), bgmId, subtitle, false, true);
+        return doExport(scriptId, userId, "480p", normalizeAspect(aspectRatio), bgmId, subtitle, false, true,
+                subtitleLanguage);
     }
 
     // ==================== 高清导出 ====================
@@ -89,12 +97,14 @@ public class VideoExportService {
      * @param bgmId       使用的 BGM（可选）
      * @param subtitle    是否烧录字幕（无旁白时自动忽略）
      * @param withLogo    是否叠加品牌 Logo 角标（未配置 logo-path 时自动忽略）
+     * @param subtitleLanguage 字幕语言 zh/en/bilingual（模块 F）
      */
     public Map<String, Object> exportHd(Long scriptId, String resolution, String aspectRatio, Long bgmId,
-                                         boolean subtitle, boolean withLogo) {
+                                         boolean subtitle, boolean withLogo, String subtitleLanguage) {
         Long userId = getCurrentUserId();
         String res = normalizeResolution(resolution);
-        return doExport(scriptId, userId, res, normalizeAspect(aspectRatio), bgmId, subtitle, withLogo, false);
+        return doExport(scriptId, userId, res, normalizeAspect(aspectRatio), bgmId, subtitle, withLogo, false,
+                subtitleLanguage);
     }
 
     // ==================== 平台导出（模块 I） ====================
@@ -104,7 +114,7 @@ public class VideoExportService {
      * 平台推荐时长超限时仅随响应提示、不拦截（用户可自行决定是否发布长视频）
      */
     public Map<String, Object> exportForPlatform(Long scriptId, String platform, Long bgmId,
-                                                 boolean subtitle, boolean withLogo) {
+                                                 boolean subtitle, boolean withLogo, String subtitleLanguage) {
         Long userId = getCurrentUserId();
         PlatformPreset preset = PlatformPreset.fromName(platform)
                 .orElseThrow(() -> new RuntimeException("不支持的平台: " + platform
@@ -130,7 +140,7 @@ public class VideoExportService {
         }
 
         Map<String, Object> data = exportHd(scriptId, preset.getResolution(), preset.getAspectRatio(),
-                bgmId, subtitle, withLogo);
+                bgmId, subtitle, withLogo, subtitleLanguage);
         data.put("platform", preset.toMap());
         if (durationWarning != null) {
             data.put("durationWarning", durationWarning);
@@ -187,6 +197,118 @@ public class VideoExportService {
         return data;
     }
 
+    // ==================== 批量打包下载（模块 I） ====================
+
+    /** 单次打包上限（防止超大 ZIP 占用过多临时磁盘与带宽） */
+    private static final int BATCH_ZIP_MAX = 10;
+
+    /**
+     * 校验并加载待打包的导出记录（当前用户归属、导出成功、有视频文件，1-10 条）
+     * 在开始流式输出前同步完成校验，避免 ZIP 流中途报错
+     */
+    public List<VideoExport> prepareBatchZip(List<Long> exportIds) {
+        Long userId = getCurrentUserId();
+        if (exportIds == null || exportIds.isEmpty()) {
+            throw new RuntimeException("请至少选择一条导出记录");
+        }
+        if (exportIds.size() > BATCH_ZIP_MAX) {
+            throw new RuntimeException("单次最多打包 " + BATCH_ZIP_MAX + " 条导出记录");
+        }
+        List<VideoExport> records = new ArrayList<>();
+        for (Long id : exportIds) {
+            VideoExport record = exportRepository.findByIdAndUserId(id, userId)
+                    .orElseThrow(() -> new RuntimeException("导出记录不存在或无权访问: " + id));
+            if (!"SUCCESS".equals(record.getStatus())
+                    || record.getVideoUrl() == null || record.getVideoUrl().isBlank()) {
+                throw new RuntimeException("导出记录 " + id + " 没有可下载的视频文件");
+            }
+            records.add(record);
+        }
+        return records;
+    }
+
+    /**
+     * 流式写出 ZIP：每条记录的视频（+已有封面）+ manifest.txt 清单
+     * 媒体通过访问 URL 下载（兼容四种存储后端），临时文件用完即清理
+     */
+    public void writeBatchZip(List<VideoExport> records, OutputStream out) {
+        Path workDir = null;
+        try {
+            workDir = Files.createTempDirectory("video-batch-zip-");
+            ZipOutputStream zos = new ZipOutputStream(out);
+            StringBuilder manifest = new StringBuilder();
+            manifest.append("AI 短视频工作室 - 批量导出打包\n\n");
+
+            for (int i = 0; i < records.size(); i++) {
+                VideoExport record = records.get(i);
+                String baseName = zipEntryBaseName(i + 1, record);
+
+                Path videoFile = workDir.resolve(baseName + ".mp4");
+                videoComposeService.downloadMediaTo(record.getVideoUrl(), videoFile);
+                writeZipEntry(zos, baseName + ".mp4", videoFile);
+
+                manifest.append(baseName).append(".mp4 | ")
+                        .append(record.getResolution()).append(" | ")
+                        .append(record.getAspectRatio()).append(" | ")
+                        .append(record.getDurationSeconds() == null ? "?" : record.getDurationSeconds()).append("s | ")
+                        .append("BGM: ").append(record.getBgmName() == null ? "无" : record.getBgmName()).append(" | ")
+                        .append("字幕: ").append(Boolean.TRUE.equals(record.getHasSubtitle())
+                                ? "已烧录(" + (record.getSubtitleLanguage() == null ? "zh" : record.getSubtitleLanguage()) + ")"
+                                : "无").append('\n');
+
+                // 封面可选：下载失败不阻断打包
+                if (record.getCoverUrl() != null && !record.getCoverUrl().isBlank()) {
+                    try {
+                        Path coverFile = workDir.resolve(baseName + "_cover.jpg");
+                        videoComposeService.downloadMediaTo(record.getCoverUrl(), coverFile);
+                        writeZipEntry(zos, baseName + "_cover.jpg", coverFile);
+                    } catch (Exception e) {
+                        log.warn("Cover download failed for export {}, skipping: {}", record.getId(), e.getMessage());
+                    }
+                }
+            }
+
+            zos.putNextEntry(new ZipEntry("manifest.txt"));
+            zos.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+            zos.finish();
+            log.info("Batch ZIP written: {} export(s)", records.size());
+        } catch (IOException e) {
+            throw new RuntimeException("打包文件写入失败: " + e.getMessage(), e);
+        } catch (Exception e) {
+            throw new RuntimeException("批量打包失败: " + e.getMessage(), e);
+        } finally {
+            cleanupDir(workDir);
+        }
+    }
+
+    /** ZIP 条目基础名：{序号}_{分辨率}_{比例冒号转x}_{导出ID}（避免 Windows 文件名非法字符） */
+    static String zipEntryBaseName(int index, VideoExport record) {
+        String aspect = record.getAspectRatio() == null ? "16x9" : record.getAspectRatio().replace(':', 'x');
+        return String.format("%02d_%s_%s_%d", index, record.getResolution(), aspect, record.getId());
+    }
+
+    private void writeZipEntry(ZipOutputStream zos, String entryName, Path file) throws IOException {
+        zos.putNextEntry(new ZipEntry(entryName));
+        Files.copy(file, zos);
+        zos.closeEntry();
+    }
+
+    /** 清理打包临时目录 */
+    private void cleanupDir(Path dir) {
+        if (dir == null) return;
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                }
+            });
+        } catch (IOException e) {
+            log.debug("Cleanup failed for {}: {}", dir, e.getMessage());
+        }
+    }
+
     // ==================== 导出历史 ====================
 
     /**
@@ -208,7 +330,7 @@ public class VideoExportService {
      */
     private Map<String, Object> doExport(Long scriptId, Long userId, String resolution,
                                          String aspectRatio, Long bgmId, boolean subtitle,
-                                         boolean withLogo, boolean preview) {
+                                         boolean withLogo, boolean preview, String subtitleLanguage) {
         StoryScript script = requireOwnedScript(scriptId, userId);
         List<StoryShot> shots = shotRepository.findByScriptIdOrderByShotOrderAsc(scriptId);
         if (shots.isEmpty()) {
@@ -245,13 +367,13 @@ public class VideoExportService {
             }
         }
 
-        // 模块 F：选择烧录且存在旁白时，预生成 ASS 字幕文本（时间轴已按 xfade 对齐）
+        // 模块 F：选择烧录且存在旁白时，预生成 ASS 字幕文本（时间轴已按 xfade 对齐，支持多语言）
         String subtitleAss = null;
         if (subtitle) {
             boolean anyNarration = shots.stream()
                     .anyMatch(s -> s.getNarration() != null && !s.getNarration().isBlank());
             if (anyNarration) {
-                subtitleAss = subtitleService.generateAss(shots, null);
+                subtitleAss = subtitleService.generateAss(shots, null, subtitleLanguage);
             } else {
                 log.info("Subtitle requested but script {} has no narration, skipping", scriptId);
             }
@@ -281,7 +403,8 @@ public class VideoExportService {
         }
 
         ExportMeta meta = new ExportMeta(scriptId, userId, resolution, aspectRatio, size,
-                preview, bgmId, bgmName, subtitleAss != null, logoFile != null);
+                preview, bgmId, bgmName, subtitleAss != null, logoFile != null,
+                subtitleAss != null ? SubtitleService.normalizeLanguage(subtitleLanguage) : null);
 
         log.info("Exporting script {} as {} {} {} (user {}, bgm={}, subtitle={}, logo={})",
                 scriptId, preview ? "preview" : "HD", resolution, aspectRatio, userId, bgmId,
@@ -316,7 +439,7 @@ public class VideoExportService {
     /** 导出记录公共字段（saveExportRecord 参数收敛，避免 16+ 参数方法签名） */
     private record ExportMeta(Long scriptId, Long userId, String resolution, String aspectRatio,
                               int[] size, boolean preview, Long bgmId, String bgmName,
-                              boolean hasSubtitle, boolean hasLogo) {}
+                              boolean hasSubtitle, boolean hasLogo, String subtitleLanguage) {}
 
     private VideoExport saveExportRecord(ExportMeta meta, String videoUrl, Long fileSizeBytes,
                                           Integer durationSeconds, String status, String error) {
@@ -334,6 +457,7 @@ public class VideoExportService {
         export.setBgmId(meta.bgmId());
         export.setBgmName(meta.bgmName());
         export.setHasSubtitle(meta.hasSubtitle());
+        export.setSubtitleLanguage(meta.subtitleLanguage());
         export.setHasLogo(meta.hasLogo());
         export.setStatus(status);
         export.setErrorMessage(error);
@@ -397,6 +521,7 @@ public class VideoExportService {
         map.put("bgmId", export.getBgmId());
         map.put("bgmName", export.getBgmName());
         map.put("hasSubtitle", export.getHasSubtitle());
+        map.put("subtitleLanguage", export.getSubtitleLanguage());
         map.put("hasLogo", export.getHasLogo());
         map.put("coverUrl", export.getCoverUrl());
         map.put("status", export.getStatus());

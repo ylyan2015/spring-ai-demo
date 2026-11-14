@@ -68,6 +68,10 @@ public class VideoExport {
     @Column(name = "has_subtitle", nullable = false)
     private Boolean hasSubtitle = false;
 
+    /** 烧录字幕语言: zh 原文 / en 英文 / bilingual 中英双语（模块 F；未烧录字幕为 null） */
+    @Column(name = "subtitle_language", length = 20)
+    private String subtitleLanguage;
+
     /** 是否叠加了品牌 Logo 角标 */
     @Column(name = "has_logo", nullable = false)
     private Boolean hasLogo = false;
@@ -133,6 +137,9 @@ public class VideoExport {
 
     public Boolean getHasSubtitle() { return hasSubtitle; }
     public void setHasSubtitle(Boolean hasSubtitle) { this.hasSubtitle = hasSubtitle; }
+
+    public String getSubtitleLanguage() { return subtitleLanguage; }
+    public void setSubtitleLanguage(String subtitleLanguage) { this.subtitleLanguage = subtitleLanguage; }
 
     public Boolean getHasLogo() { return hasLogo; }
     public void setHasLogo(Boolean hasLogo) { this.hasLogo = hasLogo; }

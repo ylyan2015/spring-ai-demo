@@ -44,7 +44,7 @@ public class SocialMediaExportController {
 
     /**
      * 按平台预设导出（规格由后端映射，无需手动传比例/分辨率）
-     * 请求体: { "scriptId": 1, "platform": "DOUYIN", "bgmId": 3, "subtitle": true, "withLogo": false }
+     * 请求体: { "scriptId": 1, "platform": "DOUYIN", "bgmId": 3, "subtitle": true, "withLogo": false, "subtitleLanguage": "zh" }
      * 响应 data: exportHd 结果 + platform 规格信息 + durationWarning（时长超推荐上限时）
      */
     @PostMapping("/export/platform")
@@ -56,6 +56,7 @@ public class SocialMediaExportController {
             Long bgmId = toLong(request.get("bgmId"));
             boolean subtitle = toBoolean(request.get("subtitle"), false);
             boolean withLogo = toBoolean(request.get("withLogo"), false);
+            String subtitleLanguage = (String) request.get("subtitleLanguage");
 
             if (scriptId == null) {
                 result.put("success", false);
@@ -68,7 +69,7 @@ public class SocialMediaExportController {
                 return ResponseEntity.badRequest().body(result);
             }
 
-            Map<String, Object> data = videoExportService.exportForPlatform(scriptId, platform, bgmId, subtitle, withLogo);
+            Map<String, Object> data = videoExportService.exportForPlatform(scriptId, platform, bgmId, subtitle, withLogo, subtitleLanguage);
             result.put("success", true);
             result.put("data", data);
             return ResponseEntity.ok(result);

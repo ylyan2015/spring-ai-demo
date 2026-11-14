@@ -32,9 +32,10 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **Image Generation Records** - Generation records persisted in database, associated with users and chat sessions, supports history query
 - ✅ **AI Short Video Studio** - Idea → LLM-generated storyboard (editable/drag-sortable) → LLM prompt enhancement (8 visual styles) → parallel image generation (SSE real-time progress) → 480p quick preview / 720p/1080p HD export
 - ✅ **Multi-Ratio Video Export** - 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview with watermark, formal exports without, export history traceable
-- ✅ **One-Click Social Media Export** - Six platform presets (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts: ratio + resolution + recommended-duration check), cover frame extraction, brand logo corner badge, batch three-platform export
-- ✅ **BGM Scoring** - Built-in music library (categorized by mood) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
-- ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position)
+- ✅ **One-Click Social Media Export** - Six platform presets (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts: ratio + resolution + recommended-duration check), cover frame extraction, brand logo corner badge, batch three-platform export + ZIP package download
+- ✅ **BGM Scoring** - Built-in music library (categorized by mood, 5 pre-generated royalty-free tracks) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
+- ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position); multilingual subtitles (Chinese / English / bilingual, LLM translation)
+- ✅ **Video Template System** - 8 built-in style templates (product showcase / storytelling / knowledge / travel / food / emotional quotes / tech / fitness), one-click apply to generate styled scripts, save custom templates
 - ✅ **Multiple Image Generation Backends** - DashScope Tongyi Wanxiang (cloud) and local Stable Diffusion / FLUX (SD WebUI protocol) switching via config, with automatic retry on failure
 
 ## Technology Stack
@@ -216,16 +217,16 @@ Visit http://localhost:8080/video-studio to use it (login required):
 
 Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Image Generation (SSE real-time progress) → Quick Preview / BGM Scoring / Multi-Ratio HD Export**
 
-- 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting
+- 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting; optional video templates (8 built-in styles + custom) generate styled scripts in one click, scripts can be saved as templates
 - 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort
 - 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
 - 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX; SSE real-time progress bar, automatic retry, per-shot regeneration
-- 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc.), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
-- 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); standalone SRT export and single-frame subtitle preview supported
-- 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export; one-click cover frame extraction from exported video
+- 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc., 5 pre-generated royalty-free tracks), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
+- 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); subtitle language selectable: Chinese / English / bilingual (LLM translation, narration audio stays Chinese); standalone SRT export and single-frame subtitle preview supported
+- 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
 - 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
 
-> **Note**: Video composition requires FFmpeg; narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`).
+> **Note**: Video composition requires FFmpeg; narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
 
 #### 5. Test with API
 
@@ -278,7 +279,8 @@ spring-ai-demo/
 │   │   ├── PageController.java         # Page controller (Web routing)
 │   │   ├── StoryScriptController.java  # Video studio: storyboard/shot CRUD/reorder
 │   │   ├── TimeZoneController.java     # Timezone controller (IP geolocation)
-│   │   └── VideoExportController.java  # Video studio: preview/HD export/history
+│   │   ├── VideoExportController.java  # Video studio: preview/HD export/history/ZIP package
+│   │   └── VideoTemplateController.java # Video studio: template list/apply/custom (module H)
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
 │   │   ├── BgmService.java             # Video studio: BGM library/LLM recommend/upload
@@ -289,7 +291,8 @@ spring-ai-demo/
 │   │   ├── ImagePromptOptimizerService.java # Video studio: LLM prompt enhancement
 │   │   ├── RagService.java             # RAG service (parse/vectorize/search)
 │   │   ├── StoryScriptService.java     # Video studio: script generate/edit/reorder
-│   │   └── VideoExportService.java     # Video studio: preview/HD export/history
+│   │   ├── VideoExportService.java     # Video studio: preview/HD export/history/ZIP package
+│   │   └── VideoTemplateService.java   # Video studio: template seed/apply/custom (module H)
 │   ├── entity/
 │   │   ├── Bgm.java                    # BGM entity (video module D)
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
@@ -300,7 +303,8 @@ spring-ai-demo/
 │   │   ├── RagDocument.java            # RAG document metadata entity (persistent)
 │   │   ├── StoryScript.java / StoryShot.java # Script/shot entities (module A)
 │   │   ├── User.java                   # User entity
-│   │   └── VideoExport.java            # Video export record entity (module C)
+│   │   ├── VideoExport.java            # Video export record entity (module C)
+│   │   └── VideoTemplate.java          # Video template entity (module H)
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # Image generation exception
 │   │   └── StorageException.java         # Storage exception
@@ -314,7 +318,8 @@ spring-ai-demo/
 │       ├── RagDocumentRepository.java
 │       ├── StoryScriptRepository.java / StoryShotRepository.java # Script/shot data access (module A)
 │       ├── UserRepository.java
-│       └── VideoExportRepository.java  # Export record data access (module C)
+│       ├── VideoExportRepository.java  # Export record data access (module C)
+│       └── VideoTemplateRepository.java # Video template data access (module H)
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
 │   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1)
 │   ├── VisualStyle.java               # 8 visual style presets (with negative prompts)
@@ -324,7 +329,7 @@ spring-ai-demo/
 │   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
 │   ├── VideoController.java           # Legacy one-shot workflow API (kept for compat)
 │   ├── subtitle/                     # Module F: subtitle system
-│   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline
+│   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline + multilingual translation
 │   │   ├── SubtitleStyle.java         # Subtitle style (font/size/color/outline/position)
 │   │   └── SubtitleCue.java           # Subtitle cue (text + start/end ms)
 │   └── generator/                     # Image generation abstraction (strategy + factory)
@@ -355,6 +360,7 @@ spring-ai-demo/
 │   ├── application-deepseek.yml        # DeepSeek model config
 │   └── application-docker.yml          # Docker deployment config
 ├── pom.xml                             # Maven configuration
+├── tools/generate-preset-bgm.ps1       # Preset BGM generation script (FFmpeg-synthesized royalty-free music)
 ├── Dockerfile                          # Docker multi-stage build
 ├── docker-compose.yml                  # docker-compose service orchestration
 ├── .env.example                        # API Key environment variable template

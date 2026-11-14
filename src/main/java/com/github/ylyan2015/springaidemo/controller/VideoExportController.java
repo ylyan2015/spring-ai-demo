@@ -1,10 +1,14 @@
 package com.github.ylyan2015.springaidemo.controller;
 
+import com.github.ylyan2015.springaidemo.entity.VideoExport;
 import com.github.ylyan2015.springaidemo.service.VideoExportService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.util.*;
 
@@ -61,6 +65,37 @@ public class VideoExportController {
         }
     }
 
+    /**
+     * 批量打包下载（模块 I）：将多条导出记录的视频（+已有封面）打包为 ZIP 流式下载
+     * 请求体: { "exportIds": [12, 13, 14] }（1-10 条，仅限当前用户的成功导出）
+     */
+    @PostMapping("/export/batch-download")
+    public ResponseEntity<?> batchDownload(@RequestBody Map<String, Object> request) {
+        try {
+            List<Long> exportIds = new ArrayList<>();
+            if (request.get("exportIds") instanceof List<?> list) {
+                for (Object item : list) {
+                    Long id = toLong(item);
+                    if (id != null) exportIds.add(id);
+                }
+            }
+            // 先同步校验（归属/状态/数量），再开始流式输出，避免 ZIP 流中途报错
+            List<VideoExport> records = videoExportService.prepareBatchZip(exportIds);
+            String fileName = "video_exports_" + System.currentTimeMillis() + ".zip";
+            StreamingResponseBody body = out -> videoExportService.writeBatchZip(records, out);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fileName)
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(body);
+        } catch (Exception e) {
+            log.error("Batch download failed: {}", e.getMessage(), e);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
     // ==================== 内部工具 ====================
 
     private ResponseEntity<Map<String, Object>> executeExport(
@@ -77,13 +112,14 @@ public class VideoExportController {
             String aspectRatio = (String) request.get("aspectRatio");
             boolean subtitle = toBoolean(request.get("subtitle"), false);
             boolean withLogo = toBoolean(request.get("withLogo"), false);
+            String subtitleLanguage = (String) request.get("subtitleLanguage");
 
             Map<String, Object> data;
             if (preview) {
-                data = videoExportService.exportPreview(scriptId, aspectRatio, bgmId, subtitle);
+                data = videoExportService.exportPreview(scriptId, aspectRatio, bgmId, subtitle, subtitleLanguage);
             } else {
                 data = videoExportService.exportHd(scriptId,
-                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle, withLogo);
+                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle, withLogo, subtitleLanguage);
             }
 
             result.put("success", true);

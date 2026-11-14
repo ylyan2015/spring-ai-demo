@@ -18,8 +18,10 @@ public interface StoryShotRepository extends JpaRepository<StoryShot, Long> {
 
     /**
      * 查找脚本的所有镜头，按顺序排列
+     * （scriptId 非持久化属性，仅为 getScriptId() 派生 getter，须用 JPQL 走 script.id 关联）
      */
-    List<StoryShot> findByScriptIdOrderByShotOrderAsc(Long scriptId);
+    @Query("SELECT s FROM StoryShot s WHERE s.script.id = :scriptId ORDER BY s.shotOrder ASC")
+    List<StoryShot> findByScriptIdOrderByShotOrderAsc(@Param("scriptId") Long scriptId);
 
     /**
      * 查找脚本中的最大镜头顺序号
@@ -30,10 +32,13 @@ public interface StoryShotRepository extends JpaRepository<StoryShot, Long> {
     /**
      * 删除脚本的所有镜头
      */
-    void deleteByScriptId(Long scriptId);
+    @Modifying
+    @Query("DELETE FROM StoryShot s WHERE s.script.id = :scriptId")
+    void deleteByScriptId(@Param("scriptId") Long scriptId);
 
     /**
      * 查找指定镜头（确保归属权）
      */
-    Optional<StoryShot> findByIdAndScriptId(Long id, Long scriptId);
+    @Query("SELECT s FROM StoryShot s WHERE s.id = :id AND s.script.id = :scriptId")
+    Optional<StoryShot> findByIdAndScriptId(@Param("id") Long id, @Param("scriptId") Long scriptId);
 }

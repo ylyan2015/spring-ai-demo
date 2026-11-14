@@ -3,6 +3,7 @@ package com.github.ylyan2015.springaidemo.controller;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.service.StoryScriptService;
+import com.github.ylyan2015.springaidemo.service.VideoTemplateService;
 import com.github.ylyan2015.springaidemo.video.Storyboard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +24,12 @@ public class StoryScriptController {
     private static final Logger log = LoggerFactory.getLogger(StoryScriptController.class);
 
     private final StoryScriptService storyScriptService;
+    private final VideoTemplateService videoTemplateService;
 
-    public StoryScriptController(StoryScriptService storyScriptService) {
+    public StoryScriptController(StoryScriptService storyScriptService,
+                                 VideoTemplateService videoTemplateService) {
         this.storyScriptService = storyScriptService;
+        this.videoTemplateService = videoTemplateService;
     }
 
     // ==================== 脚本生成与保存 ====================
@@ -33,12 +37,12 @@ public class StoryScriptController {
     /**
      * 根据创意想法生成分镜脚本并保存
      *
-     * @param request 包含 idea 字段的请求体
+     * @param request 包含 idea 字段的请求体，可选 templateId（模块 H：应用视频模板）
      * @return 生成的脚本（含镜头列表）
      */
     @PostMapping("/generate")
-    public ResponseEntity<Map<String, Object>> generateScript(@RequestBody Map<String, String> request) {
-        String idea = request.get("idea");
+    public ResponseEntity<Map<String, Object>> generateScript(@RequestBody Map<String, Object> request) {
+        String idea = (String) request.get("idea");
         Map<String, Object> result = new LinkedHashMap<>();
 
         if (idea == null || idea.isBlank()) {
@@ -48,8 +52,11 @@ public class StoryScriptController {
         }
 
         try {
-            log.info("Generating story script from idea: '{}'", truncate(idea, 50));
-            StoryScript script = storyScriptService.generateAndSaveScript(idea);
+            Long templateId = toLong(request.get("templateId"));
+            log.info("Generating story script from idea: '{}', templateId={}", truncate(idea, 50), templateId);
+            StoryScript script = templateId != null
+                    ? videoTemplateService.applyTemplate(templateId, idea)
+                    : storyScriptService.generateAndSaveScript(idea);
 
             result.put("success", true);
             result.put("data", scriptToMap(script));
@@ -378,31 +385,10 @@ public class StoryScriptController {
     // ==================== 数据转换方法 ====================
 
     /**
-     * 将 StoryScript 实体转换为完整 Map（含镜头详情）
+     * 将 StoryScript 实体转换为完整 Map（含镜头详情，委托服务层统一实现）
      */
     private Map<String, Object> scriptToMap(StoryScript script) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("id", script.getId());
-        map.put("title", script.getTitle());
-        map.put("theme", script.getTheme());
-        map.put("idea", script.getIdea());
-        map.put("status", script.getStatus());
-        map.put("createdAt", script.getCreatedAt());
-        map.put("updatedAt", script.getUpdatedAt());
-
-        List<Map<String, Object>> shotMaps = script.getShots().stream()
-                .sorted(Comparator.comparingInt(StoryShot::getShotOrder))
-                .map(this::shotToMap)
-                .collect(Collectors.toList());
-        map.put("shots", shotMaps);
-        map.put("shotCount", shotMaps.size());
-
-        int totalDuration = shotMaps.stream()
-                .mapToInt(s -> ((Number) s.getOrDefault("durationSeconds", 0)).intValue())
-                .sum();
-        map.put("totalDuration", totalDuration);
-
-        return map;
+        return storyScriptService.scriptToMap(script);
     }
 
     /**
@@ -421,22 +407,10 @@ public class StoryScriptController {
     }
 
     /**
-     * 将 StoryShot 实体转换为 Map
+     * 将 StoryShot 实体转换为 Map（委托服务层统一实现）
      */
     private Map<String, Object> shotToMap(StoryShot shot) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("id", shot.getId());
-        map.put("scriptId", shot.getScriptId());
-        map.put("shotOrder", shot.getShotOrder());
-        map.put("sceneDescription", shot.getSceneDescription());
-        map.put("cameraMovement", shot.getCameraMovement());
-        map.put("durationSeconds", shot.getDurationSeconds());
-        map.put("narration", shot.getNarration());
-        map.put("imagePrompt", shot.getImagePrompt());
-        map.put("imageUrl", shot.getImageUrl());
-        map.put("imageFileId", shot.getImageFileId());
-        map.put("imageStatus", shot.getImageStatus());
-        return map;
+        return storyScriptService.shotToMap(shot);
     }
 
     /**
@@ -499,5 +473,15 @@ public class StoryScriptController {
     private String truncate(String text, int maxLen) {
         if (text == null) return "";
         return text.length() <= maxLen ? text : text.substring(0, maxLen) + "...";
+    }
+
+    private Long toLong(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

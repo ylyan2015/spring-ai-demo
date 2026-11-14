@@ -27,6 +27,15 @@ public class VideoScriptService {
      * Generate a structured storyboard from a creative idea using LLM
      */
     public Storyboard generateScript(String creativeIdea) {
+        return generateScript(creativeIdea, null);
+    }
+
+    /**
+     * Generate a structured storyboard with optional template guidance (模块 H)
+     *
+     * @param templateGuidance 模板风格引导（stylePrefix + 推荐镜头数），null/空白时不注入
+     */
+    public Storyboard generateScript(String creativeIdea, String templateGuidance) {
         BeanOutputConverter<Storyboard> converter = new BeanOutputConverter<>(Storyboard.class);
 
         String systemPrompt = """
@@ -48,6 +57,11 @@ public class VideoScriptService {
                 注意：imagePrompt 是喂给图像生成模型的，必须是高质量的英文视觉描述，不要包含文字/对白内容。
                 每个镜头的 imagePrompt 应保持视觉风格一致。
                 """;
+
+        // 模块 H：模板风格引导追加到 System Prompt 末尾
+        if (templateGuidance != null && !templateGuidance.isBlank()) {
+            systemPrompt = systemPrompt + "\n" + templateGuidance;
+        }
 
         String userMessage = String.format("""
                 请将以下创意想法转化为短视频分镜脚本：

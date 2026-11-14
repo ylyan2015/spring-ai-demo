@@ -22,8 +22,8 @@ public interface BgmRepository extends JpaRepository<Bgm, Long> {
     /** 按文件路径查找内置音乐（音乐库扫描去重用） */
     Optional<Bgm> findByFilePathAndIsBuiltInTrue(String filePath);
 
-    /** 查询内置音乐 + 指定用户上传的音乐 */
-    List<Bgm> findByIsBuiltInTrueOrUserIdOrderByCreatedAtDesc(Boolean isBuiltIn, Long userId);
+    /** 查询内置音乐 + 指定用户上传的音乐（True 关键字条件不占参数，仅 userId 一个入参） */
+    List<Bgm> findByIsBuiltInTrueOrUserIdOrderByCreatedAtDesc(Long userId);
 
     /** 查询指定用户上传的音乐 */
     List<Bgm> findByUserIdOrderByCreatedAtDesc(Long userId);

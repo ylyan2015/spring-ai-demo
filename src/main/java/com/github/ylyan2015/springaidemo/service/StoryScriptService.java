@@ -54,11 +54,23 @@ public class StoryScriptService {
      */
     @Transactional
     public StoryScript generateAndSaveScript(String idea) {
+        return generateAndSaveScript(idea, null);
+    }
+
+    /**
+     * 根据创意想法生成分镜脚本并保存（模块 H：可选模板风格引导）
+     *
+     * @param idea             创意想法文本
+     * @param templateGuidance 模板风格引导（注入 System Prompt），null 时不注入
+     */
+    @Transactional
+    public StoryScript generateAndSaveScript(String idea, String templateGuidance) {
         Long userId = getCurrentUserId();
 
         // 1. 调用 LLM 生成分镜脚本
-        log.info("Generating storyboard for user {}: idea='{}'", userId, idea);
-        Storyboard storyboard = videoScriptService.generateScript(idea);
+        log.info("Generating storyboard for user {}: idea='{}', templateGuidance={}",
+                userId, idea, templateGuidance != null);
+        Storyboard storyboard = videoScriptService.generateScript(idea, templateGuidance);
 
         // 2. 转换为实体并保存
         StoryScript script = new StoryScript();
@@ -361,6 +373,53 @@ public class StoryScriptService {
     }
 
     // ==================== 工具方法 ====================
+
+    /**
+     * 将 StoryScript 实体转换为完整 Map（含镜头详情，供控制器统一复用）
+     */
+    public Map<String, Object> scriptToMap(StoryScript script) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", script.getId());
+        map.put("title", script.getTitle());
+        map.put("theme", script.getTheme());
+        map.put("idea", script.getIdea());
+        map.put("status", script.getStatus());
+        map.put("createdAt", script.getCreatedAt());
+        map.put("updatedAt", script.getUpdatedAt());
+
+        List<Map<String, Object>> shotMaps = script.getShots().stream()
+                .sorted(Comparator.comparingInt(StoryShot::getShotOrder))
+                .map(this::shotToMap)
+                .collect(Collectors.toList());
+        map.put("shots", shotMaps);
+        map.put("shotCount", shotMaps.size());
+
+        int totalDuration = shotMaps.stream()
+                .mapToInt(s -> ((Number) s.getOrDefault("durationSeconds", 0)).intValue())
+                .sum();
+        map.put("totalDuration", totalDuration);
+
+        return map;
+    }
+
+    /**
+     * 将 StoryShot 实体转换为 Map
+     */
+    public Map<String, Object> shotToMap(StoryShot shot) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", shot.getId());
+        map.put("scriptId", shot.getScriptId());
+        map.put("shotOrder", shot.getShotOrder());
+        map.put("sceneDescription", shot.getSceneDescription());
+        map.put("cameraMovement", shot.getCameraMovement());
+        map.put("durationSeconds", shot.getDurationSeconds());
+        map.put("narration", shot.getNarration());
+        map.put("imagePrompt", shot.getImagePrompt());
+        map.put("imageUrl", shot.getImageUrl());
+        map.put("imageFileId", shot.getImageFileId());
+        map.put("imageStatus", shot.getImageStatus());
+        return map;
+    }
 
     /**
      * 获取当前登录用户ID

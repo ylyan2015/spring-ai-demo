@@ -4,7 +4,7 @@
 > **定位**：AI 驱动的短视频自动生成工具，面向社交媒体投放
 > **技术栈**：Spring Boot 3.4 + Java 17 + Spring AI 1.0 + DeepSeek/Ollama + DashScope/本地SD + FFmpeg + Edge TTS
 > **创建日期**：2026-11-07
-> **最后更新**：2026-11-08（Phase 2 模块 A/B/C/D/E/F/I 已实现，G 部分实现）
+> **最后更新**：2026-11-14（S1 补齐完成：D 预置 BGM 素材 / F 多语言字幕 / I ZIP 打包下载；模块 H 视频模板已实现；仅剩 G 收尾与 J）
 
 ---
 
@@ -121,14 +121,14 @@ src/main/resources/templates/
 | A. 脚本编辑器 | ✅ 已实现 | `entity/StoryScript.java`、`entity/StoryShot.java`、`service/StoryScriptService.java`、`controller/StoryScriptController.java` | `/api/video/scripts` |
 | B. 提示词优化器 | ✅ 已实现 | `video/VisualStyle.java`（8 种风格预设）、`entity/ImagePromptOptimizer.java`、`service/ImagePromptOptimizerService.java`、`controller/ImagePromptOptimizerController.java` | `/api/video/enhance-prompt` |
 | C. 视频预览与导出 | ✅ 已实现 | `entity/VideoExport.java`、`service/VideoExportService.java`、`controller/VideoExportController.java`；`VideoComposeService` 扩展 `ComposeOptions`（分辨率/多比例裁剪/水印/BGM 混音） | `/api/video/export/*`、`/api/video/exports/*` |
-| D. 背景音乐 | ✅ 已实现 | `entity/Bgm.java`、`service/BgmService.java`（音乐库扫描 + LLM 推荐 + 上传）、`controller/BgmController.java`；混音集成在 `VideoComposeService.mixBgmIntoVideo()` | `/api/video/bgm` |
+| D. 背景音乐 | ✅ 已实现 | `entity/Bgm.java`、`service/BgmService.java`（音乐库扫描 + LLM 推荐 + 上传）、`controller/BgmController.java`；混音集成在 `VideoComposeService.mixBgmIntoVideo()`；预置 5 首合成免版权 BGM（`tools/generate-preset-bgm.ps1` 生成，`data/bgm/`） | `/api/video/bgm` |
 | E. 并行图片生成 | ✅ 已实现 | `video/generator/*`（DashScope/本地 SD + 工厂）、`video/ImageGenerationProgress.java`、`service/ImageGenerationService.java`（并行 + SSE 进度 + 重试）、`controller/ImageGenerationController.java` | `/api/video/images` |
-| F. 字幕系统 | ✅ 已实现 | `video/subtitle/SubtitleService.java`（SRT/ASS 生成 + xfade 对齐时间轴）、`video/subtitle/SubtitleStyle.java`（字体/字号/颜色/描边/位置）、`controller/SubtitleController.java`；烧录集成在 `VideoComposeService.burnSubtitlesIntoVideo()`（subtitles 滤镜） | `/api/video/subtitle` |
-| I. 社交媒体导出 | ✅ 已实现 | `video/PlatformPreset.java`（六平台预设枚举）、`controller/SocialMediaExportController.java`；平台导出映射到已有 `VideoExportService.exportHd()`，封面截帧在 `VideoComposeService.renderVideoCover()`，Logo 角标在 `overlayLogoIntoVideo()` | `/api/video/export/platforms`、`/export/platform`、`/cover/generate` |
+| F. 字幕系统 | ✅ 已实现 | `video/subtitle/SubtitleService.java`（SRT/ASS 生成 + xfade 对齐时间轴 + 多语言 zh/en/bilingual）、`video/subtitle/SubtitleStyle.java`（字体/字号/颜色/描边/位置）、`controller/SubtitleController.java`；烧录集成在 `VideoComposeService.burnSubtitlesIntoVideo()`（subtitles 滤镜） | `/api/video/subtitle` |
+| I. 社交媒体导出 | ✅ 已实现 | `video/PlatformPreset.java`（六平台预设枚举）、`controller/SocialMediaExportController.java`；平台导出映射到已有 `VideoExportService.exportHd()`，封面截帧在 `VideoComposeService.renderVideoCover()`，Logo 角标在 `overlayLogoIntoVideo()`，ZIP 打包下载在 `VideoExportService.prepareBatchZip()/writeBatchZip()` | `/api/video/export/platforms`、`/export/platform`、`/export/batch-download`、`/cover/generate` |
 | 前端工作流界面 | ✅ 已实现 | `templates/video-studio.html`（脚本管理/镜头编辑/拖拽排序/SSE 进度/导出面板/BGM 面板/导出历史） | - |
 | F. 字幕系统 | ✅ 已实现（见上表） | - | - |
-| G. 本地模型集成 | 🔶 部分完成 | `video/generator/LocalSdImageGenerator.java`（SD WebUI/FLUX 本地生成已可用）；Ollama LLM 已有 | - |
-| H. 视频模板系统 | ⬜ 未实现 | - | - |
+| G. 本地模型集成 | 🔶 部分完成 | `video/generator/LocalSdImageGenerator.java`（SD WebUI/FLUX 本地生成已可用）；Ollama LLM 已有；待收尾：本地模型风格预设提示词/ComfyUI 协议/文档 | - |
+| H. 视频模板系统 | ✅ 已实现 | `entity/VideoTemplate.java`、`repository/VideoTemplateRepository.java`、`service/VideoTemplateService.java`（8 个系统预置 + 自定义）、`controller/VideoTemplateController.java`；模板引导注入 `VideoScriptService.generateScript()` System Prompt | `/api/video/templates` |
 | I. 社交媒体导出优化 | ✅ 已实现（见上表） | - | - |
 | J. 图片质量评估 | ⬜ 未实现 | - | - |
 
@@ -137,7 +137,10 @@ src/main/resources/templates/
 > 2. 模块 A 的实体命名为 `StoryScript` / `StoryShot`（即规划中的 video_project / video_shot）
 > 3. BGM 混音策略：音量降至 15%（约 -16dB）、开头 2s 淡入、结尾 3s 淡出（按实际视频时长计算，已扣除 xfade 转场重叠）、短曲自动循环
 > 4. 字幕策略（模块 F）：SRT（平台上传用）与 ASS（烧录用，subtitles 滤镜）双格式；字幕时间轴与 xfade 转场精确对齐（转场中点切换，无缝不重叠）；导出时可选烧录（`subtitle` 参数），亦可单独导出 SRT 文件；字体默认微软雅黑，可通过 `video.subtitle.font-name` 配置
-> 5. 社媒导出策略（模块 I）：平台预设映射到已有分辨率档位（零新增 FFmpeg 逻辑）；时长超平台推荐上限仅随响应提示不拦截（按实际输出时长计算，已扣除 xfade 重叠）；封面默认截取最近一次成功导出的中间帧并回写导出记录；批量多平台导出由前端 Promise.all 并行调 `/export/platform` 实现（FFmpeg 编码 CPU 密集，后端不引入异步任务表）；Logo 角标路径由 `video.watermark.logo-path` 配置、请求 `withLogo` 可选启用（未配置自动跳过）
+> 5. 社媒导出策略（模块 I）：平台预设映射到已有分辨率档位（零新增 FFmpeg 逻辑）；时长超平台推荐上限仅随响应提示不拦截（按实际输出时长计算，已扣除 xfade 重叠）；封面默认截取最近一次成功导出的中间帧并回写导出记录；批量多平台导出由前端 Promise.all 并行调 `/export/platform` 实现（FFmpeg 编码 CPU 密集，后端不引入异步任务表）；Logo 角标路径由 `video.watermark.logo-path` 配置、请求 `withLogo` 可选启用（未配置自动跳过）；ZIP 打包下载（`/export/batch-download`）同步校验归属/状态后流式输出，单次上限 10 条，含视频+已有封面+manifest.txt
+> 6. 多语言字幕策略（模块 F，2026-11-14）：`language`/`subtitleLanguage` 参数支持 zh（原文）/ en（LLM 翻译）/ bilingual（原文+英文双行）；翻译一次 LLM 批量调用 + 按原文内存缓存，失败逐条回退原文不阻断；TTS 配音仍为中文原文；导出记录新增 `subtitle_language` 列
+> 7. 预置 BGM 素材（模块 D，2026-11-14）：`tools/generate-preset-bgm.ps1` 用 FFmpeg lavfi 合成 5 首免版权和弦垫音（happy/calm/epic/sad/tense 各 1 首，约 42s），文件名匹配 BUILT_IN_PRESETS 自动注册带 mood 标签；可替换为真实免版权音乐
+> 8. 视频模板策略（模块 H，2026-11-14）：实际落点遵循项目分层约定 entity/repository/service/controller（未建 video/template 包）；表名 `video_templates`；启动幂等预置 8 个系统模板；应用模板 = stylePrefix+推荐镜头数注入脚本生成 System Prompt；自定义模板仅本人可见可删，系统模板禁删
 
 ---
 
@@ -400,7 +403,7 @@ CREATE TABLE video_shot (
    - 修改 VideoComposeService.compose() 增加 bgmId 参数
    - 在 mergeVideoAndAudio 步骤后，增加 BGM 混音步骤
 
-5. 预置 5-10 首免版权 BGM（可用公开资源）
+5. 预置 5-10 首免版权 BGM（可用公开资源）✅（2026-11-14：tools/generate-preset-bgm.ps1 合成 5 首，每分类 1 首，可替换）
    分类: happy, sad, epic, calm, tense
 
 参考已有 FFmpeg 调用模式
@@ -462,7 +465,7 @@ CREATE TABLE video_shot (
 | SRT 自动生成 | 根据每个镜头的 narration + durationSeconds 自动生成带时间轴的 SRT 字幕文件 |
 | 字幕样式定制 | 支持自定义字体、字号、颜色、描边、位置（底部/顶部） |
 | FFmpeg 硬烧录 | 使用 `subtitles` 或 `drawtext` 将字幕烧录到视频画面中 |
-| 多语言支持 | 中文/英文双语字幕，适配不同平台 |
+| 多语言支持 | 中文/英文双语字幕，适配不同平台 ✅（2026-11-14：zh/en/bilingual，LLM 翻译 + 缓存 + 失败回退） |
 | 字幕开关 | 用户可选择是否烧录字幕，也可单独导出 SRT 文件 |
 
 #### 代码生成提示
@@ -584,7 +587,11 @@ CREATE TABLE video_shot (
 
 ---
 
-### 模块 H：视频模板系统（新增）
+### 模块 H：视频模板系统（新增） ✅ 已实现（2026-11-14）
+
+> **实现落点**：`entity/VideoTemplate.java`（表 `video_templates`）、`repository/VideoTemplateRepository.java`、`service/VideoTemplateService.java`（启动幂等预置 8 个系统模板：产品展示/故事讲述/知识科普/风景旅拍/美食制作/情感语录/科技数码/运动健身）、`controller/VideoTemplateController.java`（GET 列表/详情、POST /{id}/apply、POST /custom、DELETE /{id}）。
+> 应用模板 = `buildGuidance()` 将 stylePrefix + 推荐镜头数注入 `VideoScriptService.generateScript(idea, guidance)` 的 System Prompt；`/api/video/scripts/generate` 亦支持可选 `templateId`。
+> 前端：新建脚本区模板下拉（含描述/镜头数/配乐风格提示）+ 脚本头部「另存为模板」（镜头数 + 当前视觉风格 promptPrefix）。
 
 > **这是什么**：提供预设的视频风格模板，用户选择模板后自动填充脚本结构、提示词风格、BGM 风格等，降低使用门槛。
 >
@@ -660,7 +667,7 @@ CREATE TABLE video_template (
 | 智能裁剪 | 横屏转竖屏时智能裁剪画面中心区埏，避免主体被切 |
 | 封面图生成 | 自动截取视频精彩帧（第一帧/中间帧）作为封面 |
 | 水印叠加 | 可选叠加品牌 Logo 水印（角标/全屏透明） |
-| 批量导出 | 一次操作导出多个平台版本，打包下载 |
+| 批量导出 | 一次操作导出多个平台版本，打包下载 ✅（2026-11-14：/export/batch-download ZIP 流式打包，含封面 + manifest） |
 
 #### 代码生成提示
 
@@ -868,11 +875,11 @@ mvn spring-boot:run
 | P2 | G. 本地模型集成 | 🔶 部分完成（本地 SD 生成已落地） | 2 天 | 降低成本、无网络依赖 | 无 |
 | P2 | C. 视频预览与导出 | ✅ 已完成 | 1-2 天 | 竖屏/横屏多场景 | I |
 | P2 | D. 背景音乐 | ✅ 已完成 | 1-2 天 | 氛围感提升 | 无 |
-| P2 | H. 视频模板系统 | ⬜ 未实现 | 1 天 | 降低使用门槛 | A |
+| P2 | H. 视频模板系统 | ✅ 已完成（2026-11-14） | 1 天 | 降低使用门槛 | A |
 | P3 | J. 图片质量评估 | ⬜ 未实现 | 1-2 天 | 自动化质量保障 | G |
 
 **建议实现顺序**: A → E → F → B → I → G → C → D → H → J
-**当前进度**: A / E / B / C / D / F / I 已全部完成 ✅；下一步建议 H（视频模板）→ J（图片质量评估）→ G 收尾（文档/预设提示词）
+**当前进度**: A / B / C / D / E / F / H / I 已全部完成 ✅（含 S1 补齐：预置 BGM 素材/多语言字幕/ZIP 打包下载）；下一步建议 G 收尾（本地模型风格预设/ComfyUI/文档）→ J（图片质量评估）→ Phase 3 Agent 化
 
 ### Phase 3（Agent 化）— 长期规划
 
@@ -995,25 +1002,32 @@ src/main/java/com/github/ylyan2015/springaidemo/
 ├── entity/
 │   ├── StoryScript.java / StoryShot.java       # 模块 A
 │   ├── ImagePromptOptimizer.java               # 模块 B
-│   ├── VideoExport.java                        # 模块 C
-│   └── Bgm.java                                # 模块 D
+│   ├── VideoExport.java                        # 模块 C（含 subtitle_language 列）
+│   ├── Bgm.java                                # 模块 D
+│   └── VideoTemplate.java                      # 模块 H（2026-11-14）
 ├── repository/
 │   ├── StoryScriptRepository / StoryShotRepository / ImagePromptOptimizerRepository   # 模块 A/B
 │   └── VideoExportRepository / BgmRepository                        # 模块 C/D
 ├── service/
-│   ├── StoryScriptService.java                 # 模块 A：脚本生成/编辑/排序
+│   ├── StoryScriptService.java                 # 模块 A：脚本生成/编辑/排序（含模板引导重载）
 │   ├── ImagePromptOptimizerService.java        # 模块 B：LLM 提示词优化
-│   ├── ImageGenerationService.java              # 模块 E：并行生成 + SSE + 重试
-│   ├── VideoExportService.java                 # 模块 C：预览/高清导出/导出历史
-│   └── BgmService.java                         # 模块 D：音乐库扫描/推荐/上传
+│   ├── ImageGenerationService.java             # 模块 E：并行生成 + SSE + 重试
+│   ├── VideoExportService.java                 # 模块 C：预览/高清导出/导出历史 + ZIP 打包（模块 I）
+│   ├── BgmService.java                         # 模块 D：音乐库扫描/推荐/上传
+│   └── VideoTemplateService.java               # 模块 H：模板预置/应用/自定义（2026-11-14）
 └── controller/
     ├── StoryScriptController.java / ImagePromptOptimizerController.java
     ├── ImageGenerationController.java / VideoExportController.java
     ├── BgmController.java
-    ├── SubtitleController.java                 # 模块 F：SRT 导出/字幕预览
-    └── SocialMediaExportController.java       # 模块 I：平台导出/封面截帧
+    ├── SubtitleController.java                 # 模块 F：SRT 导出/字幕预览（多语言）
+    ├── SocialMediaExportController.java       # 模块 I：平台导出/封面截帧
+    └── VideoTemplateController.java            # 模块 H：模板列表/应用/自定义（2026-11-14）
 
 src/main/resources/
-├── templates/video-studio.html                # 完整工作流前端界面
+├── templates/video-studio.html                # 完整工作流前端界面（含模板下拉/字幕语言/打包下载）
 └── application.yml                             # image.* / bgm.* / video.* 配置项
+
+tools/generate-preset-bgm.ps1                  # 预置 BGM 素材生成脚本（模块 D，2026-11-14）
+data/bgm/*.mp3                                 # 5 首预置免版权 BGM（启动自动扫描注册）
+src/test/java/.../                             # 单元测试：SubtitleServiceTest / VideoExportServiceZipTest / VideoTemplateServiceTest（2026-11-14）
 ```

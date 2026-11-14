@@ -533,12 +533,17 @@ Frontend page: http://localhost:8080/video-studio
 
 ### 7.1 Generate Storyboard Script
 
-Generates a multi-shot storyboard from a creative idea via LLM and persists it:
+Generates a multi-shot storyboard from a creative idea via LLM and persists it (optional `templateId` applies a video template, see 7.10):
 
 ```bash
 curl -X POST http://localhost:8080/api/video/scripts/generate \
   -H "Content-Type: application/json" \
   -d '{"idea": "A heartwarming story about a ginger cat's daily life"}'
+
+# Generate with a video template (style guidance injected into the System Prompt)
+curl -X POST http://localhost:8080/api/video/scripts/generate \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "A heartwarming story about a ginger cat", "templateId": 2}'
 ```
 
 **Response:**
@@ -696,10 +701,10 @@ curl -X POST http://localhost:8080/api/video/export/preview \
   -H "Content-Type: application/json" \
   -d '{"scriptId": 1, "aspectRatio": "16:9", "bgmId": null, "subtitle": true}'
 
-# HD export (720p/1080p, optional BGM and subtitle burning)
+# HD export (720p/1080p, optional BGM and subtitle burning; subtitle language: zh/en/bilingual)
 curl -X POST http://localhost:8080/api/video/export/hd \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "withLogo": true}'
+  -d '{"scriptId": 1, "resolution": "1080p", "aspectRatio": "9:16", "bgmId": 2, "subtitle": true, "subtitleLanguage": "bilingual", "withLogo": true}'
 
 # Export history (with failure reasons, re-downloadable)
 curl http://localhost:8080/api/video/exports/1
@@ -714,6 +719,7 @@ curl http://localhost:8080/api/video/exports/1
 | `aspectRatio` | string | No | `16:9` | Aspect ratio (16:9 / 9:16 / 1:1) |
 | `bgmId` | long | No | null | BGM to use; null means no music |
 | `subtitle` | boolean | No | false | Burn subtitles into frames (automatically ignored when no narration) |
+| `subtitleLanguage` | string | No | `zh` | Subtitle language: `zh` original / `en` English (LLM translation) / `bilingual` Chinese+English; narration audio stays Chinese |
 | `withLogo` | boolean | No | false | Overlay brand logo corner badge (silently ignored when `video.watermark.logo-path` is unconfigured) |
 
 **Resolution × ratio → output size:**
@@ -773,12 +779,13 @@ curl -X POST http://localhost:8080/api/video/bgm/upload \
 
 > **Built-in music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/`
 > (e.g. `happy__sunny_morning.mp3`); auto-registered on startup. Categories: `happy` / `sad` / `epic` / `calm` / `tense`.
+> The project ships 5 programmatically synthesized royalty-free chord pads (one per category, ~42s); regenerate with `tools/generate-preset-bgm.ps1` or replace with real tracks.
 
 ---
 
-### 7.8 Subtitle System (SRT Export / Preview)
+### 7.8 Subtitle System (SRT Export / Preview / Multilingual)
 
-Auto-generates timed subtitles from shot narrations (timeline precisely aligned with xfade transitions: switching at transition midpoints, adjacent cues seamless and non-overlapping):
+Auto-generates timed subtitles from shot narrations (timeline precisely aligned with xfade transitions: switching at transition midpoints, adjacent cues seamless and non-overlapping); multilingual support: `zh` original / `en` English (LLM translation) / `bilingual` two-line Chinese+English:
 
 ```bash
 # Generate SRT subtitle file (uploaded to storage + content returned, ready for social platforms)
@@ -786,10 +793,15 @@ curl -X POST http://localhost:8080/api/video/subtitle/generate \
   -H "Content-Type: application/json" \
   -d '{"scriptId": 1}'
 
-# Render a single-frame subtitle preview image (first shot image + target ratio + first cue)
+# Generate English subtitles (LLM-translated narration; falls back to original on failure)
+curl -X POST http://localhost:8080/api/video/subtitle/generate \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId": 1, "language": "en"}'
+
+# Render a single-frame subtitle preview image (first shot image + target ratio + first cue; language optional)
 curl -X POST http://localhost:8080/api/video/subtitle/preview \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "aspectRatio": "9:16", "style": {"fontSize": 28, "position": "bottom"}}'
+  -d '{"scriptId": 1, "aspectRatio": "9:16", "language": "bilingual", "style": {"fontSize": 28, "position": "bottom"}}'
 ```
 
 **generate response:**
@@ -799,7 +811,8 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
   "data": {
     "srtUrl": "/images/2026/11/07/script_1_subtitle_1730966400000.srt",
     "srtContent": "1\n00:00:00,000 --> 00:00:03,600\nThe first ray of morning sunlight\n\n...",
-    "cueCount": 5
+    "cueCount": 5,
+    "language": "zh"
   }
 }
 ```
@@ -820,7 +833,7 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 { "success": true, "data": { "previewUrl": "/images/2026/11/07/subtitle_preview_1730966400000.png", "width": 720, "height": 1280 } }
 ```
 
-> Subtitle burning happens during export (the `subtitle` parameter in 7.6, FFmpeg subtitles filter + libass); the frontend workflow also provides a "Burn Subtitles" toggle plus "Export SRT" and "Subtitle Preview" buttons.
+> Subtitle burning happens during export (the `subtitle` + `subtitleLanguage` parameters in 7.6, FFmpeg subtitles filter + libass); the frontend workflow also provides a "Burn Subtitles" toggle, a subtitle language dropdown (Chinese/English/bilingual), plus "Export SRT" and "Subtitle Preview" buttons. Translations are cached in memory per source text, so repeated exports of the same narration do not re-call the LLM.
 
 ---
 
@@ -844,7 +857,7 @@ curl -X POST http://localhost:8080/api/video/subtitle/preview \
 ```bash
 curl -X POST http://localhost:8080/api/video/export/platform \
   -H "Content-Type: application/json" \
-  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "withLogo": false}'
+  -d '{"scriptId": 1, "platform": "DOUYIN", "bgmId": 2, "subtitle": true, "subtitleLanguage": "zh", "withLogo": false}'
 ```
 
 - `platform` accepts the enum name (case-insensitive) or the Chinese display name (e.g. `"抖音"`)
@@ -870,7 +883,67 @@ curl -X POST http://localhost:8080/api/video/cover/generate \
 { "success": true, "data": { "coverUrl": "/images/2026/11/08/video_cover_1731000000000.jpg", "timeOffsetSeconds": 10.5, "exportId": 12 } }
 ```
 
-> The cover URL is written back to the export record (a thumbnail is shown in export history); batch multi-platform export is implemented by the frontend calling `/export/platform` in parallel (no dedicated batch endpoint) — API users can invoke it concurrently themselves.
+> The cover URL is written back to the export record (a thumbnail is shown in export history); batch multi-platform export is implemented by the frontend calling `/export/platform` in parallel — API users can invoke it concurrently themselves; afterwards use the ZIP package endpoint below to download everything at once.
+
+#### Batch Package Download (ZIP)
+
+```bash
+# Package multiple export records' videos (+ existing covers) into a streaming ZIP download
+curl -X POST http://localhost:8080/api/video/export/batch-download \
+  -H "Content-Type: application/json" \
+  -d '{"exportIds": [12, 13, 14]}' \
+  -o video_exports.zip
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `exportIds` | long[] | Yes | Export record IDs, 1-10 items, current user's successful exports only |
+
+- Response: `application/zip` stream (`Content-Disposition: attachment`); validation failures return a JSON error
+- ZIP contents: `{index}_{resolution}_{aspect}_{exportId}.mp4` (e.g. `01_1080p_9x16_12.mp4`) + matching covers (if any) + `manifest.txt` (resolution/aspect/duration/BGM/subtitle language)
+- Frontend: "Package Download" buttons are available in both the batch export result area and the export history area
+
+---
+
+### 7.10 Video Templates (Module H: Preset Styles / Apply / Custom)
+
+On startup the system idempotently seeds 8 built-in templates: Product Showcase / Storytelling / Knowledge / Travel / Food / Emotional Quotes / Tech / Fitness. Applying a template injects its style guidance (stylePrefix + recommended shot count) into the script-generation System Prompt.
+
+```bash
+# Template list (system built-in + current user's custom)
+curl http://localhost:8080/api/video/templates
+
+# Template detail
+curl http://localhost:8080/api/video/templates/1
+
+# Apply a template to generate a storyboard (response data matches the script structure in 7.1)
+curl -X POST http://localhost:8080/api/video/templates/1/apply \
+  -H "Content-Type: application/json" \
+  -d '{"idea": "A promotional short for wireless earbuds"}'
+
+# Save a custom template
+curl -X POST http://localhost:8080/api/video/templates/custom \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Healing Style", "category": "story", "description": "Warm and healing", "shotCount": 5, "stylePrefix": "warm healing cinematic style, soft light", "defaultBgmCategory": "calm"}'
+
+# Delete a custom template (system built-in templates cannot be deleted)
+curl -X DELETE http://localhost:8080/api/video/templates/9
+```
+
+**Template fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Template name (required) |
+| `category` | string | Category: product/story/knowledge/travel/food/emotion/tech/fitness/other |
+| `description` | string | Template description (frontend selection hint) |
+| `shotCount` | int | Recommended shot count (default 5) |
+| `stylePrefix` | string | Style guidance (English, injected into the script-generation System Prompt) |
+| `defaultBgmCategory` | string | Recommended BGM category (happy/sad/epic/calm/tense) |
+| `defaultVoice` | string | Recommended TTS voice (reserved) |
+| `isSystem` | boolean | Whether system built-in (read-only; built-in templates cannot be deleted) |
+
+> Custom templates are visible/deletable only by their creator; the frontend new-script area provides a template dropdown, and the script header provides "Save as Template" (shot count + current visual style).
 
 ---
 

@@ -57,7 +57,7 @@ public class SubtitleController {
 
     /**
      * 生成脚本的 SRT 字幕文件（时间轴按 xfade 转场对齐），上传存储并返回内容
-     * 请求体: { "scriptId": 1 }
+     * 请求体: { "scriptId": 1, "language": "zh" }  — language 可选: zh 原文 / en 英文 / bilingual 中英双语
      */
     @PostMapping("/generate")
     public ResponseEntity<Map<String, Object>> generateSrt(@RequestBody Map<String, Object> request) {
@@ -72,7 +72,8 @@ public class SubtitleController {
             }
 
             List<StoryShot> shots = requireOwnedShots(scriptId, userId);
-            String srt = subtitleService.generateSrt(shots);
+            String language = SubtitleService.normalizeLanguage((String) request.get("language"));
+            String srt = subtitleService.generateSrt(shots, language);
             if (srt.isBlank()) {
                 result.put("success", false);
                 result.put("message", "脚本没有旁白文本，无法生成字幕");
@@ -80,7 +81,7 @@ public class SubtitleController {
             }
 
             // 上传 SRT 到存储服务（社媒平台可直接使用）
-            String fileName = "script_" + scriptId + "_subtitle_" + System.currentTimeMillis() + ".srt";
+            String fileName = "script_" + scriptId + "_subtitle_" + language + "_" + System.currentTimeMillis() + ".srt";
             String fileId = storageService.upload(
                     new ByteArrayInputStream(srt.getBytes(StandardCharsets.UTF_8)),
                     fileName, "application/x-subrip");
@@ -93,6 +94,7 @@ public class SubtitleController {
             data.put("srtUrl", srtUrl);
             data.put("srtContent", srt);
             data.put("cueCount", cueCount);
+            data.put("language", language);
             result.put("success", true);
             result.put("data", data);
             result.put("message", "字幕文件生成成功（" + cueCount + " 条）");
@@ -108,7 +110,7 @@ public class SubtitleController {
 
     /**
      * 渲染字幕效果预览帧：首镜头图片按目标比例裁剪 + 烧录第一条字幕，输出 PNG
-     * 请求体: { "scriptId": 1, "aspectRatio": "16:9", "style": { "fontSize": 28, "position": "bottom" } }
+     * 请求体: { "scriptId": 1, "aspectRatio": "16:9", "language": "zh", "style": { "fontSize": 28, "position": "bottom" } }
      */
     @PostMapping("/preview")
     public ResponseEntity<Map<String, Object>> previewSubtitle(@RequestBody Map<String, Object> request) {
@@ -130,7 +132,8 @@ public class SubtitleController {
                 return ResponseEntity.badRequest().body(result);
             }
 
-            String ass = subtitleService.generateAss(shots, buildStyle(request));
+            String ass = subtitleService.generateAss(shots, buildStyle(request),
+                    SubtitleService.normalizeLanguage((String) request.get("language")));
             if (ass.isBlank()) {
                 result.put("success", false);
                 result.put("message", "脚本没有旁白文本，无法预览字幕");

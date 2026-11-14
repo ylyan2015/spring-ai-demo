@@ -1338,10 +1338,15 @@ spring:
 
 ```yaml
 rag:
-  embedding-model: ollama    # embedding: ollama or openai
+  embedding-model: ollama    # embedding: ollama / openai / dashscope (Tongyi cloud); config + restart
   store-type: memory         # memory (in-memory) or pgvector (persistent)
+  dashscope:                 # used when embedding-model=dashscope (DeepSeek has no embedding API; cloud vectorization via Tongyi)
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: text-embedding-v4
+    dimensions: 768          # must match pgvector.dimensions; vectors differ across providers — clear and re-upload after switching
   pgvector:
-    dimensions: 768          # nomic-embed-text dimensions
+    dimensions: 768          # nomic-embed-text / text-embedding-v4 dimensions (openai is 1536)
     initialize-schema: true  # auto-create tables
 ```
 
@@ -1433,7 +1438,7 @@ A: Login first via `/api/auth/login` and ensure cookies are saved.
 A: Use `fetch` + `ReadableStream` (recommended for POST), or `EventSource` (GET only).
 
 **Q: RAG context enhancement not working?**
-A: Ensure documents are uploaded, `ragEnabled` is `true`, and the embedding model is available.
+A: Ensure documents are uploaded, `ragEnabled` is `true`, and the embedding model is available: ollama needs `ollama pull nomic-embed-text`; to avoid local Ollama set `rag.embedding-model: dashscope` (Tongyi cloud, reuses DASHSCOPE_API_KEY) or `openai`, restart to apply; after switching providers, clear old vectors and re-upload documents.
 
 **Q: How to switch AI models?**
 A: Web UI (recommended), API `POST /api/model/switch`, or config file.

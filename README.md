@@ -526,7 +526,15 @@ RAG（检索增强生成）功能支持文档上传和上下文增强，通过�
 
 ```yaml
 rag:
-  embedding-model: ollama    # embedding 提供者: ollama（本地免费）或 openai
+  embedding-model: ollama    # embedding 提供者: ollama（本地免费）/ openai / dashscope（通义云端）；配置+重启生效
+  # 云端向量化（embedding-model=dashscope）：DeepSeek 官方不提供 embedding API，
+  # 在线模式不想依赖本地 Ollama 时用 dashscope（复用 DASHSCOPE_API_KEY）；
+  # 不同提供者向量语义空间不兼容，切换后需清空旧向量重新上传文档
+  dashscope:
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: text-embedding-v4
+    dimensions: 768          # 须与 rag.pgvector.dimensions 一致（pgvector 模式）
   store-type: memory         # 向量存储模式: memory（内存）或 pgvector（持久化）
 ```
 
@@ -541,7 +549,7 @@ rag:
 
 1. 确保 PostgreSQL 已安装 pgvector 扩展
 2. 激活 `postgresql` profile（自动设置 `rag.store-type: pgvector`）
-3. 配置 embedding 维度（默认 768，nomic-embed-text 维度）
+3. 配置 embedding 维度（默认 768：nomic-embed-text 与 dashscope text-embedding-v4；openai text-embedding-3-small 为 1536 需同步调整）
 
 ```yaml
 # application-postgresql.yml 已自动配置
@@ -905,7 +913,7 @@ H2 控制台默认关闭（安全加固）。本地调试可在 `application-h2.
 
 - 确认文件大小不超过 10MB
 - 确认 Ollama embedding 模型已下载：`ollama pull nomic-embed-text`
-- 或使用 OpenAI embedding：设置 `rag.embedding-model: openai`
+- 或使用云端 embedding：设置 `rag.embedding-model: dashscope`（通义 text-embedding-v4，复用 DASHSCOPE_API_KEY，无需本地 Ollama）或 `openai`；重启生效，切换后清空旧向量重新上传
 
 ### 7. 忘记密码怎么办？
 

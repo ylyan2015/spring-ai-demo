@@ -3,9 +3,20 @@ server:
 
 spring:
   profiles:
-    active: deepseek,openai,h2  # 默认使用DeepSeek + H2数据库，可改为 ollama,h2 使用离线模式
+    active: deepseek,h2  # 默认使用DeepSeek + H2数据库，可改为 ollama,h2 使用离线模式
   
   ai:
+    # 模型类型开关（Spring AI 1.0.0）：在线 chat 由 ModelService 按提供者自建 OpenAI 兼容客户端，
+    # 不依赖 OpenAI 自动配置 Bean；关闭未使用的 OpenAI 音频/图像/ moderation，
+    # 避免干净环境（无 OPENAI_API_KEY）下自动配置 Bean 校验 Key 导致启动失败
+    model:
+      chat: ollama          # 保留 Ollama ChatModel Bean 供离线模式；在线模式走 ModelService 自建客户端
+      embedding: ollama     # RAG 默认本地向量化；openai/dashscope 提供者由 AiModelConfig 自建客户端
+      audio:
+        speech: none
+        transcription: none
+      image: none
+      moderation: none
     ollama:
       base-url: http://localhost:11434
       chat:
@@ -21,6 +32,7 @@ spring:
 
     # 阿里云百炼 DashScope 配置（图像生成：通义万相 wan2.6-t2i，通过 HTTP API 调用）
     dashscope:
+      # 真实 Key 一律经环境变量 DASHSCOPE_API_KEY 注入（本文件 git 跟踪，禁止写入真实 Key）
       api-key: ${DASHSCOPE_API_KEY:}
 
   # JPA Configuration (通用配置)
@@ -54,8 +66,17 @@ chat:
 
 # RAG 配置
 rag:
-  embedding-model: ollama  # embedding 提供者: ollama（本地免费）或 openai（需有有效的API Key）
+  embedding-model: ollama  # embedding 提供者: ollama（本地免费）/ openai / dashscope（通义云端，需 DASHSCOPE_API_KEY）；配置+重启生效
   store-type: memory       # 向量存储模式: memory（内存，测试/开发用，重启清空）或 pgvector（持久化，生产用，需postgresql profile）
+  # 云端向量化（DashScope 通义，OpenAI 兼容端点）：DeepSeek 官方不提供 embedding API，
+  # 在线模式不想依赖本地 Ollama 时将 embedding-model 改为 dashscope。
+  # 注意：不同提供者的向量语义空间不兼容，切换后需清空旧向量重新上传文档；
+  # dimensions 须与 rag.pgvector.dimensions 一致（pgvector 模式）
+  dashscope:
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: text-embedding-v4
+    dimensions: 768
 
 # 图像生成配置（模块 C：AI 图像生成系统）
 image:

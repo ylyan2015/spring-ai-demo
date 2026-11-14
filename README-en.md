@@ -410,7 +410,15 @@ spring:
 
 ```yaml
 rag:
-  embedding-model: ollama    # Embedding provider: ollama (local) or openai
+  embedding-model: ollama    # Embedding provider: ollama (local) / openai / dashscope (Tongyi cloud); config + restart
+  # Cloud vectorization (embedding-model=dashscope): DeepSeek offers no embedding API;
+  # use dashscope (reuses DASHSCOPE_API_KEY) to run online mode without local Ollama;
+  # vectors from different providers are incompatible — clear old vectors and re-upload after switching
+  dashscope:
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: text-embedding-v4
+    dimensions: 768          # must match rag.pgvector.dimensions (pgvector mode)
   store-type: memory         # Vector store: memory (testing) or pgvector (production)
 ```
 
@@ -534,7 +542,7 @@ bgm:
 
 1. Ensure PostgreSQL has pgvector extension installed
 2. Activate `postgresql` profile (auto-sets `rag.store-type: pgvector`)
-3. Configure embedding dimensions (default 768 for nomic-embed-text)
+3. Configure embedding dimensions (default 768: nomic-embed-text and dashscope text-embedding-v4; openai text-embedding-3-small is 1536 and must be adjusted accordingly)
 
 ```bash
 # Quick start PgVector via Docker
@@ -736,7 +744,7 @@ Ensure consistent `sessionId` usage across requests.
 
 ### 4. RAG Document Upload Failed
 - Confirm file size ≤ 10MB
-- Ensure embedding model is available: `ollama pull nomic-embed-text`
+- Ensure embedding model is available: `ollama pull nomic-embed-text`, or switch to cloud embedding via `rag.embedding-model: dashscope` (Tongyi text-embedding-v4, reuses DASHSCOPE_API_KEY, no local Ollama) or `openai`; restart to apply, clear old vectors and re-upload after switching
 
 ### 5. Forgot Password
 Delete user from database and re-register:

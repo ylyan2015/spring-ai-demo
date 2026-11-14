@@ -1374,10 +1374,15 @@ spring:
 
 ```yaml
 rag:
-  embedding-model: ollama    # embedding: ollama 或 openai
+  embedding-model: ollama    # embedding: ollama / openai / dashscope（通义云端）；配置+重启生效
   store-type: memory         # memory（内存）或 pgvector（持久化）
+  dashscope:                 # embedding-model=dashscope 时生效（DeepSeek 无 embedding API，云端向量化用通义）
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: text-embedding-v4
+    dimensions: 768          # 须与 pgvector.dimensions 一致；不同提供者向量不兼容，切换后清空重传
   pgvector:
-    dimensions: 768          # nomic-embed-text 维度
+    dimensions: 768          # nomic-embed-text / text-embedding-v4 维度（openai 为 1536）
     initialize-schema: true  # 自动创建表
 ```
 
@@ -1469,7 +1474,7 @@ A: 需要先登录，调用 `/api/auth/login` 并确保 Cookie 被保存。
 A: 使用 `fetch` + `ReadableStream` 或 `EventSource`（仅支持GET），推荐使用 fetch POST 方式。
 
 **Q: RAG 上下文增强没有效果？**
-A: 确认已上传文档，并且 `ragEnabled` 设为 `true`。还需确认 embedding 模型可用。
+A: 确认已上传文档，并且 `ragEnabled` 设为 `true`。还需确认 embedding 模型可用：ollama 需 `ollama pull nomic-embed-text`；不想依赖本地 Ollama 可设 `rag.embedding-model: dashscope`（通义云端，复用 DASHSCOPE_API_KEY）或 `openai`，重启生效；切换提供者后需清空旧向量重新上传文档。
 
 **Q: 如何切换AI模型？**
 A: Web界面（推荐）、API 调用 `POST /api/model/switch`、或修改配置文件。

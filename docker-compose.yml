@@ -13,8 +13,21 @@ services:
       # API Keys（从 .env 文件读取）
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}   # 图像生成 + 多模态质量评估（模块 J）
+      # 数据库凭据（与 postgres 容器保持一致，release 审查 Minor#14）
+      POSTGRES_DB: ${POSTGRES_DB:-chatdb}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      # 外部工具路径（镜像内已安装；覆盖 application.yml 的 Windows 默认值）
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      PYTHON_CMD: /opt/tts-venv/bin/python
       # JVM 参数
       JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      # 预置 BGM/运行数据（首次启动自动从镜像填充）与生成文件持久化，避免容器重建丢失
+      - appdata:/app/data
+      - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,15 +40,15 @@ services:
     image: pgvector/pgvector:pg16
     container_name: spring-ai-postgres
     environment:
-      POSTGRES_DB: chatdb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-chatdb}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # 生产必须在 .env 中设置强密码（release 审查 Minor#14）
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+    # 不映射宿主机端口：仅容器网络内可达，避免数据库暴露（release 审查 Minor#14）
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d chatdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chatdb}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -69,6 +82,8 @@ services:
 volumes:
   pgdata:
   ollama-data:
+  appdata:
+  uploads:
 
 networks:
   ai-net:

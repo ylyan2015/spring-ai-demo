@@ -52,10 +52,16 @@ public class ModelController {
     }
 
     /**
-     * 切换模型
+     * 切换模型（全局开关，需登录，release 审查 M5：防匿名 DoS 全体用户）
      */
     @PostMapping("/switch")
     public ResponseEntity<Map<String, Object>> switchModel(@RequestBody ModelSwitchRequest request) {
+        if (getCurrentUserId() == null) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "用户未登录");
+            return ResponseEntity.status(401).body(result);
+        }
         try {
             modelService.switchModel(request.getModel());
             

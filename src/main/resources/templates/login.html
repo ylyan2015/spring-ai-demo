@@ -88,19 +88,14 @@
             background: #252525;
             border: 1px solid #2a2a2a;
             border-radius: 8px;
-            padding: 8px 14px;
-            font-family: 'Courier New', monospace;
-            font-size: 18px;
-            letter-spacing: 4px;
-            color: #667eea;
             cursor: pointer;
             user-select: none;
-            white-space: nowrap;
-            min-width: 100px;
-            text-align: center;
-            transition: background 0.2s;
+            width: 120px;
+            height: 40px;
+            object-fit: cover;
+            transition: opacity 0.2s;
         }
-        .captcha-display:hover { background: #333; }
+        .captcha-display:hover { opacity: 0.85; }
         .captcha-hint { font-size: 11px; color: #666; margin-top: 4px; }
         .submit-btn {
             width: 100%;
@@ -174,7 +169,7 @@
                 <label>验证码</label>
                 <div class="captcha-row">
                     <input type="text" id="loginCaptcha" placeholder="请输入验证码" maxlength="4" autocomplete="off">
-                    <div class="captcha-display" id="loginCaptchaDisplay" onclick="refreshCaptcha('login')" title="点击刷新">----</div>
+                    <img class="captcha-display" id="loginCaptchaDisplay" onclick="refreshCaptcha('login')" title="点击刷新" alt="验证码图片">
                 </div>
                 <div class="captcha-hint">点击图片可刷新验证码</div>
             </div>
@@ -200,7 +195,7 @@
                 <label>验证码</label>
                 <div class="captcha-row">
                     <input type="text" id="regCaptcha" placeholder="请输入验证码" maxlength="4" autocomplete="off">
-                    <div class="captcha-display" id="regCaptchaDisplay" onclick="refreshCaptcha('register')" title="点击刷新">----</div>
+                    <img class="captcha-display" id="regCaptchaDisplay" onclick="refreshCaptcha('register')" title="点击刷新" alt="验证码图片">
                 </div>
                 <div class="captcha-hint">点击图片可刷新验证码</div>
             </div>
@@ -248,12 +243,13 @@
         }
 
         // 初始化时加载同一个验证码到两个表单（避免两次请求导致session不一致）
+        // 验证码为服务端图片（答案仅存 Session，release 审查 M1）
         async function loadInitialCaptcha() {
             try {
                 const resp = await fetch('/api/auth/captcha');
                 const data = await resp.json();
-                document.getElementById('loginCaptchaDisplay').textContent = data.captcha;
-                document.getElementById('regCaptchaDisplay').textContent = data.captcha;
+                document.getElementById('loginCaptchaDisplay').src = data.image;
+                document.getElementById('regCaptchaDisplay').src = data.image;
             } catch (e) {
                 console.error('加载验证码失败', e);
             }
@@ -264,8 +260,8 @@
             try {
                 const resp = await fetch('/api/auth/captcha');
                 const data = await resp.json();
-                document.getElementById('loginCaptchaDisplay').textContent = data.captcha;
-                document.getElementById('regCaptchaDisplay').textContent = data.captcha;
+                document.getElementById('loginCaptchaDisplay').src = data.image;
+                document.getElementById('regCaptchaDisplay').src = data.image;
             } catch (e) {
                 console.error('加载验证码失败', e);
             }

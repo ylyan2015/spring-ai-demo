@@ -170,6 +170,8 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- DOMPurify 本地 vendor：Markdown 渲染消毒，防 RAG 提示注入存储型 XSS（release 审查 C5） -->
+    <script src="/js/vendor/purify.min.js"></script>
     <script th:src="@{/js/chat.js}"></script>
 </body>
 </html>

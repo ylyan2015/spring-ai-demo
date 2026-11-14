@@ -2,10 +2,11 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/chatdb
+    url: jdbc:postgresql://localhost:5432/${POSTGRES_DB:chatdb}
     driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: postgres
+    username: ${POSTGRES_USER:postgres}
+    # 生产必须通过环境变量设置强密码（release 审查 Minor#14）
+    password: ${POSTGRES_PASSWORD:postgres}
   
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect

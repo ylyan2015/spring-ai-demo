@@ -6,9 +6,9 @@ spring:
   profiles:
     include: postgresql,deepseek,openai
 
-  # 覆盖 PostgreSQL 连接地址为 Docker 服务名
+  # 覆盖 PostgreSQL 连接地址为 Docker 服务名（库名/凭据与 postgres 容器环境变量一致）
   datasource:
-    url: jdbc:postgresql://postgres:5432/chatdb
+    url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:chatdb}
 
   # 覆盖 Ollama 地址为 Docker 服务名（若使用 Ollama 容器）
   ai:
@@ -25,3 +25,8 @@ rag:
   pgvector:
     dimensions: 768
     initialize-schema: true
+
+# Docker 镜像内无微软雅黑，字幕烧录改用镜像已装的 Noto CJK 字体（font-noto-cjk）
+video:
+  subtitle:
+    font-name: Noto Sans CJK SC

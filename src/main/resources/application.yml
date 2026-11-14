@@ -38,12 +38,12 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
 
-# Actuator 监控配置
+# Actuator 监控配置（release 审查 M7：仅暴露 health/info，env/loggers 等敏感端点不对外）
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,env,beans,mappings,loggers
+        include: health,info
   endpoint:
     health:
       show-details: when-authorized
@@ -56,6 +56,59 @@ chat:
 rag:
   embedding-model: ollama  # embedding 提供者: ollama（本地免费）或 openai（需有有效的API Key）
   store-type: memory       # 向量存储模式: memory（内存，测试/开发用，重启清空）或 pgvector（持久化，生产用，需postgresql profile）
+
+# 图像生成配置（模块 C：AI 图像生成系统）
+image:
+  generator: dashscope               # 图像生成源：dashscope（云端通义万相）/ local（本地 SD/FLUX）
+  local:                               # 本地 Stable Diffusion WebUI / ComfyUI / OllamaDiffuser 配置
+    base-url: http://127.0.0.1:7860    # 本地服务 API 地址
+    model: stable-diffusion            # 本地模型名称
+    steps: 25                          # 采样步数
+    cfg-scale: 7.0                     # 提示词相关性（CFG）
+    timeout: 120                       # 本地生成超时（秒）
+    style-prefix: ""                   # 风格前缀覆盖（留空时按模型名自动套用内置预设：SD1.5/SDXL/FLUX）
+    extra-negative-prompt: ""          # 负面提示词覆盖（留空时按模型名自动套用内置预设）
+  generation:
+    parallelism: 3                     # 并行生成数（避免云端 API 限流）
+    retry-attempts: 1                 # 失败重试次数
+    retry-delay-ms: 2000              # 重试间隔（毫秒）
+    total-timeout-seconds: 300        # 批量生成总超时（秒）；单张超时由 HTTP 客户端层控制（DashScope 60s / image.local.timeout）
+    default-size: 1280x720           # 默认图片尺寸（16:9 横屏）
+  quality:                             # 模块 J：图片质量评估（多模态 LLM 打分 + 低分自动重试）
+    enabled: false                     # 是否启用质量评估（关闭时生成流程完全不变）
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容多模态端点
+    api-key: ${DASHSCOPE_API_KEY:}     # 多模态 API Key（留空时降级为规则评估：分辨率启发式）
+    model: qwen-vl-max                 # 多模态评估模型
+    threshold: 6.0                     # 及格阈值（0-10），低于该分自动重新生成
+    max-retries: 2                     # 低分图片最大重试次数（始终保留得分最高的一张）
+
+# Agent 工具配置（Phase 3）
+agent:
+  tools:
+    self-base-url: http://localhost:8080  # 本服务访问基址：evaluateImage 工具仅接受存储相对路径（/images/…），
+                                          # 解析为同源绝对 URL（SSRF 防护）；部署时按实际对外地址修改
+
+# 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
+video:
+  # FFmpeg / ffprobe 可执行文件位置。默认裸名走系统 PATH（release 审查 M10：可移植）；
+  # 不在 PATH 时用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定绝对路径。
+  # xfade 转场需要 FFmpeg ≥ 4.3，EVCapture 等软件自带的旧版（≈4.2）不含 xfade，不可用。
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+  ffprobe-path: ${FFPROBE_PATH:ffprobe}
+  # 运行 edge-tts 的 Python 解释器。默认裸名走 PATH；Windows 注意避开微软商店的
+  # "应用执行别名"桩（返回退出码 49），必要时用环境变量 PYTHON_CMD 指定真实解释器绝对路径
+  python-command: ${PYTHON_CMD:python}
+  compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
+  watermark:                        # 模块 I：品牌水印
+    logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
+  subtitle:                          # 模块 F：字幕烧录
+    font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN / Noto Sans CJK SC）
+
+# 背景音乐库配置（模块 D：BGM）
+bgm:
+  library-path: ./data/bgm          # 内置音乐库目录；文件名格式 category__name.mp3（如 happy__sunny_morning.mp3），
+                                    # 分类: happy / sad / epic / calm / tense，启动时自动扫描注册
+                                    # 用户上传的音乐保存在该目录的 uploads/ 子目录下
 
 # 存储配置（图像生成后的文件存储方式）
 storage:

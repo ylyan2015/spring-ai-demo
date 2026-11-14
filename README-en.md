@@ -1,10 +1,10 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, Docker one-click deployment, and more.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, **AI Short Video Studio** (idea → storyboard → parallel image generation → BGM → FFmpeg compose with multi-ratio export), Docker one-click deployment, and more.
 
 ## Project Overview
 
-This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, AI image generation with multi-storage management, ensuring data privacy and security.
+This project demonstrates how to integrate the Spring AI framework into a Spring Boot application, with flexible switching between different AI model providers, including locally deployed Ollama models and online API services (OpenAI, DeepSeek, etc.). It also provides a complete user authentication system, RAG knowledge base with document upload and context augmentation, AI image generation with multi-storage management, and an end-to-end AI short video production pipeline, ensuring data privacy and security.
 
 ### ✨ Core Features
 
@@ -24,12 +24,19 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **RESTful API** - Provides complete REST API interfaces
 - ✅ **Web Interface** - Beautiful chat interface with session list, real-time conversation, Markdown rendering
 - ✅ **Model Switching** - Directly switch between offline mode and online expert mode in the web interface
-- ✅ **Spring Boot Actuator** - Built-in health checks, metrics monitoring, and operational endpoints
+- ✅ **Spring Boot Actuator** - Built-in health checks and operational endpoints (only health/info exposed after security hardening)
 - ✅ **Docker One-Click Deployment** - Multi-stage image build + docker-compose orchestration for app and middleware, ready out of the box
 - ✅ **AI Response Notification** - Desktop notification + sound + page title badge, never miss a reply when switching tabs
 - ✅ **AI Image Generation** - Integrated with Alibaba Cloud Bailian Tongyi Wanxiang model (wan2.6-t2i), generate high-quality images from prompts
 - ✅ **Multi-Storage Support** - Unified storage abstraction layer, supports local storage / Alibaba Cloud OSS / MinIO / FastDFS with one-click switching
 - ✅ **Image Generation Records** - Generation records persisted in database, associated with users and chat sessions, supports history query
+- ✅ **AI Short Video Studio** - Idea → LLM-generated storyboard (editable/drag-sortable) → LLM prompt enhancement (8 visual styles) → parallel image generation (SSE real-time progress) → 480p quick preview / 720p/1080p HD export
+- ✅ **Multi-Ratio Video Export** - 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview with watermark, formal exports without, export history traceable
+- ✅ **One-Click Social Media Export** - Six platform presets (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts: ratio + resolution + recommended-duration check), cover frame extraction, brand logo corner badge, batch three-platform export + ZIP package download
+- ✅ **BGM Scoring** - Built-in music library (categorized by mood, 5 pre-generated royalty-free tracks) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
+- ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position); multilingual subtitles (Chinese / English / bilingual, LLM translation)
+- ✅ **Video Template System** - 8 built-in style templates (product showcase / storytelling / knowledge / travel / food / emotional quotes / tech / fitness), one-click apply to generate styled scripts, save custom templates
+- ✅ **Multiple Image Generation Backends** - DashScope Tongyi Wanxiang (cloud) and local Stable Diffusion / FLUX (SD WebUI protocol) switching via config, with automatic retry on failure
 
 ## Technology Stack
 
@@ -43,6 +50,8 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - **H2 Database** - Lightweight embedded database (development mode)
 - **AI Models**: Ollama / OpenAI / DeepSeek (switchable)
 - **DashScope Tongyi Wanxiang** - AI image generation engine (wan2.6-t2i)
+- **FFmpeg** - Video composition engine (Ken Burns effect + xfade transitions + BGM mixing + multi-ratio cropping)
+- **Edge TTS** - Narration voiceover (Python CLI, optional; automatically skipped when not installed)
 - **Apache Tika** - Document parsing (RAG: supports TXT/PDF/MD and more)
 - **RSA + BCrypt** - Password encryption scheme
 - **Lombok** - Code simplification
@@ -69,7 +78,9 @@ Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other 
    - **OpenAI API Key** - Register at OpenAI
    - **DeepSeek API Key** - Register at DeepSeek
 4. **(Optional) DashScope API Key** - For image generation, register at Alibaba Cloud Bailian Platform
-5. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
+5. **(Optional) FFmpeg >= 4.3** - For video composition/export in the AI Short Video Studio (including ffprobe). Defaults to bare names on the system PATH; override with `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars; xfade transitions need >= 4.3, BGM mixing needs >= 4.4
+6. **(Optional) Edge TTS** - For short video narration: `pip install edge-tts` (automatically skipped when not installed); the Python interpreter is specified by `video.python-command` (overridable with the `PYTHON_CMD` env var)
+7. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
 ## Quick Start
 
@@ -175,10 +186,10 @@ http://localhost:8080
 
 #### Registration & Login
 
-1. **Register**: Enter username, password (uppercase + lowercase + digits, 6-50 chars), confirm password, and 5-char captcha
-2. **Login**: Enter username, password, and captcha
+1. **Register**: Enter username, password (uppercase + lowercase + digits, 6-50 chars), confirm password, and the 4-char image captcha
+2. **Login**: Enter username, password, and the image captcha
 
-> **Security Note**: Passwords are RSA-encrypted before transmission (RSA-OAEP + SHA-256). Server stores BCrypt hashes.
+> **Security Note**: Passwords are RSA-encrypted before transmission (RSA-OAEP + SHA-256). Server stores BCrypt hashes. The captcha answer is stored only in the session and never returned by the API; login is rate-limited to 5 failures per username+IP within 60 seconds (429 when exceeded); the session ID is rotated on successful login (session-fixation protection).
 
 #### Chat Features
 
@@ -199,6 +210,27 @@ http://localhost:8080
 - 📋 **Document List** - View uploaded documents and chunk counts
 - 🗑️ **Document Delete** - Remove documents and their vectors
 - 🔀 **Context Toggle** - Enable/disable RAG context injection
+
+#### AI Short Video Studio
+
+Visit http://localhost:8080/video-studio to use it (login required):
+
+Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Image Generation (SSE real-time progress) → Quick Preview / BGM Scoring / Multi-Ratio HD Export**
+
+- 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting; optional video templates (8 built-in styles + custom) generate styled scripts in one click, scripts can be saved as templates
+- 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort
+- 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
+- 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX (local models auto-apply SD1.5/SDXL/FLUX style presets); SSE real-time progress bar, automatic retry, per-shot regeneration
+- ✅ **Image Quality Evaluation** (optional) - Multimodal LLM scores clarity/relevance/aesthetics (0-10); low-scoring images are automatically regenerated (<=2 retries, best score kept); falls back to rule-based evaluation without a multimodal API; quality badge shown on shot cards (enable via `image.quality.enabled`, off by default)
+- 🤖 **Agent Toolification** (Phase 3 slice 1) - Six core capabilities (storyboard generation / prompt enhancement / image generation / quality evaluation / video export / BGM recommendation) wrapped as Spring AI tools (FunctionToolCallback), with a tool-list introspection endpoint, laying the foundation for director-agent orchestration
+- 🎬 **AI Director Chat** (Phase 3 slice 2) - ChatClient with the six tools mounted performs automatic ReAct orchestration (think → call tool → observe → continue); a built-in chat panel on the studio page; video export is protected by a human confirmation gate (frontend confirm button / explicit `confirmedTools` in the request); conversation history is isolated in memory per user + session (max 20 messages, cleared on restart)
+- 🎭 **Multi-Agent Orchestration** (Phase 3 slice 3) - Four specialist agents (screenwriter / artist / audio / editor, each with its own system prompt + tool subset) delegated to the director as "specialist-as-tool"; a "one-click pipeline" runs asynchronous orchestration (submit → poll → confirm to resume) on a dedicated thread pool with explicit SecurityContext propagation; tasks are in-memory (max 100) with per-user ownership checks
+- 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc., 5 pre-generated royalty-free tracks), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
+- 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); subtitle language selectable: Chinese / English / bilingual (LLM translation, narration audio stays Chinese); standalone SRT export and single-frame subtitle preview supported
+- 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
+- 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
+
+> **Note**: Video composition requires FFmpeg (defaults to bare names on the system PATH; override via `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed; interpreter via `video.python-command` / `PYTHON_CMD`); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
 
 #### 5. Test with API
 
@@ -238,36 +270,88 @@ spring-ai-demo/
 │   │   └── WebMvcConfig.java           # Web MVC config (static resource mapping for local storage)
 │   ├── controller/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
+│   │   ├── BgmController.java          # Video studio: BGM list/recommend/upload
+│   │   ├── SubtitleController.java    # Video studio: SRT export/subtitle preview
+│   │   ├── SocialMediaExportController.java # Video studio: platform export/cover frame
 │   │   ├── ChatController.java         # Chat controller (REST API + SSE)
 │   │   ├── DocumentController.java     # Knowledge base document controller
 │   │   ├── ImageController.java        # Image generation controller (REST API)
+│   │   ├── ImageGenerationController.java  # Video studio: image gen/SSE progress/generator switching
+│   │   ├── ImagePromptOptimizerController.java # Video studio: prompt enhancement
 │   │   ├── ModelController.java        # Model management (switch/param presets)
 │   │   ├── ModelService.java           # Model service (dynamic switch/presets)
 │   │   ├── PageController.java         # Page controller (Web routing)
-│   │   └── TimeZoneController.java     # Timezone controller (IP geolocation)
+│   │   ├── StoryScriptController.java  # Video studio: storyboard/shot CRUD/reorder
+│   │   ├── TimeZoneController.java     # Timezone controller (IP geolocation)
+│   │   ├── VideoExportController.java  # Video studio: preview/HD export/history/ZIP package
+│   │   ├── VideoTemplateController.java # Video studio: template list/apply/custom (module H)
+│   │   └── VideoAgentController.java   # Video studio: agent introspection / director chat / multi-agent orchestration (Phase 3 slices 1/2/3)
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
+│   │   ├── BgmService.java             # Video studio: BGM library/LLM recommend/upload
 │   │   ├── CaptchaService.java         # Captcha service
 │   │   ├── ChatService.java            # Chat service (business logic/compression)
 │   │   ├── ImageService.java           # Image generation service (DashScope API + storage)
-│   │   └── RagService.java             # RAG service (parse/vectorize/search)
+│   │   ├── ImageGenerationService.java # Video studio: parallel generation + SSE + retry + quality retry
+│   │   ├── ImagePromptOptimizerService.java # Video studio: LLM prompt enhancement
+│   │   ├── RagService.java             # RAG service (parse/vectorize/search)
+│   │   ├── StoryScriptService.java     # Video studio: script generate/edit/reorder
+│   │   ├── VideoExportService.java     # Video studio: preview/HD export/history/ZIP package
+│   │   └── VideoTemplateService.java   # Video studio: template seed/apply/custom (module H)
 │   ├── entity/
+│   │   ├── Bgm.java                    # BGM entity (video module D)
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
+│   │   ├── ImagePromptOptimizer.java   # Prompt optimization record entity (module B)
 │   │   ├── ImageRecord.java            # Image generation record entity
 │   │   ├── Message.java                # Message entity
 │   │   ├── ModelParamPreset.java       # Model parameter preset entity
 │   │   ├── RagDocument.java            # RAG document metadata entity (persistent)
-│   │   └── User.java                   # User entity
+│   │   ├── StoryScript.java / StoryShot.java # Script/shot entities (module A)
+│   │   ├── User.java                   # User entity
+│   │   ├── VideoExport.java            # Video export record entity (module C)
+│   │   └── VideoTemplate.java          # Video template entity (module H)
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # Image generation exception
 │   │   └── StorageException.java         # Storage exception
 │   └── repository/
+│       ├── BgmRepository.java          # BGM data access (module D)
 │       ├── ConversationRepository.java
+│       ├── ImagePromptOptimizerRepository.java # Prompt optimization data access (module B)
 │       ├── ImageRecordRepository.java  # Image generation record data access
 │       ├── MessageRepository.java
 │       ├── ModelParamPresetRepository.java
 │       ├── RagDocumentRepository.java
-│       └── UserRepository.java
+│       ├── StoryScriptRepository.java / StoryShotRepository.java # Script/shot data access (module A)
+│       ├── UserRepository.java
+│       ├── VideoExportRepository.java  # Export record data access (module C)
+│       └── VideoTemplateRepository.java # Video template data access (module H)
+├── src/main/java/com/github/ylyan2015/springaidemo/video/
+│   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1)
+│   ├── VisualStyle.java               # 8 visual style presets (with negative prompts)
+│   ├── PlatformPreset.java           # Social platform preset enum (six platforms)
+│   ├── ImageGenerationProgress.java   # SSE progress event
+│   ├── VideoScriptService.java        # Script generation (Phase 1)
+│   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
+│   ├── subtitle/                     # Module F: subtitle system
+│   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline + multilingual translation
+│   │   ├── SubtitleStyle.java         # Subtitle style (font/size/color/outline/position)
+│   │   └── SubtitleCue.java           # Subtitle cue (text + start/end ms)
+│   ├── quality/                      # Module J: image quality evaluation
+│   │   ├── ImageQualityService.java   # Multimodal scoring + rule fallback
+│   │   └── ImageQualityScore.java     # Score DTO (3 dimensions 0-10 + overall average)
+│   ├── agent/                        # Phase 3 slices 1/2/3: toolification + director + multi-agent orchestration
+│   │   ├── AgentToolRequests.java     # Tool input records (@ToolParam descriptions, incl. DelegateTask)
+│   │   ├── VideoAgentToolFactory.java # FunctionToolCallback wrappers over existing services
+│   │   ├── ConfirmationGateToolCallback.java # Human confirmation gate (blocks unconfirmed exportVideo)
+│   │   ├── DirectorAgentService.java  # Director agent (ChatClient + tools ReAct + session history)
+│   │   ├── SpecialistAgentFactory.java # Four specialist agents + delegateToXxx tools (slice 3)
+│   │   └── AgentOrchestrationService.java # Async orchestration (SecurityContext propagation + task registry + confirm resume)
+│   └── generator/                     # Image generation abstraction (strategy + factory)
+│       ├── ImageGenerator.java / GeneratedImage.java
+│       ├── DashScopeImageGenerator.java  # Cloud Tongyi Wanxiang
+│       ├── LocalSdImageGenerator.java   # Local SD WebUI / FLUX
+│       ├── LocalModelStylePreset.java   # SD1.5/SDXL/FLUX style presets (module G)
+│       └── ImageGeneratorFactory.java   # Config-driven + runtime switching
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # Image generation request DTO
 │   └── ImageGenerateResponse.java      # Image generation response DTO
@@ -282,6 +366,7 @@ spring-ai-demo/
 │   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown/Notifications)
 │   ├── templates/index.html            # Main chat page template
 │   ├── templates/login.html            # Login/register page template
+│   ├── templates/video-studio.html     # AI Short Video Studio frontend (complete workflow UI)
 │   ├── application.yml                 # Main configuration
 │   ├── application-h2.yml              # H2 database config
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector config
@@ -290,6 +375,7 @@ spring-ai-demo/
 │   ├── application-deepseek.yml        # DeepSeek model config
 │   └── application-docker.yml          # Docker deployment config
 ├── pom.xml                             # Maven configuration
+├── tools/generate-preset-bgm.ps1       # Preset BGM generation script (FFmpeg-synthesized royalty-free music)
 ├── Dockerfile                          # Docker multi-stage build
 ├── docker-compose.yml                  # docker-compose service orchestration
 ├── .env.example                        # API Key environment variable template
@@ -381,6 +467,62 @@ storage:
 | MinIO | `minio` | Self-hosted object storage, S3-compatible |
 | FastDFS | `fastdfs` | Legacy distributed file system |
 
+### AI Short Video Studio Configuration
+
+Configuration for the video workflow (script → images → BGM → export) is centralized in `application.yml`:
+
+```yaml
+image:
+  generator: dashscope               # Image source: dashscope (cloud) / local (local SD/FLUX)
+  local:                               # Local Stable Diffusion WebUI / ComfyUI config
+    base-url: http://127.0.0.1:7860    # Local service API address
+    model: stable-diffusion            # Local model name
+    steps: 25                          # Sampling steps
+    cfg-scale: 7.0                     # Prompt guidance (CFG)
+    timeout: 120                       # Local generation timeout (seconds)
+    style-prefix: ""                   # Style prefix override (empty = auto built-in preset by model name: SD1.5/SDXL/FLUX)
+    extra-negative-prompt: ""          # Negative prompt override (empty = auto built-in preset by model name)
+  generation:
+    parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
+    retry-attempts: 1                 # Retry attempts on failure
+    retry-delay-ms: 2000              # Retry delay (ms)
+    total-timeout-seconds: 300        # Batch generation total timeout (seconds)
+    default-size: 1280x720           # Default image size (16:9 landscape)
+  quality:                             # Module J: image quality evaluation (off by default)
+    enabled: false                     # When enabled, low-scoring images are regenerated (flow unchanged when off)
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI-compatible multimodal endpoint
+    api-key: ${DASHSCOPE_API_KEY:}     # Multimodal API key (empty = rule-based fallback)
+    model: qwen-vl-max                 # Multimodal evaluation model
+    threshold: 6.0                     # Passing threshold (0-10)
+    max-retries: 2                     # Max retries for low scores (best-scoring image kept)
+
+video:
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg executable (bare name via PATH by default; absolute path when not on PATH; >=4.3 required)
+  ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (used to probe BGM duration)
+  python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows to avoid the Microsoft Store alias stub)
+  compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
+  watermark:                        # Social export: brand watermark
+    logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended, bottom-right; empty = disabled)
+  subtitle:                          # Module F: subtitle burning
+    font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
+
+bgm:
+  library-path: ./data/bgm          # Built-in music library dir; filename format category__name.mp3
+                                    # (e.g. happy__sunny_morning.mp3), categories: happy/sad/epic/calm/tense,
+                                    # auto-scanned on startup; user uploads stored under uploads/ subdirectory
+```
+
+**Key Notes:**
+
+- **Video composition requires FFmpeg**: paths are specified by `video.ffmpeg-path` / `video.ffprobe-path` (defaults fall back to `ffmpeg`/`ffprobe` in PATH; overridable via `FFMPEG_PATH`/`FFPROBE_PATH` env vars); exports fail with a clear error when missing/misconfigured. **Version >= 4.3 required** (xfade transitions), BGM mixing needs >= 4.4 (amix normalize); old builds bundled with apps like EVCapture (~4.2) lack xfade and cannot be used
+- **Narration requires Edge TTS**: `pip install edge-tts`; the invocation command is specified by `video.python-command` (overridable via `PYTHON_CMD`; on Windows bare `python` may be hijacked by the Microsoft Store "app execution alias" stub, so an absolute interpreter path is recommended); automatically skipped when not installed (silent video)
+- **BGM music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/` for auto-registration, or upload via the frontend button
+- **Subtitles**: Timeline precisely aligned with xfade transitions; font must be installed (default Microsoft YaHei, configurable via `video.subtitle.font-name`); burning uses the FFmpeg subtitles filter (libass, included in common builds)
+- **Export ratios**: 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview is fixed 480p + watermark, formal exports 720p/1080p without watermark
+- **Platform export**: Presets automatically map to 1080p resolution; cover defaults to the middle frame of the latest successful export; the logo corner badge requires `video.watermark.logo-path` and `withLogo: true` in the export request
+- **Local model style presets**: Local generation auto-applies built-in SD1.5/SDXL/FLUX style prefixes and negative prompts based on `image.local.model` (FLUX gets no negative prompt); override via `image.local.style-prefix` / `image.local.extra-negative-prompt`; applies only to the local generator, cloud DashScope is unaffected
+- **Image quality evaluation**: With `image.quality.enabled: true`, each image is scored by a multimodal LLM (clarity/relevance/aesthetics, 0-10); scores below `threshold` trigger regeneration (<= `max-retries` attempts, feedback merged into the negative prompt, best score kept); falls back to resolution-based rule evaluation when no API key is configured or the call fails; evaluation errors never block generation; scores are returned with shot details and SSE progress, shown as a quality badge in the frontend
+
 #### RAG Storage Modes
 
 | Mode | Config Value | Use Case | Data Persistence |
@@ -445,7 +587,7 @@ spring:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/auth/public-key` | GET | Get RSA public key |
-| `/api/auth/captcha` | GET | Get 5-char random captcha |
+| `/api/auth/captcha` | GET | Get captcha image (4-char alphanumeric, answer session-only) |
 | `/api/auth/register` | POST | User registration |
 | `/api/auth/login` | POST | User login |
 | `/api/auth/logout` | POST | Logout |
@@ -457,7 +599,6 @@ spring:
 |----------|--------|-------------|
 | `/api/chat/stream` | POST | Stream message (SSE) |
 | `/api/chat/send` | POST | Send message (non-streaming) |
-| `/api/chat/send` | GET | Send message (legacy) |
 | `/api/chat/conversation` | POST | Create new session |
 | `/api/chat/conversations` | GET | Get all sessions |
 | `/api/chat/history/{sessionId}` | GET | Get conversation history |
@@ -479,7 +620,7 @@ spring:
 |----------|--------|-------------|
 | `/api/model/current` | GET | Get current model |
 | `/api/model/available` | GET | Get available models |
-| `/api/model/switch` | POST | Switch model |
+| `/api/model/switch` | POST | Switch model (login required) |
 | `/api/model/params` | GET | Get all param presets |
 | `/api/model/params/{modelKey}` | GET | Get param preset for model |
 | `/api/model/params/{modelKey}` | POST | Save/update param preset |
@@ -497,6 +638,44 @@ spring:
 | `/api/image/generate` | POST | Generate image (Tongyi Wanxiang wan2.6-t2i + auto storage) |
 | `/api/image/records` | GET | Get all image generation records for current user |
 | `/api/image/records/{sessionId}` | GET | Get image generation records for a session |
+
+### AI Short Video Studio Endpoints (Login Required)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/video/scripts/generate` | POST | Generate storyboard from a creative idea and persist it |
+| `/api/video/scripts` | GET/POST | Script list / save script |
+| `/api/video/scripts/{id}` | GET/PUT/DELETE | Script detail (with shots) / rename / delete |
+| `/api/video/scripts/{id}/shots` | PUT/POST | Batch update shots / add shot |
+| `/api/video/scripts/{id}/shots/{shotId}` | PUT/DELETE | Update shot / delete shot |
+| `/api/video/scripts/{id}/shots/reorder` | PUT | Drag-sort shots |
+| `/api/video/enhance-prompt` | POST | Single prompt LLM enhancement (8 styles) |
+| `/api/video/enhance-prompt/script/{scriptId}` | POST | Batch enhance all shots' prompts |
+| `/api/video/enhance-prompt/styles` | GET | Visual style list |
+| `/api/video/enhance-prompt/history` | GET | Prompt enhancement history |
+| `/api/video/images/shot/{scriptId}/{shotId}` | POST | Generate image for a single shot |
+| `/api/video/images/script/{scriptId}/stream` | GET | SSE batch parallel generation (real-time progress) |
+| `/api/video/images/generators` | GET | Available image generators (with availability) |
+| `/api/video/images/generator` | PUT | Switch image generator at runtime |
+| `/api/video/export/preview` | POST | 480p quick preview (watermarked, crf 28, optional BGM/subtitles) |
+| `/api/video/export/hd` | POST | HD export (720p/1080p × 16:9/9:16/1:1, optional BGM/subtitle burning/logo) |
+| `/api/video/exports/{scriptId}` | GET | Export history (with failure reasons and covers) |
+| `/api/video/bgm` | GET | BGM list (built-in + user uploads) |
+| `/api/video/bgm/recommend?theme=` | GET | LLM smart BGM recommendation by theme |
+| `/api/video/bgm/upload` | POST | Upload custom BGM (multipart) |
+| `/api/video/subtitle/generate` | POST | Generate SRT subtitle file (timeline aligned with transitions) |
+| `/api/video/subtitle/preview` | POST | Render a single-frame subtitle preview image (optional style override) |
+| `/api/video/export/platforms` | GET | Social platform preset list (six-platform specs) |
+| `/api/video/export/platform` | POST | One-click export by platform preset (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts) |
+| `/api/video/cover/generate` | POST | Extract cover frame from exported video (middle frame by default, configurable time/export record) |
+| `/api/video/agent/tools` | GET | Agent tool list (name/description/input schema, Phase 3 slice 1) |
+| `/api/video/agent/chat` | POST | AI director chat (ReAct tool orchestration; exportVideo requires confirmedTools, Phase 3 slice 2) |
+| `/api/video/agent/chat/{sessionId}` | DELETE | Clear director conversation history (Phase 3 slice 2) |
+| `/api/video/agent/orchestrate` | POST | One-click pipeline: submit a multi-agent async orchestration task (Phase 3 slice 3) |
+| `/api/video/agent/orchestrate/{taskId}` | GET | Query orchestration task status (polling, Phase 3 slice 3) |
+| `/api/video/agent/orchestrate/{taskId}/confirm` | POST | Confirm to resume: pass the exportVideo gate (Phase 3 slice 3) |
+
+> Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)
 
 **For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
@@ -532,16 +711,17 @@ spring:
 
 | Service | Image | Description |
 |---------|-------|-------------|
-| `app` | Local build (Dockerfile) | Spring AI app, multi-stage build, JRE 17 Alpine runtime |
+| `app` | Local build (Dockerfile) | Spring AI app, multi-stage build, JRE 17 Alpine runtime; the image bundles FFmpeg, Python+edge-tts (venv), Noto CJK fonts and preset BGM — full video studio features work out of the box |
 | `postgres` | `pgvector/pgvector:pg16` | PostgreSQL + pgvector extension, RAG vector persistence |
 | `ollama` | `ollama/ollama` | Local AI model service, optionally enabled |
 
 Services communicate over the internal `ai-net` network. The app accesses middleware via service names (`postgres:5432`, `ollama:11434`).
 
 - **Health Check**: postgres has a `pg_isready` health check; app waits for database readiness before starting
-- **Data Persistence**: Named volumes `pgdata` and `ollama-data` ensure data survives restarts
+- **Data Persistence**: Named volumes `pgdata`, `ollama-data`, `appdata` (preset BGM/runtime data) and `uploads` (generated files) ensure data survives container rebuilds
 - **Profile Control**: ollama service uses `profiles: [ollama]`, not started by default — requires `--profile ollama` to explicitly enable
 - **Secure Runtime**: App runs as non-root user `appuser` inside the container
+- **Video Studio Dependencies**: The image ships FFmpeg (>=6.x with xfade/libass) and edge-tts; compose injects `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD` automatically; the docker profile switches the subtitle font to `Noto Sans CJK SC`; set `DASHSCOPE_API_KEY` in `.env` (image generation / quality evaluation) and a strong `POSTGRES_PASSWORD` (required, no hardcoded default)
 
 ## FAQ
 
@@ -590,6 +770,40 @@ Local images are accessible via the `/images/**` static resource mapping.
 ### 10. How to View Image Generation History?
 - API: `GET /api/image/records` to get all records for the current user
 - Database: `SELECT * FROM image_records WHERE user_id = ? ORDER BY create_time DESC`
+
+### 11. How to Add Built-in BGM to the Video Studio?
+
+Place royalty-free music files named `category__name.mp3` into the `./data/bgm/` directory
+(e.g. `happy__sunny_morning.mp3`). Supported categories: `happy` / `sad` / `epic` / `calm` / `tense`.
+They are auto-registered on startup. You can also click the "Upload" button in the Video Studio page
+to add custom BGM (mp3/wav/ogg/m4a/flac supported).
+
+### 12. Video Export Fails with FFmpeg Errors?
+
+- Verify the executables pointed to by `video.ffmpeg-path` / `video.ffprobe-path` exist and run (defaults fall back to PATH): `ffmpeg -version`
+- **Version >= 4.3 required** (xfade transition filter); BGM mixing needs >= 4.4 (the `amix normalize` option). Old 4.2 builds bundled with apps like EVCapture lack xfade — install a recent build (e.g. BtbN win64-gpl) and update the configured paths
+- Multi-shot composition is slow by nature (1080p may take minutes); the timeout is controlled by `video.compose-timeout-minutes` (default 8)
+- If narration fails, check that the interpreter pointed to by `video.python-command` has edge-tts installed (`python -m edge_tts --version`); on Windows bare `python` may be hijacked by the Microsoft Store alias stub (exit code 49) — use an absolute path
+
+### 13. How to Use Local Stable Diffusion / FLUX for Video Frames?
+
+1. Start a local SD WebUI (or OllamaDiffuser-compatible service) and verify it responds at `http://127.0.0.1:7860` (ComfyUI requires an SD WebUI compatibility layer/proxy; the native workflow protocol is not yet supported)
+2. Set `image.generator: local` in config, or switch at runtime via the frontend "Image Generator" dropdown
+3. Local generation natively supports negative prompts and auto-applies style presets by model name (SD1.5/SDXL/FLUX), giving more controllable styles with zero API cost; customize via `image.local.style-prefix` / `image.local.extra-negative-prompt`
+
+### 14. Garbled Text or Wrong Font After Subtitle Burning?
+
+- Subtitles default to Microsoft YaHei, which must be installed on the system; on Linux/Docker switch to an installed CJK font:
+  `video.subtitle.font-name: Source Han Sans CN` (or Noto Sans CJK SC)
+- Burning uses the FFmpeg subtitles filter (libass), included in common distribution builds; if libass is missing, install a full FFmpeg build
+- You can also customize font/size/color/outline/position via the `style` field of `POST /api/video/subtitle/preview` and preview the result
+
+### 15. How to Enable the Brand Logo Corner Badge and Cover Images?
+
+- **Logo**: Place a transparent PNG (width <=300px recommended) at a local path and set `video.watermark.logo-path: D:/assets/logo.png`,
+  then check "Logo" in the frontend or send `"withLogo": true` in the export request; it is silently skipped when unconfigured
+- **Cover**: After a successful export, click "Cover" (result area or export history) to extract a frame; the middle frame is used by default,
+  or call `POST /api/video/cover/generate` with `timeOffset` (seconds) and `exportId` to specify; the cover URL is written back to the export record
 
 ## References
 

@@ -74,7 +74,8 @@ public class ImageService {
      * @param request 图像生成请求
      * @return 图像生成响应
      */
-    @Transactional
+    // 注意：不加 @Transactional——方法内含 60s 级外部 API/下载，长事务会占死连接池
+    // （release 审查 M9）；末尾单次 repository.save 自带独立事务
     public ImageGenerateResponse generateImage(ImageGenerateRequest request) {
         Long userId = getCurrentUserId();
 
@@ -132,16 +133,14 @@ public class ImageService {
         try {
             String fileId = downloadAndStore(imageUrl, fileName, "image/" + ext);
 
-            // 获取文件大小
+            // 获取文件大小（try-with-resources 防 read 异常时句柄泄漏，release 审查 Minor#6）
             long fileSize = 0;
-            try {
-                InputStream sizeStream = storageService.download(fileId);
+            try (InputStream sizeStream = storageService.download(fileId)) {
                 byte[] buf = new byte[8192];
                 int read;
                 while ((read = sizeStream.read(buf)) != -1) {
                     fileSize += read;
                 }
-                sizeStream.close();
             } catch (Exception e) {
                 log.warn("无法获取文件大小: {}", e.getMessage());
             }

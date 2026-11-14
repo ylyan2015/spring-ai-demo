@@ -11,8 +11,9 @@ spring:
   jpa:
     database-platform: org.hibernate.dialect.H2Dialect
   
-  # H2 Console (访问 http://localhost:8080/h2-console)
+  # H2 Console 默认关闭：sa 空密码 + console 暴露 = 未授权 RCE（release 审查 C3）
+  # 本地调试确需时手动改为 true，切勿在生产开启
   h2:
     console:
-      enabled: true
+      enabled: false
       path: /h2-console

@@ -8,8 +8,9 @@ target/
 # Documentation
 *.md
 
-# Data files
-data/
+# Data files（预置 BGM 素材需入镜像，其余运行数据排除）
+data/*
+!data/bgm/
 
 # Git
 .git/

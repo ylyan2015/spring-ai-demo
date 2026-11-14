@@ -7,6 +7,7 @@
 > **最后更新**：2026-11-14（Phase 2 全部完成：S1 补齐 + 模块 H 模板 + G 收尾本地模型风格预设 + J 图片质量评估；仅剩 Phase 3 Agent 化）
 > **2026-11-14 FFmpeg 落地**：本机安装 `D:/Program Files/ffmpeg`（≥4.3，含 xfade/libass/libx264），可执行文件路径改为 `video.ffmpeg-path` / `video.ffprobe-path` 配置项。同时修复 `VideoComposeService` 三处只有真跑 FFmpeg 才会暴露的缺陷：xfade 输出标签被写在滤镜名之前（解析成第三个输入）、zoompan 的 z 表达式误用不存在的 `t` 变量（应为 `on` 帧号）、多镜头命令缺 `-t` 导致 `-loop 1` 无限输入永不收尾。回归测试见 `VideoComposeFfmpegTest`。
 > **2026-11-14 旁白配音打通**：本机已有 Python 3.14.6（无需重装），补装 edge-tts 7.3.1；`video.python-command` 指向解释器绝对路径后，edge-tts 合成 → apad 补静音拼接 → 音画合并全链路跑通，产物含 aac 音轨。联网用例默认跳过，`-Dtts=true` 执行。
+> **2026-11-14 S5 部署加固**：Docker 镜像补齐短视频运行依赖——Dockerfile 加装 ffmpeg/python3+edge-tts（venv）/font-noto-cjk，预置 BGM 入镜像（.dockerignore 放行 data/bgm/）；compose 补 DASHSCOPE_API_KEY 与 FFMPEG_PATH/FFPROBE_PATH/PYTHON_CMD 注入、appdata/uploads 命名卷；docker profile 字幕字体自动切 Noto Sans CJK SC。本机无 Docker，镜像构建验证待有 Docker 的环境执行。
 
 ---
 

@@ -697,16 +697,17 @@ spring:
 
 | Service | Image | Description |
 |---------|-------|-------------|
-| `app` | Local build (Dockerfile) | Spring AI app, multi-stage build, JRE 17 Alpine runtime |
+| `app` | Local build (Dockerfile) | Spring AI app, multi-stage build, JRE 17 Alpine runtime; the image bundles FFmpeg, Python+edge-tts (venv), Noto CJK fonts and preset BGM — full video studio features work out of the box |
 | `postgres` | `pgvector/pgvector:pg16` | PostgreSQL + pgvector extension, RAG vector persistence |
 | `ollama` | `ollama/ollama` | Local AI model service, optionally enabled |
 
 Services communicate over the internal `ai-net` network. The app accesses middleware via service names (`postgres:5432`, `ollama:11434`).
 
 - **Health Check**: postgres has a `pg_isready` health check; app waits for database readiness before starting
-- **Data Persistence**: Named volumes `pgdata` and `ollama-data` ensure data survives restarts
+- **Data Persistence**: Named volumes `pgdata`, `ollama-data`, `appdata` (preset BGM/runtime data) and `uploads` (generated files) ensure data survives container rebuilds
 - **Profile Control**: ollama service uses `profiles: [ollama]`, not started by default — requires `--profile ollama` to explicitly enable
 - **Secure Runtime**: App runs as non-root user `appuser` inside the container
+- **Video Studio Dependencies**: The image ships FFmpeg (>=6.x with xfade/libass) and edge-tts; compose injects `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD` automatically; the docker profile switches the subtitle font to `Noto Sans CJK SC`; set `DASHSCOPE_API_KEY` in `.env` (image generation / quality evaluation)
 
 ## FAQ
 

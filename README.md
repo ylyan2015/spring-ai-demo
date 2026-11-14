@@ -833,16 +833,17 @@ spring:
 
 | 服务 | 镜像 | 说明 |
 |------|------|------|
-| `app` | 本地构建 (Dockerfile) | Spring AI 应用，多阶段构建，JRE 17 Alpine 运行时 |
+| `app` | 本地构建 (Dockerfile) | Spring AI 应用，多阶段构建，JRE 17 Alpine 运行时；镜像内置 FFmpeg、Python+edge-tts（venv）、Noto CJK 字体与预置 BGM，短视频全功能开箱即用 |
 | `postgres` | `pgvector/pgvector:pg16` | PostgreSQL + pgvector 扩展，RAG 向量持久化 |
 | `ollama` | `ollama/ollama` | 本地 AI 模型服务，可选启用 |
 
 服务之间通过内部网络 `ai-net` 通信，应用通过服务名访问中间件（`postgres:5432`、`ollama:11434`）。
 
 - **健康检查**：postgres 配置了 `pg_isready` 健康检查，app 等待数据库就绪后才启动
-- **数据持久化**：`pgdata` 和 `ollama-data` 命名卷保证重启不丢数据
+- **数据持久化**：`pgdata`、`ollama-data`、`appdata`（预置 BGM/运行数据）、`uploads`（生成文件）命名卷保证容器重建不丢数据
 - **Profile 控制**：ollama 服务使用 `profiles: [ollama]`，默认不启动，需 `--profile ollama` 显式启用
 - **安全运行**：容器以非 root 用户 `appuser` 运行应用
+- **短视频依赖**：镜像已装 FFmpeg（≥6.x，含 xfade/libass）与 edge-tts，compose 自动注入 `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD`；字幕字体由 docker profile 自动切为 `Noto Sans CJK SC`；`.env` 需配置 `DASHSCOPE_API_KEY`（图像生成/质量评估）
 
 ## 常见问题
 

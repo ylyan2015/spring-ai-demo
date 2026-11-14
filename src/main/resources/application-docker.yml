@@ -25,3 +25,8 @@ rag:
   pgvector:
     dimensions: 768
     initialize-schema: true
+
+# Docker 镜像内无微软雅黑，字幕烧录改用镜像已装的 Noto CJK 字体（font-noto-cjk）
+video:
+  subtitle:
+    font-name: Noto Sans CJK SC

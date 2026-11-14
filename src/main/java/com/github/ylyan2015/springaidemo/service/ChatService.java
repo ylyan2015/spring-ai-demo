@@ -15,6 +15,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -34,6 +35,7 @@ public class ChatService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final RagService ragService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 最大上下文消息数量（保留最近N轮对话）
@@ -46,12 +48,14 @@ public class ChatService {
                       ConversationRepository conversationRepository,
                       MessageRepository messageRepository,
                       UserRepository userRepository,
-                      RagService ragService) {
+                      RagService ragService,
+                      TransactionTemplate transactionTemplate) {
         this.modelService = modelService;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.userRepository = userRepository;
         this.ragService = ragService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -90,6 +94,19 @@ public class ChatService {
     }
 
     /**
+     * 校验会话归属（release 审查 M3：防跨用户 IDOR），返回归属当前用户的会话
+     */
+    private Conversation requireOwnedConversation(String sessionId) {
+        Long userId = getCurrentUserId();
+        Conversation conv = conversationRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new RuntimeException("会话不存在"));
+        if (!conv.getUserId().equals(userId)) {
+            throw new RuntimeException("无权操作该会话");
+        }
+        return conv;
+    }
+
+    /**
      * 流式发送消息并获取回复（SSE Streaming）
      * 先保存用户消息和构建上下文，然后以流式方式返回AI回复。
      * 流完成后由调用方负责保存完整的AI回复。
@@ -98,14 +115,14 @@ public class ChatService {
      * @param userMessage 用户消息
      * @return 流式AI回复片段
      */
-    @Transactional
+    // 不加 @Transactional：内含 LLM 流式调用，长事务占死连接池（release 审查 M9）；各 save 自带独立事务
     public StreamResponse streamMessage(String sessionId, String userMessage, boolean ragEnabled) {
         // 1. 如果会话ID为空，创建新会话
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = createConversation();
         }
 
-        // 2. 验证/创建会话
+        // 2. 验证/创建会话（已存在的会话必须归属当前用户，release 审查 M3）
         final String finalSessionId = sessionId;
         Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
                 .orElseGet(() -> {
@@ -113,6 +130,9 @@ public class ChatService {
                     Conversation newConv = new Conversation(finalSessionId, uid);
                     return conversationRepository.save(newConv);
                 });
+        if (!conversation.getUserId().equals(getCurrentUserId())) {
+            throw new RuntimeException("无权操作该会话");
+        }
 
         // 3. 保存用户消息
         int messageOrder = (int) messageRepository.countBySessionId(finalSessionId);
@@ -218,14 +238,21 @@ public class ChatService {
      * @param userMessage 用户消息
      * @return AI回复
      */
-    @Transactional
+    // 不加 @Transactional：内含同步 LLM 调用（release 审查 M9）
     public String sendMessage(String sessionId, String userMessage, boolean ragEnabled) {
+        return sendMessageWithSession(sessionId, userMessage, ragEnabled).getResponse();
+    }
+
+    /**
+     * 发送消息并返回真实 sessionId + 回复（release 审查 Minor#7：新建会话时不再返回 auto-generated）
+     */
+    public SendResult sendMessageWithSession(String sessionId, String userMessage, boolean ragEnabled) {
         // 1. 如果会话ID为空，创建新会话
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = createConversation();
         }
 
-        // 2. 验证会话是否存在（使用final变量以在lambda中使用）
+        // 2. 验证会话是否存在（已存在的会话必须归属当前用户，release 审查 M3）
         final String finalSessionId = sessionId;
         Conversation conversation = conversationRepository.findBySessionId(finalSessionId)
                 .orElseGet(() -> {
@@ -233,6 +260,9 @@ public class ChatService {
                     Conversation newConv = new Conversation(finalSessionId, uid);
                     return conversationRepository.save(newConv);
                 });
+        if (!conversation.getUserId().equals(getCurrentUserId())) {
+            throw new RuntimeException("无权操作该会话");
+        }
 
         // 3. 保存用户消息
         int messageOrder = (int) messageRepository.countBySessionId(finalSessionId);
@@ -300,13 +330,28 @@ public class ChatService {
             conversationRepository.save(conversation);
         }
 
-        return aiResponse;
+        return new SendResult(finalSessionId, aiResponse);
+    }
+
+    /** 非流式发送结果：真实会话ID + AI回复 */
+    public static class SendResult {
+        private final String sessionId;
+        private final String response;
+
+        public SendResult(String sessionId, String response) {
+            this.sessionId = sessionId;
+            this.response = response;
+        }
+
+        public String getSessionId() { return sessionId; }
+        public String getResponse() { return response; }
     }
 
     /**
-     * 获取会话上下文使用率（百分比）
+     * 获取会话上下文使用率（百分比，带归属校验）
      */
     public int getContextUsagePercent(String sessionId) {
+        requireOwnedConversation(sessionId);
         int totalMessages = (int) messageRepository.countBySessionId(sessionId);
         int maxMessages = maxContextMessages * 2;
         return Math.min(100, (int) ((double) totalMessages / maxMessages * 100));
@@ -316,7 +361,8 @@ public class ChatService {
      * 压缩上下文：用AI将较早的对话总结为一条系统消息，然后删除原始旧消息
      * 压缩后上下文使用率大幅降低，同时保留关键信息
      */
-    @Transactional
+    // 不加 @Transactional：内含 LLM 总结调用（release 审查 M9）；
+    // 删除/摘要/重编号的破坏性多写序列由 TransactionTemplate 包成单事务（release 复审 M-1）
     public String compressContext(String sessionId) {
         // 1. 验证会话归属
         Long userId = getCurrentUserId();
@@ -361,21 +407,21 @@ public class ChatService {
             throw new RuntimeException("AI总结失败: " + e.getMessage(), e);
         }
 
-        // 5. 删除旧消息
-        for (Message msg : oldMessages) {
-            messageRepository.delete(msg);
-        }
-
-        // 6. 插入一条 system 摘要消息（order=0），并将剩余消息的 order 重新编号
+        // 5-6. 删除旧消息 + 插入摘要 + 重编号：同一事务内执行，中途失败整体回滚，
+        // 避免已删消息无法恢复而摘要未写入（release 复审 M-1）
         Message summaryMsg = new Message(sessionId, "system",
                 "[对话历史摘要] " + summary, 0);
-        messageRepository.save(summaryMsg);
-
-        int order = 1;
-        for (Message msg : recentMessages) {
-            msg.setMessageOrder(order++);
-            messageRepository.save(msg);
-        }
+        transactionTemplate.executeWithoutResult(tx -> {
+            for (Message msg : oldMessages) {
+                messageRepository.delete(msg);
+            }
+            messageRepository.save(summaryMsg);
+            int order = 1;
+            for (Message msg : recentMessages) {
+                msg.setMessageOrder(order++);
+                messageRepository.save(msg);
+            }
+        });
 
         System.out.println("✓ 上下文已压缩: 删除 " + oldMessages.size() + " 条旧消息，生成摘要");
         return "上下文已压缩，" + oldMessages.size() + " 条旧消息已总结为摘要";
@@ -388,6 +434,7 @@ public class ChatService {
      * @return 消息列表
      */
     public List<Message> getConversationHistory(String sessionId) {
+        requireOwnedConversation(sessionId);
         return messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
     }
 
@@ -398,7 +445,7 @@ public class ChatService {
      * @return 会话实体
      */
     public Conversation getConversation(String sessionId) {
-        return conversationRepository.findBySessionId(sessionId).orElse(null);
+        return requireOwnedConversation(sessionId);
     }
 
     /**
@@ -427,6 +474,7 @@ public class ChatService {
      * @return 最后一条assistant消息，没有则返回null
      */
     public Message getLatestAssistantMessage(String sessionId) {
+        requireOwnedConversation(sessionId);
         List<Message> messages = messageRepository.findBySessionIdOrderByMessageOrderAsc(sessionId);
         for (int i = messages.size() - 1; i >= 0; i--) {
             if ("assistant".equalsIgnoreCase(messages.get(i).getRole())) {

@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
@@ -80,6 +82,12 @@ public class ImageGenerationController {
             @PathVariable Long scriptId,
             @RequestParam(required = false) String style) {
 
+        // 入口登录校验（release 审查 M4/M5）：EventSource 仅支持 GET 保持 GET，
+        // 但匿名请求直接拒绝，避免跨站 <img>/EventSource 触发批量生图
+        if (!isLoggedIn()) {
+            return Flux.just(ServerSentEvent.<String>builder()
+                    .event("ERROR").data("用户未登录").build());
+        }
         log.info("Starting batch image generation with SSE progress: scriptId={}, style='{}'", scriptId, style);
         return imageGenerationService.generateForScriptStream(scriptId, style);
     }
@@ -98,13 +106,18 @@ public class ImageGenerationController {
     }
 
     /**
-     * 运行时切换图像生成器
+     * 运行时切换图像生成器（全局开关，需登录，release 审查 M5：防匿名 DoS 全体用户）
      *
      * @param type 生成器类型（dashscope / local）
      */
     @PutMapping("/generator")
     public ResponseEntity<Map<String, Object>> switchGenerator(@RequestParam String type) {
         Map<String, Object> result = new LinkedHashMap<>();
+        if (!isLoggedIn()) {
+            result.put("success", false);
+            result.put("message", "用户未登录");
+            return ResponseEntity.status(401).body(result);
+        }
         try {
             imageGenerationService.switchGenerator(type);
             result.put("success", true);
@@ -118,6 +131,12 @@ public class ImageGenerationController {
     }
 
     // ==================== 数据转换方法 ====================
+
+    /** 当前请求是否已登录（服务层另有 userId 归属校验，此处仅拦匿名） */
+    private boolean isLoggedIn() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.isAuthenticated() && !"anonymousUser".equals(auth.getName());
+    }
 
     /**
      * 将 StoryShot 实体转换为 Map

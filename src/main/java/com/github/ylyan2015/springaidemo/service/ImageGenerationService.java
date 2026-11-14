@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -233,6 +234,9 @@ public class ImageGenerationService {
         int total = shots.size();
         AtomicInteger completed = new AtomicInteger(0);
         AtomicInteger failed = new AtomicInteger(0);
+        // 批次取消标志：cancel(true) 不会中断运行中任务，迟到完成的任务据此丢弃结果，
+        // 避免把超时已置的 FAILED 覆盖回 READY / 计数失真（release 复审 m-2）
+        AtomicBoolean cancelled = new AtomicBoolean(false);
 
         // 推送开始事件
         ImageGenerationProgress start = ImageGenerationProgress.of("START",
@@ -257,19 +261,31 @@ public class ImageGenerationService {
                 SecurityContextHolder.setContext(securityContext);
                 try {
                     generateShotWithProgress(shot, scriptId, visualStyle, total,
-                            completed, failed, progressCallback);
+                            completed, failed, cancelled, progressCallback);
                 } finally {
                     SecurityContextHolder.clearContext();
                 }
             }, generationExecutor));
         }
 
-        // 等待所有任务完成（带总超时）
+        // 等待所有任务完成（带总超时）；超时后取消未完成任务并把仍在 GENERATING 的镜头置为 FAILED，
+        // 避免后台继续跑导致 COMPLETE 计数失真/镜头状态永久卡在生成中（release 审查 Minor#10）
         try {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                     .get(totalTimeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.error("Batch generation timeout after {}s, cancelling remaining tasks", totalTimeoutSeconds);
+            cancelled.set(true);
+            futures.forEach(f -> f.cancel(true));
+            for (StoryShot shot : shots) {
+                if ("GENERATING".equals(shot.getImageStatus())) {
+                    shot.setImageStatus("FAILED");
+                    shotRepository.save(shot);
+                    failed.incrementAndGet();
+                }
+            }
         } catch (Exception e) {
-            log.error("Batch generation timeout or interrupted: {}", e.getMessage());
+            log.error("Batch generation interrupted: {}", e.getMessage());
         }
 
         // 更新脚本修改时间
@@ -296,6 +312,7 @@ public class ImageGenerationService {
      */
     private void generateShotWithProgress(StoryShot shot, Long scriptId, VisualStyle visualStyle,
                                           int total, AtomicInteger completed, AtomicInteger failed,
+                                          AtomicBoolean cancelled,
                                           Consumer<ImageGenerationProgress> progressCallback) {
         ImageGenerationProgress shotStart = new ImageGenerationProgress();
         shotStart.setType("SHOT_START");
@@ -310,6 +327,12 @@ public class ImageGenerationService {
             String prompt = composePrompt(shot, visualStyle);
             QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt());
             GeneratedImage image = result.image();
+
+            // 批次已超时取消：丢弃迟到结果，不覆盖 FAILED、不计数（release 复审 m-2）
+            if (cancelled.get()) {
+                log.info("Shot {} completed after batch timeout, discarding result", shot.getId());
+                return;
+            }
 
             shot.setImageUrl(image.getImageUrl());
             shot.setImageFileId(image.getFileId());
@@ -334,6 +357,11 @@ public class ImageGenerationService {
 
         } catch (Exception e) {
             log.error("Shot {} generation failed: {}", shot.getId(), e.getMessage());
+
+            // 批次已超时取消：超时处理已置 FAILED 并计数，避免重复计数（release 复审 m-2）
+            if (cancelled.get()) {
+                return;
+            }
 
             shot.setImageStatus("FAILED");
             shotRepository.save(shot);

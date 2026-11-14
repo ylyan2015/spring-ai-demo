@@ -3,6 +3,8 @@ package com.github.ylyan2015.springaidemo.controller;
 import com.github.ylyan2015.springaidemo.config.RsaKeyPairGenerator;
 import com.github.ylyan2015.springaidemo.service.AuthService;
 import com.github.ylyan2015.springaidemo.service.CaptchaService;
+import com.github.ylyan2015.springaidemo.service.LoginRateLimiter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -23,13 +25,16 @@ public class AuthController {
     private final AuthService authService;
     private final CaptchaService captchaService;
     private final RsaKeyPairGenerator rsaKeyPairGenerator;
+    private final LoginRateLimiter loginRateLimiter;
 
     public AuthController(AuthService authService,
                           CaptchaService captchaService,
-                          RsaKeyPairGenerator rsaKeyPairGenerator) {
+                          RsaKeyPairGenerator rsaKeyPairGenerator,
+                          LoginRateLimiter loginRateLimiter) {
         this.authService = authService;
         this.captchaService = captchaService;
         this.rsaKeyPairGenerator = rsaKeyPairGenerator;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     /**
@@ -43,15 +48,18 @@ public class AuthController {
     }
 
     /**
-     * 生成验证码（5位字母数字）
+     * 生成验证码（4位字母数字，返回干扰线图片；答案仅存 Session，release 审查 M1）
      */
     @GetMapping("/captcha")
     public ResponseEntity<Map<String, Object>> getCaptcha(HttpSession session) {
         Map<String, String> captchaData = captchaService.generateCaptcha(session);
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
-        // 直接返回验证码文本（显示在页面上供用户输入）
-        result.put("captcha", captchaData.get("captcha"));
+        result.put("image", captchaData.get("image"));
+        // dev 调试开关开启时才附带明文（e2e 自动化用，生产默认关闭）
+        if (captchaData.containsKey("captcha")) {
+            result.put("captcha", captchaData.get("captcha"));
+        }
         return ResponseEntity.ok(result);
     }
 
@@ -60,7 +68,8 @@ public class AuthController {
      */
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(@RequestBody RegisterRequest request,
-                                                         HttpSession session) {
+                                                         HttpSession session,
+                                                         HttpServletRequest httpRequest) {
         // 1. 验证码校验
         if (!captchaService.validateCaptcha(session, request.getCaptcha())) {
             Map<String, Object> result = new HashMap<>();
@@ -79,6 +88,8 @@ public class AuthController {
         );
 
         if ((boolean) result.get("success")) {
+            // 防会话固定：登录态建立后更换 Session ID（release 审查 M2）
+            httpRequest.changeSessionId();
             return ResponseEntity.ok(result);
         } else {
             return ResponseEntity.badRequest().body(result);
@@ -90,9 +101,20 @@ public class AuthController {
      */
     @PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody LoginRequest request,
-                                                      HttpSession session) {
+                                                      HttpSession session,
+                                                      HttpServletRequest httpRequest) {
+        String ip = httpRequest.getRemoteAddr();
+        // 0. 登录限速：60 秒内同用户名+IP 最多 5 次失败（release 审查 M1）
+        if (!loginRateLimiter.tryAcquire(request.getUsername(), ip)) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "尝试过于频繁，请 1 分钟后再试");
+            return ResponseEntity.status(429).body(result);
+        }
+
         // 1. 验证码校验
         if (!captchaService.validateCaptcha(session, request.getCaptcha())) {
+            loginRateLimiter.recordFailure(request.getUsername(), ip);
             Map<String, Object> result = new HashMap<>();
             result.put("success", false);
             result.put("message", "验证码错误");
@@ -108,8 +130,12 @@ public class AuthController {
         );
 
         if ((boolean) result.get("success")) {
+            loginRateLimiter.recordSuccess(request.getUsername(), ip);
+            // 防会话固定：登录态建立后更换 Session ID（release 审查 M2）
+            httpRequest.changeSessionId();
             return ResponseEntity.ok(result);
         } else {
+            loginRateLimiter.recordFailure(request.getUsername(), ip);
             return ResponseEntity.badRequest().body(result);
         }
     }

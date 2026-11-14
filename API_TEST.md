@@ -51,11 +51,12 @@ curl http://localhost:8080/api/auth/captcha
 ```json
 {
   "success": true,
-  "captcha": "aB3xK"
+  "image": "data:image/png;base64,iVBORw0KGgo..."
 }
 ```
 
-> 验证码一次性使用，不区分大小写。
+> 验证码为 4 位随机字母数字干扰线图片，答案仅存 Session 不随响应返回（防爆破）；一次性使用，不区分大小写。
+> 仅 dev 调试开关 `auth.captcha.debug-text=true` 开启时额外附带 `captcha` 明文字段（e2e 自动化用，生产禁用）。
 
 ---
 
@@ -95,6 +96,8 @@ curl -X POST http://localhost:8080/api/auth/login \
 ```json
 { "success": true, "message": "登录成功", "username": "testuser" }
 ```
+
+> 登录限速：同用户名+IP 60 秒内最多 5 次失败（验证码错误/密码错误均计入），超限返回 **429**；登录成功后会话 ID 自动更换（防会话固定）。
 
 ---
 
@@ -189,13 +192,13 @@ curl -X POST http://localhost:8080/api/chat/send \
 }
 ```
 
+> `sessionId` 始终返回真实会话 ID（不传时自动创建新会话并返回其 ID）。
+
 ---
 
-### 2.3 发送消息（GET - 兼容旧接口）
+### 2.3 发送消息（GET 旧接口，已移除）
 
-```bash
-curl "http://localhost:8080/api/chat/send?message=你好&sessionId=your-session-id"
-```
+> **v2.0.0 起已移除**：GET 副作用端点可被跨站请求触发（CSRF 载体）。非流式发送请用 2.2 的 POST，流式请用 2.1。
 
 ---
 
@@ -227,6 +230,8 @@ curl http://localhost:8080/api/chat/conversations
 ---
 
 ### 2.6 获取会话历史
+
+> 仅限会话拥有者访问，跨用户/未登录/会话不存在返回 400 `{success:false, message}`。
 
 ```bash
 curl http://localhost:8080/api/chat/history/your-session-id
@@ -376,6 +381,8 @@ curl http://localhost:8080/api/model/available
 ```
 
 ### 4.3 切换模型
+
+> 全局开关，**需登录**（匿名 401，防恶意切换影响全体用户）。
 
 ```bash
 curl -X POST http://localhost:8080/api/model/switch \
@@ -1429,7 +1436,7 @@ bgm:
 1. **登录要求**：聊天和文档接口需要先登录，未登录返回 401/403
 2. **会话归属**：每个会话绑定创建用户，用户只能操作自己的会话
 3. **密码安全**：RSA 加密传输，BCrypt 哈希存储
-4. **验证码**：5位随机字母数字，一次性使用，不区分大小写
+4. **验证码**：4位随机字母数字图片（答案仅存 Session），一次性使用，不区分大小写；登录限速同用户名+IP 60秒内最多5次失败（超限 429）
 5. **SSE 流式**：使用 `POST /api/chat/stream` 获取实时流式回复
 6. **RAG 知识库**：上传文档后，在聊天时设置 `ragEnabled: true` 启用上下文增强
 7. **上下文限制**：默认保留最近10轮对话，可通过压缩功能释放空间
@@ -1449,6 +1456,7 @@ bgm:
 21. **Agent 工具**：`GET /api/video/agent/tools` 仅内省不执行（匿名可读，沿用 /api/video/** 现有策略）；工具执行入口为 7.12 导演对话，执行时登录校验由服务层保障；工具同步执行于请求线程，异步编排时才需 SecurityContext 传播
 22. **导演 Agent**：`POST /api/video/agent/chat` 需登录（服务层校验，匿名 400）；仅 `exportVideo` 设人工确认闸门，`confirmedTools` 仅对当次请求生效（无服务端 pending 令牌）；对话历史内存态重启清空、上限 20 条；多轮工具调用耗时较长，客户端超时建议 ≥ 120s
 23. **多 Agent 编排**：`/orchestrate` 系列需登录；任务内存态重启清空、上限 100（逐出时原子复检，运行中任务不可被逐出）、按 userId 归属校验；异步工作线程显式传播 SecurityContext（工具内登录身份可用）；confirm 仅 AWAITING_CONFIRMATION 状态可用且 CAS 防并发双重执行，续跑携带原始任务与待确认入参；专家委托无状态（taskDescription 需携带完整上下文）；evaluateImage 工具仅接受存储相对路径（`agent.tools.self-base-url` 解析同源）；前端 3s 轮询，流水线分钟级耗时属正常
+24. **v2.0.0 安全加固**：H2 Console 默认关闭；Actuator 仅暴露 health/info（其余需鉴权）；`/images/**` 匿名可读（UUID 文件名不可枚举，compose 服务端自下载依赖）；模型切换/生成器切换需登录；聊天会话全部读写接口带归属校验；Markdown 渲染经 DOMPurify 消毒；遗留 `POST /api/video/generate|generate-image|generate-all-images|compose` 与 `GET /api/chat/send` 已移除；Docker 部署 PostgreSQL 密码必须经 `.env` 的 `POSTGRES_PASSWORD` 设置
 
 ---
 

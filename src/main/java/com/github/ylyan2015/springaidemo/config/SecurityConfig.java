@@ -22,8 +22,6 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
-            // 允许H2 Console使用iframe
-            .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
             // 使用HttpSession存储SecurityContext，确保跨请求保持登录状态
             .securityContext(ctx -> ctx
                 .securityContextRepository(new HttpSessionSecurityContextRepository())
@@ -35,8 +33,10 @@ public class SecurityConfig {
                     "/api/model/**",
                     "/api/timezone/**",
                     "/api/video/**",
-                    "/actuator/**",
-                    "/h2-console/**"
+                    // 本地存储静态资源：文件名 UUID 不可枚举；compose 服务端自下载依赖匿名可读
+                    "/images/**",
+                    // Actuator 仅公开健康检查，敏感端点（env/loggers 等）需鉴权
+                    "/actuator/health", "/actuator/info"
                 ).permitAll()
                 .anyRequest().authenticated()
             )

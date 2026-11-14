@@ -44,10 +44,11 @@ curl http://localhost:8080/api/auth/public-key
 curl http://localhost:8080/api/auth/captcha
 ```
 ```json
-{ "success": true, "captcha": "aB3xK" }
+{ "success": true, "image": "data:image/png;base64,iVBORw0KGgo..." }
 ```
 
-> Single-use, case-insensitive.
+> The captcha is a 4-character alphanumeric image with noise lines; the answer is stored only in the session and never returned (anti-brute-force). Single-use, case-insensitive.
+> Only when the dev flag `auth.captcha.debug-text=true` is enabled does the response additionally include the plaintext `captcha` field (for e2e automation; keep disabled in production).
 
 ---
 
@@ -84,6 +85,8 @@ curl -X POST http://localhost:8080/api/auth/login \
 ```json
 { "success": true, "message": "Login successful", "username": "testuser" }
 ```
+
+> Login rate limiting: at most 5 failures per username+IP within 60 seconds (wrong captcha and wrong password both count); exceeding returns **429**. The session ID is rotated on successful login (session-fixation protection).
 
 ---
 
@@ -164,13 +167,13 @@ curl -X POST http://localhost:8080/api/chat/send \
 { "success": true, "sessionId": "your-session-id", "response": "Hello! I am an AI assistant..." }
 ```
 
+> `sessionId` always returns the real session ID (a new session is created and its ID returned when omitted).
+
 ---
 
-### 2.3 Send Message (GET - Legacy)
+### 2.3 Send Message (GET - Legacy, Removed)
 
-```bash
-curl "http://localhost:8080/api/chat/send?message=Hello&sessionId=your-session-id"
-```
+> **Removed in v2.0.0**: GET endpoints with side effects can be triggered cross-site (CSRF vector). Use the POST in 2.2 for non-streaming, or 2.1 for streaming.
 
 ---
 
@@ -202,6 +205,8 @@ curl http://localhost:8080/api/chat/conversations
 ---
 
 ### 2.6 Get Session History
+
+> Owner-only access; cross-user / anonymous / unknown session returns 400 `{success:false, message}`.
 
 ```bash
 curl http://localhost:8080/api/chat/history/your-session-id
@@ -344,6 +349,8 @@ curl http://localhost:8080/api/model/available
 ```
 
 ### 4.3 Switch Model
+
+> Global switch, **login required** (anonymous gets 401, preventing malicious switches affecting all users).
 
 ```bash
 curl -X POST http://localhost:8080/api/model/switch \
@@ -1393,7 +1400,7 @@ bgm:
 1. **Login Requirement**: Chat and document endpoints require login; returns 401/403 if unauthenticated
 2. **Session Ownership**: Each session bound to its creator; users can only manage their own
 3. **Password Security**: RSA-encrypted transmission, BCrypt hash storage
-4. **Captcha**: 5-char random alphanumeric, single-use, case-insensitive
+4. **Captcha**: 4-char random alphanumeric image (answer stored only in session), single-use, case-insensitive; login rate limit: max 5 failures per username+IP within 60s (429 when exceeded)
 5. **SSE Streaming**: Use `POST /api/chat/stream` for real-time streaming responses
 6. **RAG Knowledge Base**: Upload documents, then set `ragEnabled: true` in chat requests
 7. **Context Limit**: Default 10 conversation rounds; use compression to free space
@@ -1413,6 +1420,7 @@ bgm:
 21. **Agent Tools**: `GET /api/video/agent/tools` is introspection-only, no execution (anonymously readable, following the existing /api/video/** policy); the tool execution entry point is the director chat in 7.12, with login checks at execution enforced by the service layer; tools run synchronously in the request thread — SecurityContext propagation is only needed for async orchestration
 22. **Director Agent**: `POST /api/video/agent/chat` requires login (service-layer check, anonymous gets 400); only `exportVideo` has a human confirmation gate, and `confirmedTools` is effective only for the current request (no server-side pending token); conversation history is in-memory, cleared on restart, capped at 20 messages; multi-round tool calls can be slow — client timeout >= 120s recommended
 23. **Multi-Agent Orchestration**: the `/orchestrate` endpoints require login; tasks are in-memory, cleared on restart, capped at 100 (eviction re-checks status atomically — running tasks are never evicted), with per-userId ownership checks; async worker threads explicitly propagate the SecurityContext (login identity available inside tools); confirm is only valid in AWAITING_CONFIRMATION with CAS guarding against concurrent double execution, and the resume carries the original task plus pending operation inputs; specialist delegation is stateless (taskDescription must carry full context); the evaluateImage tool only accepts storage relative paths (resolved same-origin via `agent.tools.self-base-url`); the frontend polls every 3s — minute-level pipeline duration is normal
+24. **v2.0.0 Security Hardening**: H2 Console disabled by default; Actuator exposes only health/info (others require authentication); `/images/**` anonymously readable (UUID filenames unguessable; required by compose server-side self-download); model/generator switching requires login; all chat session read/write endpoints enforce ownership; Markdown rendering sanitized with DOMPurify; legacy `POST /api/video/generate|generate-image|generate-all-images|compose` and `GET /api/chat/send` removed; Docker deployments must set the PostgreSQL password via `POSTGRES_PASSWORD` in `.env`
 
 ---
 

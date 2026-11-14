@@ -62,6 +62,15 @@ public class VideoComposeService {
         this.storageService = storageService;
     }
 
+    /** 启动时校验 FFmpeg 可用性，缺失时给出清晰指引（release 审查 M10；不阻断启动，非视频功能不受影响） */
+    @jakarta.annotation.PostConstruct
+    public void checkFfmpegAvailable() {
+        if (!probeVersion(ffmpegPath, "-version")) {
+            log.warn("FFmpeg 不可用（配置: {}）。视频导出将失败：请安装 FFmpeg ≥4.3 并加入 PATH，"
+                    + "或设置环境变量 FFMPEG_PATH / FFPROBE_PATH 指向绝对路径", ffmpegPath);
+        }
+    }
+
     /**
      * Compose a video from shot data: download images → ffmpeg → optional TTS → final video
      * (Legacy entry: fixed 1280x720, no watermark, no BGM)
@@ -88,7 +97,8 @@ public class VideoComposeService {
             }
 
             List<Integer> durations = shots.stream()
-                    .map(s -> ((Number) s.get("durationSeconds")).intValue())
+                    // 缺省/非法时长兜底 5s，防 NPE→500（release 审查 Minor#11）
+                    .map(s -> s.get("durationSeconds") instanceof Number n ? n.intValue() : 5)
                     .toList();
             List<String> narrations = shots.stream()
                     .map(s -> (String) s.getOrDefault("narration", ""))
@@ -354,25 +364,36 @@ public class VideoComposeService {
     // ==================== TTS Audio ====================
 
     private boolean isEdgeTtsAvailable() {
-        try {
-            Process p = new ProcessBuilder(pythonCommand, "-m", "edge_tts", "--version")
-                    .redirectErrorStream(true)
-                    .start();
-            int code = p.waitFor();
-            if (code == 0) return true;
-        } catch (Exception ignored) {}
-
-        try {
-            Process p = new ProcessBuilder("edge-tts", "--version")
-                    .redirectErrorStream(true)
-                    .start();
-            return p.waitFor() == 0;
-        } catch (Exception ignored) {}
+        // 带超时探测，防挂起进程阻塞请求线程（release 审查 Minor#5）
+        if (probeVersion(pythonCommand, "-m", "edge_tts", "--version")) return true;
+        if (probeVersion("edge-tts", "--version")) return true;
 
         log.warn("edge-tts not available via '{}' or 'edge-tts'. "
                 + "Install with `pip install edge-tts`, or point video.python-command at a real interpreter.",
                 pythonCommand);
         return false;
+    }
+
+    private boolean probeVersion(String... command) {
+        Process p = null;
+        try {
+            p = new ProcessBuilder(command)
+                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+            boolean finished = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            return p.exitValue() == 0;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (p != null && p.isAlive()) {
+                p.destroyForcibly();
+            }
+        }
     }
 
     private List<Path> generateTtsAudio(List<String> narrations, List<Integer> durations, Path workDir) {
@@ -395,7 +416,6 @@ public class VideoComposeService {
             }
 
             try {
-                String safeText = text.replace("\"", "\\\"").replace("'", "\\'");
                 List<String> cmd = List.of(
                         pythonCommand, "-m", "edge_tts",
                         "--voice", "zh-CN-YunxiNeural",
@@ -704,36 +724,51 @@ public class VideoComposeService {
     private void executeCommand(List<String> command, Path workDir, String taskName) throws Exception {
         log.info("Executing {}: {}", taskName, String.join(" ", command));
 
+        // 输出重定向到文件：避免阻塞读 stdout 导致 waitFor 超时永不生效（release 审查 M8）
+        Path outputFile = Files.createTempFile(workDir, "cmd-", ".log");
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(workDir.toFile());
         pb.redirectErrorStream(true);
+        pb.redirectOutput(outputFile.toFile());
         Process process = pb.start();
+        try {
+            boolean finished = process.waitFor(timeout().toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new RuntimeException(taskName + " timed out (" + timeout() + ")");
+            }
 
-        String output;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            output = reader.lines().collect(java.util.stream.Collectors.joining("\n"));
-        }
-
-        boolean finished = process.waitFor(composeTimeoutMinutes, java.util.concurrent.TimeUnit.MINUTES);
-        if (!finished) {
-            process.destroyForcibly();
-            throw new RuntimeException(taskName + " timed out (" + composeTimeoutMinutes + " min)");
-        }
-
-        int exitCode = process.exitValue();
-        if (exitCode != 0) {
-            log.error("{} failed (exit {}):\n{}", taskName, exitCode, output);
-            throw new RuntimeException(taskName + " failed (exit " + exitCode + ")");
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                String output = Files.readString(outputFile);
+                log.error("{} failed (exit {}):\n{}", taskName, exitCode, output);
+                throw new RuntimeException(taskName + " failed (exit " + exitCode + ")");
+            }
+        } finally {
+            // Windows 下 destroyForcibly 后句柄可能延迟释放，删除失败不掩盖主异常（临时目录后续统一清理）
+            try {
+                Files.deleteIfExists(outputFile);
+            } catch (IOException e) {
+                log.debug("Cannot delete command output file {}: {}", outputFile, e.getMessage());
+            }
         }
 
         log.info("{} completed successfully", taskName);
     }
 
+    /** 命令超时（默认取配置分钟数；包级字段便于测试注入短超时） */
+    private volatile Duration commandTimeout;
+
+    private Duration timeout() {
+        Duration t = commandTimeout;
+        return t != null ? t : Duration.ofMinutes(composeTimeoutMinutes);
+    }
+
     private void cleanupDir(Path dir) {
         if (dir == null) return;
-        try {
-            Files.walk(dir)
-                    .sorted(Comparator.reverseOrder())
+        // try-with-resources 关闭 Files.walk 流，防 Windows 句柄泄漏（release 审查 Minor#3）
+        try (java.util.stream.Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder())
                     .forEach(path -> {
                         try {
                             Files.deleteIfExists(path);

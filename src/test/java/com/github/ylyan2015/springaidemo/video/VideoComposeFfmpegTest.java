@@ -158,8 +158,8 @@ class VideoComposeFfmpegTest {
     }
 
     /**
-     * application.yml 里 ffmpeg 路径的默认值带盘符冒号（D:/...），占位符最容易在这里被截断，
-     * 走一遍 Spring 真实的 YAML 加载 + 占位符解析确认。
+     * application.yml 工具路径配置解析验证（release 审查 M10 后默认裸名走 PATH）：
+     * 默认值必须是非空裸名；环境变量覆盖为绝对路径时占位符不得截断盘符。
      */
     @Test
     void resolvesFfmpegPathsFromApplicationYaml() throws Exception {
@@ -170,13 +170,26 @@ class VideoComposeFfmpegTest {
             env.getPropertySources().addLast(source);
         }
 
+        // 默认裸名（可移植，release 审查 M10）
+        assertEquals("ffmpeg", env.getProperty("video.ffmpeg-path"));
+        assertEquals("ffprobe", env.getProperty("video.ffprobe-path"));
+        assertEquals("python", env.getProperty("video.python-command"));
+
+        // 环境变量覆盖为带盘符绝对路径时，占位符解析不得截断冒号
+        MockEnvironment overridden = new MockEnvironment()
+                .withProperty("FFMPEG_PATH", "D:/tools/ffmpeg/bin/ffmpeg.exe")
+                .withProperty("FFPROBE_PATH", "D:/tools/ffmpeg/bin/ffprobe.exe")
+                .withProperty("PYTHON_CMD", "C:/Python/python.exe");
+        for (PropertySource<?> source : new YamlPropertySourceLoader()
+                .load("application", new ClassPathResource("application.yml"))) {
+            overridden.getPropertySources().addLast(source);
+        }
         for (String key : List.of("video.ffmpeg-path", "video.ffprobe-path", "video.python-command")) {
-            String path = env.getProperty(key);
+            String path = overridden.getProperty(key);
             assertNotNull(path, key + " 未解析出值");
             assertTrue(path.length() > 2 && path.charAt(1) == ':'
                             && Character.isLetter(path.charAt(0)),
                     key + " 占位符解析异常（盘符疑似被截断）: " + path);
-            assertTrue(Files.exists(Path.of(path)), key + " 指向的文件不存在: " + path);
         }
     }
 

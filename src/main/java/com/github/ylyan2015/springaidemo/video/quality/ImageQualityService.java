@@ -219,9 +219,15 @@ public class ImageQualityService {
         if (client == null) {
             synchronized (this) {
                 if (cachedClient == null) {
+                    // 显式注入超时，防多模态端点挂起阻塞生成流程（release 审查 Minor#8）
+                    org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                            new org.springframework.http.client.SimpleClientHttpRequestFactory();
+                    factory.setConnectTimeout(Duration.ofSeconds(10));
+                    factory.setReadTimeout(Duration.ofSeconds(60));
                     OpenAiApi api = OpenAiApi.builder()
                             .baseUrl(baseUrl)
                             .apiKey(apiKey)
+                            .restClientBuilder(org.springframework.web.client.RestClient.builder().requestFactory(factory))
                             .build();
                     OpenAiChatModel chatModel = OpenAiChatModel.builder()
                             .openAiApi(api)

@@ -169,10 +169,16 @@ public class ModelService {
      */
     private ChatClient createOpenAICompatibleClient(String provider, String baseUrl, String apiKey, String model) {
         try {
+            // 手工构建的 OpenAiApi 不受 yml rest-template 超时约束，显式注入超时防永久挂起（release 审查 Minor#8）
+            org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                    new org.springframework.http.client.SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+            factory.setReadTimeout(java.time.Duration.ofSeconds(120));
             // 使用 Spring AI 的 OpenAiApi Builder 构建
             org.springframework.ai.openai.api.OpenAiApi openAiApi = org.springframework.ai.openai.api.OpenAiApi.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
+                .restClientBuilder(org.springframework.web.client.RestClient.builder().requestFactory(factory))
                 .build();
             
             OpenAiChatModel openAiChatModel = OpenAiChatModel.builder()
@@ -190,7 +196,7 @@ public class ModelService {
             System.out.println("✓ 成功创建 " + provider + " ChatClient");
             System.out.println("配置信息:");
             System.out.println("  Base URL: " + baseUrl);
-            System.out.println("  API Key: " + (apiKey != null && apiKey.length() > 8 ? apiKey.substring(0, 8) + "..." : apiKey));
+            System.out.println("  API Key: " + (apiKey != null && !apiKey.isBlank() ? "******（已配置）" : "未设置"));
             System.out.println("  Model: " + model);
             System.out.println("========================================");
             

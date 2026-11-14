@@ -24,7 +24,7 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **RESTful API** - Provides complete REST API interfaces
 - ✅ **Web Interface** - Beautiful chat interface with session list, real-time conversation, Markdown rendering
 - ✅ **Model Switching** - Directly switch between offline mode and online expert mode in the web interface
-- ✅ **Spring Boot Actuator** - Built-in health checks, metrics monitoring, and operational endpoints
+- ✅ **Spring Boot Actuator** - Built-in health checks and operational endpoints (only health/info exposed after security hardening)
 - ✅ **Docker One-Click Deployment** - Multi-stage image build + docker-compose orchestration for app and middleware, ready out of the box
 - ✅ **AI Response Notification** - Desktop notification + sound + page title badge, never miss a reply when switching tabs
 - ✅ **AI Image Generation** - Integrated with Alibaba Cloud Bailian Tongyi Wanxiang model (wan2.6-t2i), generate high-quality images from prompts
@@ -78,7 +78,7 @@ Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other 
    - **OpenAI API Key** - Register at OpenAI
    - **DeepSeek API Key** - Register at DeepSeek
 4. **(Optional) DashScope API Key** - For image generation, register at Alibaba Cloud Bailian Platform
-5. **(Optional) FFmpeg >= 4.3** - For video composition/export in the AI Short Video Studio (including ffprobe). Paths are configured via `video.ffmpeg-path` / `video.ffprobe-path` (overridable with `FFMPEG_PATH` / `FFPROBE_PATH` env vars), no system PATH dependency; xfade transitions need >= 4.3, BGM mixing needs >= 4.4
+5. **(Optional) FFmpeg >= 4.3** - For video composition/export in the AI Short Video Studio (including ffprobe). Defaults to bare names on the system PATH; override with `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars; xfade transitions need >= 4.3, BGM mixing needs >= 4.4
 6. **(Optional) Edge TTS** - For short video narration: `pip install edge-tts` (automatically skipped when not installed); the Python interpreter is specified by `video.python-command` (overridable with the `PYTHON_CMD` env var)
 7. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
@@ -186,10 +186,10 @@ http://localhost:8080
 
 #### Registration & Login
 
-1. **Register**: Enter username, password (uppercase + lowercase + digits, 6-50 chars), confirm password, and 5-char captcha
-2. **Login**: Enter username, password, and captcha
+1. **Register**: Enter username, password (uppercase + lowercase + digits, 6-50 chars), confirm password, and the 4-char image captcha
+2. **Login**: Enter username, password, and the image captcha
 
-> **Security Note**: Passwords are RSA-encrypted before transmission (RSA-OAEP + SHA-256). Server stores BCrypt hashes.
+> **Security Note**: Passwords are RSA-encrypted before transmission (RSA-OAEP + SHA-256). Server stores BCrypt hashes. The captcha answer is stored only in the session and never returned by the API; login is rate-limited to 5 failures per username+IP within 60 seconds (429 when exceeded); the session ID is rotated on successful login (session-fixation protection).
 
 #### Chat Features
 
@@ -230,7 +230,7 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 - 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
 - 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
 
-> **Note**: Video composition requires FFmpeg (paths configured via `video.ffmpeg-path` / `video.ffprobe-path`, no PATH dependency); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
+> **Note**: Video composition requires FFmpeg (defaults to bare names on the system PATH; override via `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed; interpreter via `video.python-command` / `PYTHON_CMD`); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
 
 #### 5. Test with API
 
@@ -332,7 +332,6 @@ spring-ai-demo/
 │   ├── ImageGenerationProgress.java   # SSE progress event
 │   ├── VideoScriptService.java        # Script generation (Phase 1)
 │   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
-│   ├── VideoController.java           # Legacy one-shot workflow API (kept for compat)
 │   ├── subtitle/                     # Module F: subtitle system
 │   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline + multilingual translation
 │   │   ├── SubtitleStyle.java         # Subtitle style (font/size/color/outline/position)
@@ -498,7 +497,7 @@ image:
     max-retries: 2                     # Max retries for low scores (best-scoring image kept)
 
 video:
-  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg executable path (absolute path recommended on Windows, no PATH dependency; >=4.3 required)
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg executable (bare name via PATH by default; absolute path when not on PATH; >=4.3 required)
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (used to probe BGM duration)
   python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows to avoid the Microsoft Store alias stub)
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
@@ -588,7 +587,7 @@ spring:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/auth/public-key` | GET | Get RSA public key |
-| `/api/auth/captcha` | GET | Get 5-char random captcha |
+| `/api/auth/captcha` | GET | Get captcha image (4-char alphanumeric, answer session-only) |
 | `/api/auth/register` | POST | User registration |
 | `/api/auth/login` | POST | User login |
 | `/api/auth/logout` | POST | Logout |
@@ -600,7 +599,6 @@ spring:
 |----------|--------|-------------|
 | `/api/chat/stream` | POST | Stream message (SSE) |
 | `/api/chat/send` | POST | Send message (non-streaming) |
-| `/api/chat/send` | GET | Send message (legacy) |
 | `/api/chat/conversation` | POST | Create new session |
 | `/api/chat/conversations` | GET | Get all sessions |
 | `/api/chat/history/{sessionId}` | GET | Get conversation history |
@@ -622,7 +620,7 @@ spring:
 |----------|--------|-------------|
 | `/api/model/current` | GET | Get current model |
 | `/api/model/available` | GET | Get available models |
-| `/api/model/switch` | POST | Switch model |
+| `/api/model/switch` | POST | Switch model (login required) |
 | `/api/model/params` | GET | Get all param presets |
 | `/api/model/params/{modelKey}` | GET | Get param preset for model |
 | `/api/model/params/{modelKey}` | POST | Save/update param preset |
@@ -676,7 +674,6 @@ spring:
 | `/api/video/agent/orchestrate` | POST | One-click pipeline: submit a multi-agent async orchestration task (Phase 3 slice 3) |
 | `/api/video/agent/orchestrate/{taskId}` | GET | Query orchestration task status (polling, Phase 3 slice 3) |
 | `/api/video/agent/orchestrate/{taskId}/confirm` | POST | Confirm to resume: pass the exportVideo gate (Phase 3 slice 3) |
-| `/api/video/generate` / `/api/video/compose` | POST | Legacy one-shot workflow API (kept for compat) |
 
 > Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)
 
@@ -724,7 +721,7 @@ Services communicate over the internal `ai-net` network. The app accesses middle
 - **Data Persistence**: Named volumes `pgdata`, `ollama-data`, `appdata` (preset BGM/runtime data) and `uploads` (generated files) ensure data survives container rebuilds
 - **Profile Control**: ollama service uses `profiles: [ollama]`, not started by default — requires `--profile ollama` to explicitly enable
 - **Secure Runtime**: App runs as non-root user `appuser` inside the container
-- **Video Studio Dependencies**: The image ships FFmpeg (>=6.x with xfade/libass) and edge-tts; compose injects `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD` automatically; the docker profile switches the subtitle font to `Noto Sans CJK SC`; set `DASHSCOPE_API_KEY` in `.env` (image generation / quality evaluation)
+- **Video Studio Dependencies**: The image ships FFmpeg (>=6.x with xfade/libass) and edge-tts; compose injects `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD` automatically; the docker profile switches the subtitle font to `Noto Sans CJK SC`; set `DASHSCOPE_API_KEY` in `.env` (image generation / quality evaluation) and a strong `POSTGRES_PASSWORD` (required, no hardcoded default)
 
 ## FAQ
 

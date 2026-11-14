@@ -13,7 +13,7 @@
 
     <groupId>com.github.ylyan2015</groupId>
     <artifactId>spring-ai-demo</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>2.0.0</version>
     <name>spring-ai-demo</name>
     <description>Spring AI Demo with Ollama</description>
 

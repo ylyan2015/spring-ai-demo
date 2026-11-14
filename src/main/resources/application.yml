@@ -38,12 +38,12 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
 
-# Actuator 监控配置
+# Actuator 监控配置（release 审查 M7：仅暴露 health/info，env/loggers 等敏感端点不对外）
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,env,beans,mappings,loggers
+        include: health,info
   endpoint:
     health:
       show-details: when-authorized
@@ -90,13 +90,14 @@ agent:
 
 # 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
 video:
-  # FFmpeg / ffprobe 可执行文件位置。Windows 下建议写绝对路径，避免依赖系统 PATH；
+  # FFmpeg / ffprobe 可执行文件位置。默认裸名走系统 PATH（release 审查 M10：可移植）；
+  # 不在 PATH 时用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定绝对路径。
   # xfade 转场需要 FFmpeg ≥ 4.3，EVCapture 等软件自带的旧版（≈4.2）不含 xfade，不可用。
-  ffmpeg-path: ${FFMPEG_PATH:D:/Program Files/ffmpeg/bin/ffmpeg.exe}
-  ffprobe-path: ${FFPROBE_PATH:D:/Program Files/ffmpeg/bin/ffprobe.exe}
-  # 运行 edge-tts 的 Python 解释器。本机 PATH 上的裸 python 会被微软商店的"应用执行别名"桩
-  # 抢先命中并返回退出码 49，因此这里写绝对路径（pip install edge-tts 已装到该解释器的用户目录）
-  python-command: ${PYTHON_CMD:C:/Users/Yan Yulin/AppData/Local/Python/bin/python.exe}
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+  ffprobe-path: ${FFPROBE_PATH:ffprobe}
+  # 运行 edge-tts 的 Python 解释器。默认裸名走 PATH；Windows 注意避开微软商店的
+  # "应用执行别名"桩（返回退出码 49），必要时用环境变量 PYTHON_CMD 指定真实解释器绝对路径
+  python-command: ${PYTHON_CMD:python}
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
   watermark:                        # 模块 I：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）

@@ -52,7 +52,8 @@ public class StoryScriptService {
      * @param idea 创意想法文本
      * @return 保存后的脚本实体（含镜头列表）
      */
-    @Transactional
+    // 不加 @Transactional：LLM 调用 15-30s，长事务占死连接池（release 审查 M9）；
+    // scriptRepository.save 自带事务，cascade 持久化镜头在同一 save 事务内完成
     public StoryScript generateAndSaveScript(String idea) {
         return generateAndSaveScript(idea, null);
     }
@@ -63,7 +64,6 @@ public class StoryScriptService {
      * @param idea             创意想法文本
      * @param templateGuidance 模板风格引导（注入 System Prompt），null 时不注入
      */
-    @Transactional
     public StoryScript generateAndSaveScript(String idea, String templateGuidance) {
         Long userId = getCurrentUserId();
 

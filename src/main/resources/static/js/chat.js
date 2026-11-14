@@ -300,7 +300,12 @@ async function sendMessage() {
                     // AI 回复完成，发送通知
                     notifyAiResponseDone(fullResponse);
                 } else if (eventType === 'error') {
-                    assistantBubble.innerHTML = `<span style="color:#ef4444">${eventData}</span>`;
+                    // 服务端错误文本可能含用户/模型可控内容，用 textContent 防 XSS（release 审查 C5）
+                    assistantBubble.textContent = '';
+                    const errSpan = document.createElement('span');
+                    errSpan.style.color = '#ef4444';
+                    errSpan.textContent = eventData;
+                    assistantBubble.appendChild(errSpan);
                     assistantBubble.classList.remove('streaming');
                 }
             }
@@ -457,37 +462,45 @@ function createStreamingBubble() {
     return { bubble, timeEl: time };
 }
 
+// HTML 转义（code 渲染降级分支用，防原文注入）
+function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // 配置 marked.js + highlight.js
 const renderer = {
     code(text, lang) {
         const language = (lang || '').trim();
+        // 仅 hljs 认识的语言才输出 class，避免任意 language 字符串属性逃逸（release 审查 C5）
+        const known = language && hljs.getLanguage(language);
         let highlighted;
         try {
-            if (language && hljs.getLanguage(language)) {
+            if (known) {
                 highlighted = hljs.highlight(text, { language }).value;
             } else {
                 highlighted = hljs.highlightAuto(text).value;
             }
         } catch(e) {
-            highlighted = text;
+            highlighted = escapeHtml(text);
         }
-        const langClass = language ? ` class="language-${language}"` : '';
+        const langClass = known ? ` class="language-${escapeHtml(language)}"` : '';
         return `<pre><code${langClass}>${highlighted}</code></pre>`;
     }
 };
 marked.use({ renderer, breaks: true, gfm: true });
 
-// Markdown 渲染（使用 marked.js）
+// Markdown 渲染（marked 输出经 DOMPurify 消毒，防 RAG 提示注入导致的存储型 XSS，release 审查 C5）
 function renderMarkdown(text) {
-    let html = marked.parse(text);
-    // 添加流式光标
+    let html = DOMPurify.sanitize(marked.parse(text));
+    // 添加流式光标（自有可信标记，消毒后追加）
     html += '<span class="streaming-cursor"></span>';
     return html;
 }
 
 // 渲染已完成的 Markdown（无光标，用于历史消息）
 function renderFinalMarkdown(text) {
-    return marked.parse(text);
+    return DOMPurify.sanitize(marked.parse(text));
 }
 
 // 添加消息到UI

@@ -40,8 +40,17 @@ public class ChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> streamMessage(@RequestBody ChatRequest request) {
-        ChatService.StreamResponse streamResponse = chatService.streamMessage(
-                request.getSessionId(), request.getMessage(), request.isRagEnabled());
+        ChatService.StreamResponse streamResponse;
+        try {
+            streamResponse = chatService.streamMessage(
+                    request.getSessionId(), request.getMessage(), request.isRagEnabled());
+        } catch (RuntimeException e) {
+            // 未登录/越权/会话不存在：同步校验失败转 error 事件（release 复审 m-1，与 history 400 语义对齐）
+            return Flux.just(ServerSentEvent.<String>builder()
+                    .event("error")
+                    .data(e.getMessage())
+                    .build());
+        }
 
         StringBuilder fullResponse = new StringBuilder();
 
@@ -100,36 +109,28 @@ public class ChatController {
      */
     @PostMapping("/send")
     public ResponseEntity<Map<String, Object>> sendMessage(@RequestBody ChatRequest request) {
-        String response = chatService.sendMessage(request.getSessionId(), request.getMessage(), request.isRagEnabled());
-        
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("sessionId", request.getSessionId() != null ? request.getSessionId() : "auto-generated");
-        result.put("response", response);
-        
-        return ResponseEntity.ok(result);
+        try {
+            // 返回真实 sessionId（新建会话时不再返回 auto-generated，release 审查 Minor#7）
+            ChatService.SendResult sendResult = chatService.sendMessageWithSession(
+                    request.getSessionId(), request.getMessage(), request.isRagEnabled());
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("sessionId", sendResult.getSessionId());
+            result.put("response", sendResult.getResponse());
+
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            // 未登录/越权/会话不存在统一 400（release 复审 m-1）
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
     }
 
-    /**
-     * GET方式发送消息（兼容旧接口）
-     *
-     * @param message 用户消息
-     * @param sessionId 会话ID（可选）
-     * @return AI回复
-     */
-    @GetMapping("/send")
-    public ResponseEntity<Map<String, Object>> sendMessageGet(
-            @RequestParam String message,
-            @RequestParam(required = false) String sessionId) {
-        String response = chatService.sendMessage(sessionId, message, false);
-        
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("sessionId", sessionId != null ? sessionId : "auto-generated");
-        result.put("response", response);
-        
-        return ResponseEntity.ok(result);
-    }
+    // GET /send 已移除（release 审查 M4：GET 副作用端点可被 <img src> 跨站触发，CSRF 载体）；
+    // 非流式发送请使用 POST /api/chat/send，流式请使用 POST /api/chat/stream
 
     /**
      * 获取会话历史消息
@@ -139,15 +140,23 @@ public class ChatController {
      */
     @GetMapping("/history/{sessionId}")
     public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String sessionId) {
-        List<Message> history = chatService.getConversationHistory(sessionId);
-        
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("sessionId", sessionId);
-        result.put("messages", history);
-        result.put("count", history.size());
-        
-        return ResponseEntity.ok(result);
+        try {
+            List<Message> history = chatService.getConversationHistory(sessionId);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("sessionId", sessionId);
+            result.put("messages", history);
+            result.put("count", history.size());
+
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            // 未登录/越权/会话不存在统一 400（release 审查 M3 配套）
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
     }
 
     /**
@@ -235,10 +244,18 @@ public class ChatController {
      */
     @GetMapping("/context-usage/{sessionId}")
     public ResponseEntity<Map<String, Object>> getContextUsage(@PathVariable String sessionId) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("contextUsage", chatService.getContextUsagePercent(sessionId));
-        return ResponseEntity.ok(result);
+        try {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("contextUsage", chatService.getContextUsagePercent(sessionId));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            // 未登录/越权/会话不存在统一 400（release 复审 m-1）
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
     }
 
    /**

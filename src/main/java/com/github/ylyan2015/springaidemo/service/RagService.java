@@ -103,8 +103,10 @@ public class RagService {
                 .map(Document::getId)
                 .collect(Collectors.joining(","));
 
-        // 6. 持久化或缓存文档元信息
-        DocInfo info = new DocInfo(docId, originalFilename, chunks.size(), file.getSize());
+        // 6. 持久化或缓存文档元信息（memory 模式同样保存 chunkIds，删除时同步清向量，release 审查 M6）
+        List<String> chunkIds = chunks.stream().map(Document::getId).collect(Collectors.toList());
+        DocInfo info = new DocInfo(docId, originalFilename, chunks.size(), file.getSize(),
+                java.time.LocalDateTime.now().toString(), chunkIds);
         if ("pgvector".equalsIgnoreCase(storeType)) {
             RagDocument entity = new RagDocument(docId, originalFilename, chunks.size(), file.getSize(), chunkIdsJson);
             ragDocumentRepository.save(entity);
@@ -189,11 +191,14 @@ public class RagService {
     }
 
     /**
-     * 内存模式下的文档删除
+     * 内存模式下的文档删除：同步清除向量库分块（release 审查 M6，否则删除后内容仍被检索引用）
      */
     private boolean deleteDocumentMemory(String docId) {
         DocInfo removed = memoryRegistry.remove(docId);
         if (removed != null) {
+            if (removed.getChunkIds() != null && !removed.getChunkIds().isEmpty()) {
+                vectorStore.delete(removed.getChunkIds());
+            }
             System.out.println("✓ RAG 文档已删除 [内存模式]: " + removed.getFileName());
             return true;
         }
@@ -219,17 +224,25 @@ public class RagService {
         private final int chunkCount;
         private final long fileSize;
         private final String uploadedAt;
+        /** 分块向量 ID（删除时同步清向量用；不对外序列化展示） */
+        private final List<String> chunkIds;
 
         public DocInfo(String docId, String fileName, int chunkCount, long fileSize) {
-            this(docId, fileName, chunkCount, fileSize, java.time.LocalDateTime.now().toString());
+            this(docId, fileName, chunkCount, fileSize, java.time.LocalDateTime.now().toString(), List.of());
         }
 
         public DocInfo(String docId, String fileName, int chunkCount, long fileSize, String uploadedAt) {
+            this(docId, fileName, chunkCount, fileSize, uploadedAt, List.of());
+        }
+
+        public DocInfo(String docId, String fileName, int chunkCount, long fileSize,
+                       String uploadedAt, List<String> chunkIds) {
             this.docId = docId;
             this.fileName = fileName;
             this.chunkCount = chunkCount;
             this.fileSize = fileSize;
             this.uploadedAt = uploadedAt;
+            this.chunkIds = chunkIds != null ? chunkIds : List.of();
         }
 
         public String getDocId() { return docId; }
@@ -237,5 +250,7 @@ public class RagService {
         public int getChunkCount() { return chunkCount; }
         public long getFileSize() { return fileSize; }
         public String getUploadedAt() { return uploadedAt; }
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public List<String> getChunkIds() { return chunkIds; }
     }
 }

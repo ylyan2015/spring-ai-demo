@@ -4,7 +4,7 @@
 > **定位**：AI 驱动的短视频自动生成工具，面向社交媒体投放
 > **技术栈**：Spring Boot 3.4 + Java 17 + Spring AI 1.0 + DeepSeek/Ollama + DashScope/本地SD + FFmpeg + Edge TTS
 > **创建日期**：2026-11-07
-> **最后更新**：2026-11-14（Phase 2 全部完成；Phase 3 全部完成：切片1 服务 Tool 化 + 切片2 导演 Agent + 切片3 多 Agent 编排：6 工具 + 内省 + ReAct 对话 + 确认闸门 + 四专家委托 + 异步流水线）
+> **最后更新**：2026-11-14（Phase 2/3 全部完成；v2.0.0 release 前全局审查加固 + 提交前复审修复完成：5 Critical + 10 Major + Minor 快修组 + 复审 1 Major/4 Minor/2 Nit，148 测试绿 + 21 项真实端到端冒烟 ALL PASS，详见第四章末审查记录）
 > **2026-11-14 FFmpeg 落地**：本机安装 `D:/Program Files/ffmpeg`（≥4.3，含 xfade/libass/libx264），可执行文件路径改为 `video.ffmpeg-path` / `video.ffprobe-path` 配置项。同时修复 `VideoComposeService` 三处只有真跑 FFmpeg 才会暴露的缺陷：xfade 输出标签被写在滤镜名之前（解析成第三个输入）、zoompan 的 z 表达式误用不存在的 `t` 变量（应为 `on` 帧号）、多镜头命令缺 `-t` 导致 `-loop 1` 无限输入永不收尾。回归测试见 `VideoComposeFfmpegTest`。
 > **2026-11-14 旁白配音打通**：本机已有 Python 3.14.6（无需重装），补装 edge-tts 7.3.1；`video.python-command` 指向解释器绝对路径后，edge-tts 合成 → apad 补静音拼接 → 音画合并全链路跑通，产物含 aac 音轨。联网用例默认跳过，`-Dtts=true` 执行。
 > **2026-11-14 S5 部署加固**：Docker 镜像补齐短视频运行依赖——Dockerfile 加装 ffmpeg/python3+edge-tts（venv）/font-noto-cjk，预置 BGM 入镜像（.dockerignore 放行 data/bgm/）；compose 补 DASHSCOPE_API_KEY 与 FFMPEG_PATH/FFPROBE_PATH/PYTHON_CMD 注入、appdata/uploads 命名卷；docker profile 字幕字体自动切 Noto Sans CJK SC。本机无 Docker，镜像构建验证待有 Docker 的环境执行。
@@ -81,7 +81,7 @@
 | 分镜脚本生成 | `video/VideoScriptService.java` | ✅ 完成 |
 | 结构化输出 (BeanOutputConverter) | `video/Storyboard.java`, `video/Shot.java` | ✅ 完成 |
 | 单张图片生成 | `service/ImageService.java` (已有) | ✅ 复用 |
-| 批量图片生成 | `video/VideoController.java` `/generate-all-images` | ✅ 完成 |
+| 批量图片生成 | `video/VideoController.java` `/generate-all-images`（已于 v2.0.0 release 审查删除，由 `/api/video/images` 承接） | ✅ 完成 |
 | FFmpeg 视频合成 | `video/VideoComposeService.java` | ✅ 完成 |
 | Ken Burns 动效 | `VideoComposeService.composeVideoWithFfmpeg()` | ✅ 完成 |
 | 交叉淡入淡出转场 | `VideoComposeService` xfade filter | ✅ 完成 |
@@ -98,7 +98,7 @@ src/main/java/com/github/ylyan2015/springaidemo/video/
 ├── Shot.java                    # 单个镜头 DTO (order, sceneDescription, cameraMovement, durationSeconds, narration, imagePrompt)
 ├── VideoScriptService.java      # 脚本生成 + 图片生成调度
 ├── VideoComposeService.java     # FFmpeg 视频合成 + TTS 配音 + 音视频合并
-└── VideoController.java         # REST API (generate, generate-image, generate-all-images, compose)
+└── VideoController.java         # REST API（已于 v2.0.0 release 审查删除，见第四章末审查记录）
 
 src/main/resources/templates/
 └── video-studio.html            # 前端页面
@@ -787,6 +787,22 @@ CREATE TABLE video_template (
 > **切片2 实现落点（2026-11-14）✅**：`video/agent/ConfirmationGateToolCallback.java`（ToolCallback 装饰器：未确认拦截 exportVideo，返回 requiresConfirmation JSON + 待确认项记入 ToolContext）+ `video/agent/DirectorAgentService.java`（ModelService.getChatClient().mutate() 挂导演 System Prompt 与六工具，Spring AI 内建 tool-calling 循环即 ReAct；历史按 userId:sessionId 内存隔离上限 20 条；同步执行于请求线程）+ `VideoAgentController` 追加 POST /api/video/agent/chat（message/sessionId/confirmedTools）与 DELETE /chat/{sessionId} + 前端工作室「AI 导演」面板（对话 + 确认按钮）。确认为请求级显式放行（confirmedTools 经 ToolContext，无服务端 pending 令牌）。测试：ConfirmationGateToolCallbackTest（5）+ DirectorAgentServiceTest（8）+ VideoAgentControllerChatTest（3），全量 92 绿；真实 DeepSeek 冒烟：纯对话/recommendBgm 工具调用/闸门拦截→确认放行→错误转述/匿名拒绝均通过。
 > **切片3 实现落点（2026-11-14）✅**：`video/agent/SpecialistAgentFactory.java`（编剧/美术/音频/剪辑四专家：各自 System Prompt + 工具子集，以 delegateToXxx 「专家即工具」委托给导演，无状态单轮 ReAct；剪辑专家 exportVideo 带闸门）+ `video/agent/AgentOrchestrationService.java`（一键成片异步编排：专用线程池与图片工作池分离，SecurityContext 提交时捕获、工作线程 setContext+finally clearContext；任务表内存态上限 100 按 userId 归属校验；状态机 RUNNING/COMPLETED/AWAITING_CONFIRMATION/FAILED，confirm 携 confirmedTools 续跑）+ 导演工具装配 6+4=10 + 控制器 POST /orchestrate、GET /orchestrate/{taskId}、POST /orchestrate/{taskId}/confirm + 前端「一键流水线」按钮（3s 轮询 + 确认续跑）。规格 4.2 中 editShot/generateTts/mixAudio 等未 Tool 化能力不新增（TTS/混音已内嵌 exportVideo 管线）。测试：SpecialistAgentFactoryTest（7）+ AgentOrchestrationServiceTest（8）+ VideoAgentControllerOrchestrationTest（3）+ 导演新增 1，全量 111 绿；真实 DeepSeek 冒烟：异步流水线（编剧/音频专家真实委托）/SecurityContext 传播/闸门暂停→confirm 续跑/越权与匿名拒绝均 PASS。提交前代码审查修复 2 Major + 3 Minor + 2 Nit（confirm 续跑上下文回放/CAS 防并发确认/evict 原子复检/evaluateImage SSRF 防护/会话历史同步/线程池关闭钩子/会话表上限），新增 7 回归测试全量 118 绿，详见切片3 计划文档审查修复记录。Phase 3 Agent 化全部完成。
 
+> **Release 前全局审查修复记录（v2.0.0，2026-11-14）✅**：全库 CodeReview + 独立核实发现 5 Critical + 10 Major + 16 Minor + 4 Nit，release 阻塞项全部修复：
+> - **Critical**：C1 工作室页 `auth.success` → `auth.loggedIn`（原字段不存在致页面全员不可用）；C2 SecurityConfig 放行 `/images/**`（UUID 文件名不可枚举；修复 local 存储导出时 FFmpeg 自下载被 403 拦截的必挂链路）；C3 H2 Console 关闭（`h2.console.enabled: false`）并移除 `/h2-console/**` 放行与 frameOptions 特例（原空密码 permitAll 可未授权 RCE）；C4 删除遗留 `VideoController`（四端点无登录校验 + `/compose` 未授权 SSRF，grep 确认前端已走新 API 无引用）；C5 chat.js 引入本地 vendor DOMPurify 3.2.6 消毒 marked 输出 + 错误分支 textContent + language 白名单转义（RAG 存储型 XSS）。
+> - **Major**：M1 验证码图片化（BufferedImage base64，答案仅存 Session；`auth.captcha.debug-text` 默认 false）+ 登录限速（用户名+IP 滑动窗口 5 次/分钟，超限 429）；M2 登录/注册成功 `changeSessionId()` 防会话固定；M3 聊天会话 IDOR（ChatService 统一 `requireOwnedConversation` 归属校验，越权 history 返回 400）；M4 删除 GET `/api/chat/send` 副作用端点（CSRF 载体），POST 返回真实 sessionId；M5 `/api/model/switch` 与 PUT generator 补登录校验（匿名全局开关 DoS）；M6 RAG memory 删除同步清向量（DocInfo 携带 chunkIds → vectorStore.delete）；M7 Actuator 仅暴露 health,info 并收紧 Security 放行；M8 FFmpeg/TTS 探测进程超时重写（输出重定向文件 + waitFor(timeout) + destroyForcibly，同修 BgmService.probeDuration / isEdgeTtsAvailable）；M9 ImageService/ChatService/StoryScriptService 外部 LLM 调用移出 @Transactional（长事务占连接）；M10 ffmpeg/ffprobe/python 默认裸名走 PATH，`FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD` 环境变量覆盖 + 启动校验告警（机器特定绝对路径不可移植）。
+> - **Minor 快修组**：WebMvcConfig 读 StorageProperties（去硬编码）、句柄 try-with-resources、POST /send 返回真实 sessionId、OpenAiApi 超时注入 + Key 脱敏、图片生成超时取消 futures（GENERATING→FAILED）、durationSeconds 非法值兜底、videoUrl 转义、docker-compose 凭据环境变量化（POSTGRES_PASSWORD 必填、不暴露 5432）、logback 生产 INFO；`git rm --cached data/chatdb.trace.db`（.gitignore 已覆盖）。
+> - **验证**：新增 23 测试（SecurityConfigIntegrationTest 4 / CaptchaServiceTest 3 / LoginRateLimiterTest 4 / ChatServiceOwnershipTest 7 / RagServiceMemoryDeleteTest 2 / VideoComposeServiceTimeoutTest 3），全量 **141 绿**；真实端到端冒烟 **21 项 ALL PASS**（登录→工作室→建脚本→生图→预览导出→批量下载，真实 HTTP + local 存储 + DeepSeek + FFmpeg，覆盖 C1/C2 测试盲区；含限速 429/会话 ID 更换/越权 400/匿名拦截断言）。
+> - **Release 准备**：pom 版本 0.0.1-SNAPSHOT → **2.0.0**（仓库已有 v1.0.0 初始稳定版 tag（2026-06-11，chat+auth），本次为第二个 release；含破坏性变更与里程碑级视频工作室/Agent 子系统，按 SemVer 升主版本）；README/API_TEST 中英文四份文档同步（验证码图片化、端点变更、配置默认值、安全说明）。
+> - **遗留跟进项（不阻塞 release）**：MinIO presigned URL 24h 过期持久化（需改 DB 语义单独切片）、字幕 fontName 白名单、TimeZone 缓存上限、CDN SRI、Boot 3.4.1→3.4.x 小版本升级（单独验证批）、Docker 构建验证（本机无 Docker）、DashScope 图片全链路（无 Key）、FastDFS 占位实现（失败行为安全，保留）。
+
+> **Release 提交前复审修复记录（v2.0.0，2026-11-14）✅**：对全部未提交改动再做 CodeReview（重点核对放行清单/限速与会话固定/进程超时/归属校验/双语文档），无 Critical，修复 1 Major + 4 Minor + 2 Nit：
+> - **M-1**：compressContext 移除 @Transactional 后删除→摘要→重编号的破坏性多写序列失去原子性，中途 DB 失败会永久丢消息；改用 TransactionTemplate 将该序列包成单事务（LLM 总结仍在事务外，M9 语义保留）。
+> - **m-1**：/context-usage、/send 越权统一 400，/stream 同步校验失败转 error 事件（对齐 getHistory 模式）。
+> - **m-2**：批量生图超时补批次级 AtomicBoolean 取消标志（CompletableFuture.cancel(true) 不中断运行中任务），迟到完成不再把 FAILED 覆盖回 READY、不再重复计数。
+> - **m-3/m-4**：中文 README 补齐“默认裸名走 PATH”（L81/yaml 注释）与 Docker 节 POSTGRES_PASSWORD 必填说明，与英文侧对齐。
+> - **n-1**：两份 README Actuator 特性条目标注仅暴露 health/info；**n-2**：VideoComposeServiceTimeoutTest 加 Windows 平台守卫（非 Windows 跳过，Docker 构建 -DskipTests 不受影响）。
+> - **验证**：新增 7 测试（ChatServiceCompressTransactionTest 3 / ChatControllerErrorStatusTest 3 / ImageGenerationServiceTimeoutCancelTest 1），全量 **148 绿**（1 个联网 TTS 用例默认跳过）。复审结论：可提交并打 v2.0.0 tag。
+
 ### 4.1 Agent 角色设计
 
 ```
@@ -852,7 +868,7 @@ ChatClient agentClient = ChatClient.builder(chatModel)
 
 | 依赖 | 用途 | 安装命令 |
 |------|------|---------|
-| FFmpeg | 视频合成 + 字幕烧录 + 比例转换 | 路径走 `video.ffmpeg-path` / `video.ffprobe-path` 配置，不依赖系统 PATH。本机已装 `D:/Program Files/ffmpeg/bin/`（BtbN win64-gpl，2026-11-13 构建），该目录已于 2026-11-14 追加到**用户** PATH 末尾（机器 PATH 未动，且此前任何 PATH 作用域里都没有 ffmpeg，不存在被旧版抢命中的情况）。**版本必须 ≥ 4.3**，`xfade` 转场滤镜才存在——EVCapture 自带的 `C:\Program Files\EVCapture\ffmpeg.exe` 是 4.2 构建，无 xfade，不可用 |
+| FFmpeg | 视频合成 + 字幕烧录 + 比例转换 | v2.0.0 起默认裸名走 PATH（release 审查 M10），可用 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量或 `video.ffmpeg-path` / `video.ffprobe-path` 配置覆盖；启动时探测缺失仅告警不阻断。本机已装 `D:/Program Files/ffmpeg/bin/`（BtbN win64-gpl，2026-11-13 构建），该目录已于 2026-11-14 追加到**用户** PATH 末尾（机器 PATH 未动，且此前任何 PATH 作用域里都没有 ffmpeg，不存在被旧版抢命中的情况）。**版本必须 ≥ 4.3**，`xfade` 转场滤镜才存在——EVCapture 自带的 `C:\Program Files\EVCapture\ffmpeg.exe` 是 4.2 构建，无 xfade，不可用 |
 | DeepSeek API Key | 脚本生成 | 设置环境变量 `DEEPSEEK_API_KEY` |
 | DashScope API Key | 图片生成 | 设置环境变量 `DASHSCOPE_API_KEY` |
 
@@ -937,7 +953,7 @@ mvn spring-boot:run
 | 视频模板 | JPA 实体 + 系统预置 | 支持用户自定义，系统内置开箱即用 |
 | 存储 | StorageService 工厂模式 | 已有本地/OSS/MinIO/FastDFS 四种实现复用 |
 | 前端 | Thymeleaf + 原生 JS | 与现有项目一致，无需引入新框架 |
-| FFmpeg / Python 调用方式 | 不依赖 PATH，由 `video.ffmpeg-path` / `video.ffprobe-path` / `video.python-command` 指定绝对路径（可用 `FFMPEG_PATH` / `FFPROBE_PATH` / `PYTHON_CMD` 环境变量覆盖） | 本机 PATH 曾经不可控：EVCapture 自带的 4.2 构建缺 xfade；微软商店的应用执行别名桩会把裸 `python` 顶成退出码 49。两处坑现已修好（新 FFmpeg 目录追加、`Python\bin` 提前），但 IDE/服务启动的 JVM 可能仍持有改动前的 PATH 快照，因此配置继续写绝对路径，命令行手工调试则可直接用 `ffmpeg` / `python` |
+| FFmpeg / Python 调用方式 | v2.0.0 起默认裸名走 PATH（release 审查 M10 可移植性修复），可用 `FFMPEG_PATH` / `FFPROBE_PATH` / `PYTHON_CMD` 环境变量或 `video.*` 配置覆盖为绝对路径 | 历史背景：本机 PATH 曾经不可控（EVCapture 4.2 构建缺 xfade；微软商店别名桩把裸 `python` 顶成退出码 49），两处坑已修好（新 FFmpeg 目录追加、`Python\bin` 提前）。默认裸名保证跨机器可移植；若启动环境 PATH 快照过旧或存在同名干扰，用环境变量显式指定绝对路径 |
 
 ---
 
@@ -950,7 +966,7 @@ src/main/java/com/github/ylyan2015/springaidemo/
 │   ├── Shot.java                                # 单个镜头 DTO
 │   ├── VideoScriptService.java                  # 脚本生成 + 图片生成调度
 │   ├── VideoComposeService.java                 # FFmpeg 视频合成 + TTS + 音视频合并
-│   ├── VideoController.java                     # REST API
+│   ├── VideoController.java                     # REST API（初始规划；已于 v2.0.0 release 审查删除）
 │   ├── subtitle/                                # 模块 F：字幕系统
 │   │   ├── SubtitleService.java                 # SRT 生成 + FFmpeg 字幕烧录
 │   │   ├── SubtitleStyle.java                   # 字幕样式配置
@@ -1002,7 +1018,7 @@ src/main/resources/
 ```
 src/main/java/com/github/ylyan2015/springaidemo/
 ├── video/
-│   ├── Storyboard.java / Shot.java / VideoScriptService.java / VideoController.java   # Phase 1（旧一次性流程，保留兼容）
+│   ├── Storyboard.java / Shot.java / VideoScriptService.java   # Phase 1（VideoController 已于 v2.0.0 release 审查删除，功能由分模块 API 承接）
 │   ├── VideoComposeService.java                # FFmpeg 合成 + ComposeOptions（分辨率/多比例/水印/BGM 混音/字幕烧录）
 │   ├── VisualStyle.java                        # 模块 B：8 种视觉风格预设（含负面提示词）
 │   ├── PlatformPreset.java                     # 模块 I：社媒平台预设枚举（六平台）

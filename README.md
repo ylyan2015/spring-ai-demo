@@ -24,7 +24,7 @@
 - ✅ **RESTful API** - 提供完整的 REST API 接口
 - ✅ **Web 界面** - 美观的聊天界面，支持会话列表、实时对话、Markdown 渲染
 - ✅ **模型切换** - Web界面直接切换离线模式和在线专家模式
-- ✅ **Spring Boot Actuator** - 内置健康检查、指标监控等运维端点
+- ✅ **Spring Boot Actuator** - 内置健康检查等运维端点（安全加固后仅对外暴露 health/info）
 - ✅ **Docker 一键部署** - 多阶段构建镜像 + docker-compose 编排应用和中间件，开箱即用
 - ✅ **AI 回复完成通知** - 浏览器桌面通知 + 提示音 + 页面标题徽标，切走页面也不错过回复
 - ✅ **AI 图像生成** - 集成阿里云百炼通义万相模型（wan2.6-t2i），通过提示词生成高品质图片
@@ -78,7 +78,7 @@
    - **OpenAI API Key** - 注册 OpenAI 账号获取
    - **DeepSeek API Key** - 注册 DeepSeek 账号获取
 4. **（可选）DashScope API Key** - 如需图像生成功能，注册阿里云百炼平台获取
-5. **（可选）FFmpeg ≥ 4.3** - 如需 AI 短视频工作室的视频合成/导出功能（含 ffprobe）。路径通过 `video.ffmpeg-path` / `video.ffprobe-path` 配置（支持 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量覆盖），不依赖系统 PATH；xfade 转场需 ≥ 4.3，BGM 混音需 ≥ 4.4
+5. **（可选）FFmpeg ≥ 4.3** - 如需 AI 短视频工作室的视频合成/导出功能（含 ffprobe）。默认裸名走系统 PATH，可通过 `video.ffmpeg-path` / `video.ffprobe-path` 配置或 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量指定绝对路径；xfade 转场需 ≥ 4.3，BGM 混音需 ≥ 4.4
 6. **（可选）Edge TTS** - 如需短视频旁白配音：`pip install edge-tts`（未安装时自动跳过配音）；Python 解释器路径由 `video.python-command` 指定（支持 `PYTHON_CMD` 环境变量覆盖）
 7. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
 
@@ -200,15 +200,15 @@ http://localhost:8080
    - 输入用户名
    - 输入密码（须包含大写字母、小写字母和数字，6-50位）
    - 再次输入密码确认
-   - 输入页面显示的5位随机验证码
+   - 输入图片验证码（4位字母数字，点击可刷新）
    - 点击"注册"按钮
 
 2. **登录**：
    - 输入用户名和密码
-   - 输入页面显示的5位随机验证码
+   - 输入图片验证码（4位字母数字，点击可刷新）
    - 点击"登录"按钮
 
-> **安全说明**：密码在传输前会通过 RSA 非对称加密算法加密，服务器端使用 BCrypt 算法存储密码哈希，即使数据库泄露也无法还原明文密码。
+> **安全说明**：密码在传输前会通过 RSA 非对称加密算法加密，服务器端使用 BCrypt 算法存储密码哈希，即使数据库泄露也无法还原明文密码。验证码答案仅存 Session 不随接口返回；登录限速同用户名+IP 60秒内最多5次失败（超限 429）；登录成功后自动更换会话 ID（防会话固定）。
 
 #### 聊天功能
 
@@ -251,7 +251,7 @@ Web 界面右侧提供知识库面板：
 - 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出，支持 ZIP 打包下载（含封面 + 清单）；一键从导出视频截取封面帧
 - 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
 
-> **说明**：视频合成依赖 FFmpeg（路径由 `video.ffmpeg-path` / `video.ffprobe-path` 配置，不依赖 PATH）；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
+> **说明**：视频合成依赖 FFmpeg（默认裸名走系统 PATH，可用 `video.ffmpeg-path` / `video.ffprobe-path` 或环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` 指定绝对路径）；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频；解释器由 `video.python-command` / `PYTHON_CMD` 指定）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
 
 #### 5. 使用 API 测试
 
@@ -376,7 +376,6 @@ spring-ai-demo/
 │   ├── ImageGenerationProgress.java   # SSE 进度事件
 │   ├── VideoScriptService.java        # 脚本生成（Phase 1）
 │   ├── VideoComposeService.java       # FFmpeg 合成 + ComposeOptions（多比例/水印/BGM 混音/字幕烧录）
-│   ├── VideoController.java           # 旧一次性流程 API（保留兼容）
 │   ├── subtitle/                     # 模块 F：字幕系统
 │   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴 + 多语言翻译
 │   │   ├── SubtitleStyle.java         # 字幕样式（字体/字号/颜色/描边/位置）
@@ -438,12 +437,12 @@ spring-ai-demo/
 ```
 注册/登录流程：
 1. 前端获取 RSA 公钥（/api/auth/public-key）
-2. 前端获取验证码（/api/auth/captcha），显示5位随机字母数字
+2. 前端获取验证码图片（/api/auth/captcha），显示4位字母数字干扰线图片（答案仅存 Session）
 3. 用户填写表单（注册时需输入2遍密码且一致）
 4. 前端使用 RSA 公钥加密密码（Web Crypto API, RSA-OAEP + SHA-256）
 5. 前端发送加密后的密码 + 用户名 + 验证码到后端
 6. 后端验证验证码 → RSA 解密密码 → 校验密码强度 → BCrypt 加密存储
-7. 登录/注册成功后建立 HttpSession 会话
+7. 登录/注册成功后建立 HttpSession 会话（自动更换会话 ID 防固定；同用户名+IP 60秒内最多5次失败）
 ```
 
 ## 配置说明
@@ -567,7 +566,7 @@ rag:
 H2 使用文件持久化模式，数据保存在 `./data/chatdb.mv.db` 文件中：
 
 - **数据存储位置**：项目根目录下的 `data` 文件夹
-- **H2 控制台**：访问 http://localhost:8080/h2-console
+- **H2 控制台**：默认关闭（安全加固）；本地调试可在 `application-h2.yml` 手动开启 `spring.h2.console.enabled: true` 后访问 http://localhost:8080/h2-console，切勿在生产开启
 - **JDBC URL**：`jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
 - **用户名**：`sa`
 - **密码**：(留空)
@@ -655,7 +654,7 @@ image:
     max-retries: 2                     # 低分最大重试次数（保留最高分一张）
 
 video:
-  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg 可执行文件路径（Windows 建议绝对路径，不依赖 PATH；需 ≥4.3）
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg 可执行文件路径（默认裸名走 PATH，不在 PATH 时写绝对路径；需 ≥4.3）
   ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe 路径（BGM 时长探测用）
   python-command: ${PYTHON_CMD:python}  # 运行 edge-tts 的 Python 解释器（Windows 建议绝对路径，避开微软商店别名桩）
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头建议 ≥8
@@ -726,7 +725,7 @@ spring:
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | `/api/auth/public-key` | GET | 获取 RSA 公钥 |
-| `/api/auth/captcha` | GET | 获取5位随机验证码 |
+| `/api/auth/captcha` | GET | 获取验证码图片（4位字母数字，答案仅存 Session） |
 | `/api/auth/register` | POST | 用户注册 |
 | `/api/auth/login` | POST | 用户登录 |
 | `/api/auth/logout` | POST | 退出登录 |
@@ -738,7 +737,6 @@ spring:
 |------|------|------|
 | `/api/chat/stream` | POST | 流式发送消息（SSE） |
 | `/api/chat/send` | POST | 发送消息（非流式） |
-| `/api/chat/send` | GET | 发送消息（兼容旧接口） |
 | `/api/chat/conversation` | POST | 创建新会话 |
 | `/api/chat/conversations` | GET | 获取当前用户的所有会话 |
 | `/api/chat/history/{sessionId}` | GET | 获取对话历史 |
@@ -760,7 +758,7 @@ spring:
 |------|------|------|
 | `/api/model/current` | GET | 获取当前模型 |
 | `/api/model/available` | GET | 获取可用模型列表 |
-| `/api/model/switch` | POST | 切换模型 |
+| `/api/model/switch` | POST | 切换模型（需登录） |
 | `/api/model/params` | GET | 获取用户所有模型的参数预设 |
 | `/api/model/params/{modelKey}` | GET | 获取某模型的参数预设 |
 | `/api/model/params/{modelKey}` | POST | 保存/更新模型参数预设 |
@@ -814,7 +812,6 @@ spring:
 | `/api/video/agent/orchestrate` | POST | 一键成片：提交多 Agent 异步编排任务（Phase 3 切片3） |
 | `/api/video/agent/orchestrate/{taskId}` | GET | 查询编排任务状态（轮询，Phase 3 切片3） |
 | `/api/video/agent/orchestrate/{taskId}/confirm` | POST | 确认续跑：放行 exportVideo 闸门（Phase 3 切片3） |
-| `/api/video/generate` / `/api/video/compose` | POST | 旧一次性流程 API（保留兼容） |
 
 > 视频工作室页面：http://localhost:8080/video-studio （详见 [API_TEST.md](API_TEST.md) 第七节）
 
@@ -860,7 +857,7 @@ spring:
 - **数据持久化**：`pgdata`、`ollama-data`、`appdata`（预置 BGM/运行数据）、`uploads`（生成文件）命名卷保证容器重建不丢数据
 - **Profile 控制**：ollama 服务使用 `profiles: [ollama]`，默认不启动，需 `--profile ollama` 显式启用
 - **安全运行**：容器以非 root 用户 `appuser` 运行应用
-- **短视频依赖**：镜像已装 FFmpeg（≥6.x，含 xfade/libass）与 edge-tts，compose 自动注入 `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD`；字幕字体由 docker profile 自动切为 `Noto Sans CJK SC`；`.env` 需配置 `DASHSCOPE_API_KEY`（图像生成/质量评估）
+- **短视频依赖**：镜像已装 FFmpeg（≥6.x，含 xfade/libass）与 edge-tts，compose 自动注入 `FFMPEG_PATH`/`FFPROBE_PATH`/`PYTHON_CMD`；字幕字体由 docker profile 自动切为 `Noto Sans CJK SC`；`.env` 需配置 `DASHSCOPE_API_KEY`（图像生成/质量评估）并设置强 `POSTGRES_PASSWORD`（必填，compose 无硬编码默认值，未设置将拒绝启动）
 
 ## 常见问题
 
@@ -894,7 +891,7 @@ ollama pull qwen2.5:7b-instruct
 
 #### H2 数据库
 
-访问 H2 控制台：http://localhost:8080/h2-console
+H2 控制台默认关闭（安全加固）。本地调试可在 `application-h2.yml` 开启 `spring.h2.console.enabled: true` 后访问 http://localhost:8080/h2-console：
 - JDBC URL: `jdbc:h2:file:./data/chatdb;AUTO_SERVER=TRUE`
 - Username: `sa`
 - Password: (留空)

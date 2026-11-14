@@ -14,11 +14,12 @@
         </encoder>
     </appender>
 
-    <!-- 应用包日志 -->
-    <logger name="com.github.ylyan2015.springaidemo" level="DEBUG"/>
+    <!-- 应用包日志：默认 INFO（release 审查 Minor#15：生产避免 DEBUG 噪音/敏感输出）；
+         本地调试可用 logging.level.com.github.ylyan2015.springaidemo=DEBUG 覆盖 -->
+    <logger name="com.github.ylyan2015.springaidemo" level="INFO"/>
 
-    <!-- Hibernate SQL：DEBUG 输出单行 SQL（format_sql=false） -->
-    <logger name="org.hibernate.SQL" level="DEBUG"/>
+    <!-- Hibernate SQL：默认 WARN（DEBUG 会输出全部 SQL，生产不宜） -->
+    <logger name="org.hibernate.SQL" level="WARN"/>
     <!-- 抑制参数绑定日志，避免额外输出行 -->
     <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="WARN"/>
     <logger name="org.hibernate.orm.jdbc.bind" level="WARN"/>

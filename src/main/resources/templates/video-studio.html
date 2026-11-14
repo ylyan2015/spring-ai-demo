@@ -259,8 +259,9 @@ function hideProgress() { document.getElementById('progressBar').classList.remov
 // ==================== 页面初始化 ====================
 async function init() {
     // 登录检测：页面与 /api/video/** 均为 permitAll，但业务接口依赖登录用户
+    // /api/auth/user 返回 {loggedIn, username}，无 success 字段（release 审查 C1）
     const auth = await api('/api/auth/user');
-    if (!auth.success) {
+    if (!auth.loggedIn) {
         document.getElementById('emptyArea').innerHTML =
             '<div class="status error">请先 <a href="/login" style="color:#4a6cf7;">登录</a> 后使用短视频工作室</div>';
         return;
@@ -915,8 +916,8 @@ function renderVideoResult(video, exportInfo) {
     if (exportInfo && exportInfo.hasWatermark) tags.push('<span class="badge badge-PENDING">预览版·带水印</span>');
     if (video.fileSizeBytes) tags.push((video.fileSizeBytes / 1048576).toFixed(1) + ' MB');
     a.innerHTML = '<div class="video-result"><h3>' + (exportInfo && exportInfo.hasWatermark ? '快速预览完成' : (exportInfo && exportInfo.platform ? esc(exportInfo.platform.displayName) + ' 平台导出完成' : '高清导出完成')) + '</h3>' +
-        '<video controls autoplay src="' + video.videoUrl + '">您的浏览器不支持视频播放</video><br>' +
-        '<a class="download-link" href="' + video.videoUrl + '" download>下载视频</a>' +
+        '<video controls autoplay src="' + esc(video.videoUrl) + '">您的浏览器不支持视频播放</video><br>' +
+        '<a class="download-link" href="' + esc(video.videoUrl) + '" download>下载视频</a>' +
         '<button class="btn btn-sm btn-ghost" onclick="generateCover(' + (exportInfo ? exportInfo.id : 'null') + ')">生成封面</button>' +
         '<div class="meta-tags">' + tags.join(' | ') + '</div></div>';
     a.scrollIntoView({ behavior: 'smooth' });

@@ -334,23 +334,37 @@ public class BgmService {
         return fileName.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
     }
 
-    /** 用 ffprobe 探测音频时长（秒），失败返回 null */
+    /** 用 ffprobe 探测音频时长（秒），失败返回 null；带超时防挂起进程阻塞上传线程（release 审查 Minor#4） */
     private Integer probeDuration(Path audioFile) {
+        Path outputFile = null;
+        Process p = null;
         try {
-            Process p = new ProcessBuilder(
+            outputFile = Files.createTempFile("bgm-probe-", ".log");
+            p = new ProcessBuilder(
                     ffprobePath, "-v", "error",
                     "-show_entries", "format=duration",
                     "-of", "csv=p=0",
                     audioFile.toAbsolutePath().toString()
-            ).redirectErrorStream(true).start();
-            String output;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            ).redirectErrorStream(true).redirectOutput(outputFile.toFile()).start();
+            boolean finished = p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return null;
             }
-            p.waitFor();
+            String output = Files.readString(outputFile).trim();
             return output.isEmpty() ? null : (int) Math.round(Double.parseDouble(output));
         } catch (Exception e) {
             return null;
+        } finally {
+            if (p != null && p.isAlive()) {
+                p.destroyForcibly();
+            }
+            if (outputFile != null) {
+                try {
+                    Files.deleteIfExists(outputFile);
+                } catch (IOException ignored) {
+                }
+            }
         }
     }
 

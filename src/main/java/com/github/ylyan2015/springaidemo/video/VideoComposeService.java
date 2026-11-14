@@ -44,6 +44,20 @@ public class VideoComposeService {
     @Value("${video.compose-timeout-minutes:8}")
     private int composeTimeoutMinutes;
 
+    /**
+     * FFmpeg 可执行文件路径。默认裸名 ffmpeg，依赖系统 PATH；
+     * 指向绝对路径时可在未配置 PATH 的机器上直接调用。
+     */
+    @Value("${video.ffmpeg-path:ffmpeg}")
+    private String ffmpegPath;
+
+    /**
+     * 运行 edge-tts 的 Python 解释器命令。Windows 上 PATH 里的裸 python 常被微软商店的
+     * "应用执行别名" 桩挡住（退出码 49），此时必须填绝对路径。
+     */
+    @Value("${video.python-command:python}")
+    private String pythonCommand;
+
     public VideoComposeService(StorageService storageService) {
         this.storageService = storageService;
     }
@@ -90,12 +104,13 @@ public class VideoComposeService {
 
             // xfade 转场会吃掉相邻镜头的重叠时长，BGM 淡出与展示时长必须按实际视频时长计算，
             // 否则结尾淡出会被 -shortest 截掉，BGM 以全音量戛然而止
-            int totalDuration = imageFiles.size() == 1
+            double exactDuration = imageFiles.size() == 1
                     ? durations.get(0)
-                    : (int) Math.round(durations.stream().mapToInt(Integer::intValue).sum()
-                        - (imageFiles.size() - 1) * XFADE_DURATION);
+                    : durations.stream().mapToInt(Integer::intValue).sum()
+                        - (imageFiles.size() - 1) * XFADE_DURATION;
+            int totalDuration = (int) Math.round(exactDuration);
 
-            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, workDir, options);
+            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, workDir, options, exactDuration);
 
             Path finalVideo;
             boolean hasNarrationTrack = false;
@@ -217,7 +232,7 @@ public class VideoComposeService {
     // ==================== FFmpeg Video Composition ====================
 
     private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, Path workDir,
-                                        ComposeOptions options)
+                                        ComposeOptions options, double exactDuration)
             throws Exception {
         Path output = workDir.resolve("output_video.mp4");
 
@@ -227,7 +242,7 @@ public class VideoComposeService {
         }
 
         List<String> cmd = new ArrayList<>();
-        cmd.add("ffmpeg");
+        cmd.add(ffmpegPath);
         cmd.add("-y");
 
         for (Path img : images) {
@@ -240,9 +255,11 @@ public class VideoComposeService {
         StringBuilder filter = new StringBuilder();
 
         for (int i = 0; i < images.size(); i++) {
+            // zoompan 的 z 表达式没有 t（秒）变量，只有 on（当前输出帧号）；
+            // 跑满 1.06 倍需要 duration*FPS 帧
             String zoomExpr = i % 2 == 0
-                    ? String.format("min(1+0.06*t/%d,1.06)", durations.get(i))
-                    : String.format("max(1.06-0.06*t/%d,1.0)", durations.get(i));
+                    ? String.format("min(1+0.06*on/%d,1.06)", durations.get(i) * FPS)
+                    : String.format("max(1.06-0.06*on/%d,1.0)", durations.get(i) * FPS);
 
             // 先按目标比例居中裁剪，再 zoompan 动效，避免非 16:9 比例下画面变形
             filter.append(String.format(
@@ -262,9 +279,11 @@ public class VideoComposeService {
             String labelB = "[v" + (i + 1) + "]";
             String labelOut = (i < images.size() - 2) ? "[xf" + i + "]" : "[vout]";
 
+            // 输出标签必须紧跟在 xfade 之后；放在滤镜名之前会被解析成第三个输入，
+            // 报 "More input link labels specified for filter 'xfade' than it has inputs: 3 > 2"
             filter.append(String.format(
-                    "%s%s%sxfade=transition=fade:duration=%.1f:offset=%.2f;",
-                    labelA, labelB, labelOut, XFADE_DURATION, Math.max(0, xfadeOffset)));
+                    "%s%sxfade=transition=fade:duration=%.1f:offset=%.2f%s;",
+                    labelA, labelB, XFADE_DURATION, Math.max(0, xfadeOffset), labelOut));
         }
 
         // 可选水印：半透明居中大字（预览版），正式导出不叠加
@@ -297,6 +316,9 @@ public class VideoComposeService {
         cmd.add("yuv420p");
         cmd.add("-movflags");
         cmd.add("+faststart");
+        // -loop 1 的图片输入是无限流，xfade 也不会自己收尾，必须显式截断时长
+        cmd.add("-t");
+        cmd.add(String.format("%.2f", exactDuration));
         cmd.add(output.toAbsolutePath().toString());
 
         executeCommand(cmd, workDir, "ffmpeg video compose");
@@ -307,17 +329,17 @@ public class VideoComposeService {
             throws Exception {
         String vf = String.format(
                 "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
-                        + "zoompan=z='min(1+0.06*t/%d,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
+                        + "zoompan=z='min(1+0.06*on/%d,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d,"
                         + "setpts=PTS-STARTPTS,format=yuva420p",
                 options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
-                duration, options.getWidth(), options.getHeight(), FPS);
+                duration * FPS, options.getWidth(), options.getHeight(), FPS);
         if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
             vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
                             + ":x=(w-text_w)/2:y=(h-text_h)/2",
                     options.getWatermark(), Math.max(16, options.getHeight() / 14));
         }
         executeCommand(List.of(
-                "ffmpeg", "-y",
+                ffmpegPath, "-y",
                 "-loop", "1",
                 "-i", image.toAbsolutePath().toString(),
                 "-vf", vf,
@@ -333,7 +355,7 @@ public class VideoComposeService {
 
     private boolean isEdgeTtsAvailable() {
         try {
-            Process p = new ProcessBuilder("python", "-m", "edge_tts", "--version")
+            Process p = new ProcessBuilder(pythonCommand, "-m", "edge_tts", "--version")
                     .redirectErrorStream(true)
                     .start();
             int code = p.waitFor();
@@ -347,7 +369,9 @@ public class VideoComposeService {
             return p.waitFor() == 0;
         } catch (Exception ignored) {}
 
-        log.warn("edge-tts not available. Install with: pip install edge-tts");
+        log.warn("edge-tts not available via '{}' or 'edge-tts'. "
+                + "Install with `pip install edge-tts`, or point video.python-command at a real interpreter.",
+                pythonCommand);
         return false;
     }
 
@@ -373,7 +397,7 @@ public class VideoComposeService {
             try {
                 String safeText = text.replace("\"", "\\\"").replace("'", "\\'");
                 List<String> cmd = List.of(
-                        "python", "-m", "edge_tts",
+                        pythonCommand, "-m", "edge_tts",
                         "--voice", "zh-CN-YunxiNeural",
                         "--text", text,
                         "--write-media", mp3File.toAbsolutePath().toString()
@@ -394,7 +418,7 @@ public class VideoComposeService {
         Path output = workDir.resolve("full_audio.mp3");
 
         List<String> cmd = new ArrayList<>();
-        cmd.add("ffmpeg");
+        cmd.add(ffmpegPath);
         cmd.add("-y");
 
         StringBuilder filter = new StringBuilder();
@@ -441,7 +465,7 @@ public class VideoComposeService {
         Path output = workDir.resolve("final_video.mp4");
 
         executeCommand(List.of(
-                "ffmpeg", "-y",
+                ffmpegPath, "-y",
                 "-i", videoFile.toAbsolutePath().toString(),
                 "-i", audioFile.toAbsolutePath().toString(),
                 "-c:v", "copy",
@@ -470,7 +494,7 @@ public class VideoComposeService {
         double fadeOutStart = Math.max(0, totalDuration - 3);
 
         List<String> cmd = new ArrayList<>();
-        cmd.add("ffmpeg");
+        cmd.add(ffmpegPath);
         cmd.add("-y");
         cmd.add("-i");
         cmd.add(videoFile.toAbsolutePath().toString());
@@ -528,7 +552,7 @@ public class VideoComposeService {
             throws Exception {
         Path output = workDir.resolve("video_with_subtitle.mp4");
         executeCommand(List.of(
-                "ffmpeg", "-y",
+                ffmpegPath, "-y",
                 "-i", videoFile.toAbsolutePath().toString(),
                 // executeCommand 以 workDir 为工作目录，用相对文件名可避开 Windows 盘符冒号转义问题
                 "-vf", "subtitles=" + assFile.getFileName(),
@@ -556,7 +580,7 @@ public class VideoComposeService {
 
         Path output = workDir.resolve("subtitle_preview.png");
         executeCommand(List.of(
-                "ffmpeg", "-y",
+                ffmpegPath, "-y",
                 "-i", image.toAbsolutePath().toString(),
                 "-vf", String.format(
                         "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,subtitles=%s",
@@ -577,7 +601,7 @@ public class VideoComposeService {
             throws Exception {
         Path output = workDir.resolve("video_with_logo.mp4");
         executeCommand(List.of(
-                "ffmpeg", "-y",
+                ffmpegPath, "-y",
                 "-i", videoFile.toAbsolutePath().toString(),
                 "-i", logoFile.toAbsolutePath().toString(),
                 "-filter_complex", "[0:v][1:v]overlay=main_w-overlay_w-10:main_h-overlay_h-10",
@@ -607,7 +631,7 @@ public class VideoComposeService {
 
             Path cover = workDir.resolve("cover.jpg");
             executeCommand(List.of(
-                    "ffmpeg", "-y",
+                    ffmpegPath, "-y",
                     "-ss", String.format("%.3f", Math.max(0, timeOffsetSeconds)),
                     "-i", video.toAbsolutePath().toString(),
                     "-vframes", "1", "-q:v", "2",

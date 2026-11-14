@@ -78,8 +78,8 @@
    - **OpenAI API Key** - 注册 OpenAI 账号获取
    - **DeepSeek API Key** - 注册 DeepSeek 账号获取
 4. **（可选）DashScope API Key** - 如需图像生成功能，注册阿里云百炼平台获取
-5. **（可选）FFmpeg** - 如需 AI 短视频工作室的视频合成/导出功能（需在 PATH 中，含 ffprobe）
-6. **（可选）Edge TTS** - 如需短视频旁白配音：`pip install edge-tts`（未安装时自动跳过配音）
+5. **（可选）FFmpeg ≥ 4.3** - 如需 AI 短视频工作室的视频合成/导出功能（含 ffprobe）。路径通过 `video.ffmpeg-path` / `video.ffprobe-path` 配置（支持 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量覆盖），不依赖系统 PATH；xfade 转场需 ≥ 4.3，BGM 混音需 ≥ 4.4
+6. **（可选）Edge TTS** - 如需短视频旁白配音：`pip install edge-tts`（未安装时自动跳过配音）；Python 解释器路径由 `video.python-command` 指定（支持 `PYTHON_CMD` 环境变量覆盖）
 7. **（可选）PostgreSQL + pgvector 扩展** - 如需 RAG 持久化存储
 
 ## 快速开始
@@ -241,13 +241,14 @@ Web 界面右侧提供知识库面板：
 - 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除；可选视频模板（8 个内置风格 + 自定义）一键生成对应风格脚本，脚本可另存为模板
 - 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序
 - 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
-- 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换；SSE 实时进度条、失败自动重试、单镜头重新生成
+- 🖼️ **并行图片生成** - 云端通义万相与本地 Stable Diffusion / FLUX 一键切换（本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）；SSE 实时进度条、失败自动重试、单镜头重新生成
+- ✅ **图片质量评估**（可选）- 多模态 LLM 按清晰度/相关性/美学三维打分（0-10），低分自动重新生成（≤2 次，保留最高分）；未配多模态 API 时降级为规则评估；镜头卡片显示质量徽章（`image.quality.enabled` 开启，默认关闭）
 - 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等，预置 5 首合成免版权音乐），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
 - 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；字幕语言可选中文/English/中英双语（LLM 翻译，配音仍为中文）；支持单独导出 SRT 文件与一帧字幕效果预览
 - 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出，支持 ZIP 打包下载（含封面 + 清单）；一键从导出视频截取封面帧
 - 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
 
-> **说明**：视频合成依赖 FFmpeg；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
+> **说明**：视频合成依赖 FFmpeg（路径由 `video.ffmpeg-path` / `video.ffprobe-path` 配置，不依赖 PATH）；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
 
 #### 5. 使用 API 测试
 
@@ -331,7 +332,7 @@ spring-ai-demo/
 │   │   ├── CaptchaService.java         # 验证码服务
 │   │   ├── ChatService.java            # 聊天服务（业务逻辑/上下文压缩）
 │   │   ├── ImageService.java           # 图像生成服务（调用DashScope + 转存存储）
-│   │   ├── ImageGenerationService.java # 短视频：并行生成 + SSE + 重试
+│   │   ├── ImageGenerationService.java # 短视频：并行生成 + SSE + 重试 + 质量评估重试
 │   │   ├── ImagePromptOptimizerService.java # 短视频：LLM 提示词优化
 │   │   ├── RagService.java             # RAG 服务（文档解析/向量化/检索）
 │   │   ├── StoryScriptService.java     # 短视频：脚本生成/编辑/排序
@@ -376,10 +377,14 @@ spring-ai-demo/
 │   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴 + 多语言翻译
 │   │   ├── SubtitleStyle.java         # 字幕样式（字体/字号/颜色/描边/位置）
 │   │   └── SubtitleCue.java           # 字幕条目（文本 + 起止毫秒）
+│   ├── quality/                      # 模块 J：图片质量评估
+│   │   ├── ImageQualityService.java   # 多模态评分 + 规则降级
+│   │   └── ImageQualityScore.java     # 评分 DTO（三维 0-10 + 综合均值）
 │   └── generator/                     # 图片生成抽象（策略+工厂）
 │       ├── ImageGenerator.java / GeneratedImage.java
 │       ├── DashScopeImageGenerator.java  # 云端通义万相
 │       ├── LocalSdImageGenerator.java   # 本地 SD WebUI / FLUX
+│       ├── LocalModelStylePreset.java   # SD1.5/SDXL/FLUX 风格预设（模块 G）
 │       └── ImageGeneratorFactory.java   # 配置驱动 + 运行时切换
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # 图像生成请求DTO
@@ -622,14 +627,26 @@ image:
     steps: 25                          # 采样步数
     cfg-scale: 7.0                     # 提示词相关性（CFG）
     timeout: 120                       # 本地生成超时（秒）
+    style-prefix: ""                   # 风格前缀覆盖（留空时按模型名自动套用内置预设：SD1.5/SDXL/FLUX）
+    extra-negative-prompt: ""          # 负面提示词覆盖（留空时按模型名自动套用内置预设）
   generation:
     parallelism: 3                     # 并行生成数（避免云端 API 限流）
     retry-attempts: 1                 # 失败重试次数
     retry-delay-ms: 2000              # 重试间隔（毫秒）
     total-timeout-seconds: 300        # 批量生成总超时（秒）
     default-size: 1280x720           # 默认图片尺寸（16:9 横屏）
+  quality:                             # 模块 J：图片质量评估（默认关闭）
+    enabled: false                     # 开启后低分图片自动重新生成（关闭时生成流程不变）
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容多模态端点
+    api-key: ${DASHSCOPE_API_KEY:}     # 多模态 API Key（留空时降级为规则评估）
+    model: qwen-vl-max                 # 多模态评估模型
+    threshold: 6.0                     # 及格阈值（0-10）
+    max-retries: 2                     # 低分最大重试次数（保留最高分一张）
 
 video:
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg 可执行文件路径（Windows 建议绝对路径，不依赖 PATH；需 ≥4.3）
+  ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe 路径（BGM 时长探测用）
+  python-command: ${PYTHON_CMD:python}  # 运行 edge-tts 的 Python 解释器（Windows 建议绝对路径，避开微软商店别名桩）
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头建议 ≥8
   watermark:                        # 社媒导出：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
@@ -644,12 +661,14 @@ bgm:
 
 **关键说明：**
 
-- **视频合成依赖 FFmpeg**：需在 PATH 中（含 ffprobe）；未安装时导出会失败并给出错误提示
-- **旁白配音依赖 Edge TTS**：`pip install edge-tts`；未安装时自动跳过配音，仅输出无声视频
+- **视频合成依赖 FFmpeg**：路径由 `video.ffmpeg-path` / `video.ffprobe-path` 指定（默认回退 PATH 中的 `ffmpeg`/`ffprobe`，可用 `FFMPEG_PATH`/`FFPROBE_PATH` 环境变量覆盖）；未安装/路径错误时导出会失败并给出错误提示。**版本需 ≥ 4.3**（xfade 转场），BGM 混音需 ≥ 4.4（amix normalize）；EVCapture 等软件自带的旧版（≈4.2）无 xfade，不可用
+- **旁白配音依赖 Edge TTS**：`pip install edge-tts`；调用命令由 `video.python-command` 指定（可用 `PYTHON_CMD` 覆盖；Windows 上裸 `python` 可能被微软商店“应用执行别名”桩劫持，建议写解释器绝对路径）；未安装时自动跳过配音，仅输出无声视频
 - **BGM 音乐库**：将免版权音乐按 `category__name.mp3` 命名放入 `./data/bgm/` 即自动注册，也可通过前端上传按钮添加
 - **字幕**：字幕时间轴与 xfade 转场精确对齐；字体需系统已安装（默认微软雅黑，`video.subtitle.font-name` 可改）；烧录使用 FFmpeg subtitles 滤镜（libass，常用构建均已内置）
 - **导出比例**：16:9 横屏(B站) / 9:16 竖屏(抖音) / 1:1 方形(小红书)，预览固定 480p + 水印，正式导出 720p/1080p 无水印
 - **平台导出**：平台预设自动映射 1080p 分辨率；封面默认截取最近一次成功导出的中间帧；Logo 角标需配置 `video.watermark.logo-path` 后在导出请求中传 `withLogo: true` 生效
+- **本地模型风格预设**：本地生成时按 `image.local.model` 模型名自动套用 SD1.5/SDXL/FLUX 内置风格前缀与负面词（FLUX 不套用负面词），可用 `image.local.style-prefix` / `image.local.extra-negative-prompt` 覆盖；仅作用于本地生成器，云端 DashScope 不受影响
+- **图片质量评估**：`image.quality.enabled: true` 开启后，每张图片由多模态 LLM 打分（清晰度/相关性/美学，0-10），低于 `threshold` 自动重试（≤ `max-retries` 次，评分反馈并入负面提示词，保留最高分）；未配 API Key 或调用失败时降级为分辨率规则评估；评估异常不阻塞生成；评分随镜头详情与 SSE 进度返回，前端显示质量徽章
 
 ### 完整配置示例
 
@@ -919,15 +938,16 @@ cat .env  # 确认 API Key 非占位符
 
 ### 14. 短视频导出失败提示 FFmpeg 相关错误？
 
-- 确认 `ffmpeg` 和 `ffprobe` 已安装且在系统 PATH 中：`ffmpeg -version`
+- 确认 `video.ffmpeg-path` / `video.ffprobe-path` 指向的可执行文件存在且可运行（默认回退 PATH）：`ffmpeg -version`
+- **版本需 ≥ 4.3**（xfade 转场滤镜），BGM 混音需 ≥ 4.4（`amix normalize` 参数）；EVCapture 等自带的 4.2 旧构建无 xfade，请安装新版（如 BtbN win64-gpl 构建）并修改配置路径
 - 多镜头合成较慢属于正常现象（1080p 可能需要几分钟），超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）
-- BGM 混音需 ffmpeg ≥ 4.4（`amix normalize` 参数），老版本请升级
+- 旁白配音失败时检查 `video.python-command` 指向的解释器已装 edge-tts（`python -m edge_tts --version`）；Windows 裸 `python` 可能被微软商店别名桩劫持（退出码 49），请写绝对路径
 
 ### 15. 如何使用本地 Stable Diffusion / FLUX 生成短视频画面？
 
-1. 启动本地 SD WebUI（或 ComfyUI 等兼容服务），确认可访问 `http://127.0.0.1:7860`
+1. 启动本地 SD WebUI（或 OllamaDiffuser 等兼容服务），确认可访问 `http://127.0.0.1:7860`（ComfyUI 需 SD WebUI 兼容层/代理，原生工作流协议暂未支持）
 2. 修改配置 `image.generator: local`，或在前端「图像生成器」下拉中运行时切换
-3. 本地生成原生支持负面提示词（Negative Prompt），画面风格更可控且无 API 成本
+3. 本地生成原生支持负面提示词（Negative Prompt），并按模型名自动套用风格预设（SD1.5/SDXL/FLUX），画面风格更可控且无 API 成本；可用 `image.local.style-prefix` / `image.local.extra-negative-prompt` 自定义覆盖
 
 ### 16. 字幕烧录后乱码或字体不对？
 

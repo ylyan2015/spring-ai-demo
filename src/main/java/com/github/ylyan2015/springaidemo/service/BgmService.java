@@ -59,6 +59,9 @@ public class BgmService {
     @Value("${bgm.library-path:./data/bgm}")
     private String libraryPath;
 
+    @Value("${video.ffprobe-path:ffprobe}")
+    private String ffprobePath;
+
     public BgmService(BgmRepository bgmRepository,
                       UserRepository userRepository,
                       ModelService modelService,
@@ -335,7 +338,7 @@ public class BgmService {
     private Integer probeDuration(Path audioFile) {
         try {
             Process p = new ProcessBuilder(
-                    "ffprobe", "-v", "error",
+                    ffprobePath, "-v", "error",
                     "-show_entries", "format=duration",
                     "-of", "csv=p=0",
                     audioFile.toAbsolutePath().toString()

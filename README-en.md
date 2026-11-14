@@ -78,8 +78,8 @@ Only Docker and docker-compose required — no JDK, Maven, PostgreSQL, or other 
    - **OpenAI API Key** - Register at OpenAI
    - **DeepSeek API Key** - Register at DeepSeek
 4. **(Optional) DashScope API Key** - For image generation, register at Alibaba Cloud Bailian Platform
-5. **(Optional) FFmpeg** - For video composition/export in the AI Short Video Studio (must be in PATH, including ffprobe)
-6. **(Optional) Edge TTS** - For short video narration: `pip install edge-tts` (automatically skipped when not installed)
+5. **(Optional) FFmpeg >= 4.3** - For video composition/export in the AI Short Video Studio (including ffprobe). Paths are configured via `video.ffmpeg-path` / `video.ffprobe-path` (overridable with `FFMPEG_PATH` / `FFPROBE_PATH` env vars), no system PATH dependency; xfade transitions need >= 4.3, BGM mixing needs >= 4.4
+6. **(Optional) Edge TTS** - For short video narration: `pip install edge-tts` (automatically skipped when not installed); the Python interpreter is specified by `video.python-command` (overridable with the `PYTHON_CMD` env var)
 7. **(Optional) PostgreSQL + pgvector extension** - For RAG persistent storage
 
 ## Quick Start
@@ -220,13 +220,14 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 - 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting; optional video templates (8 built-in styles + custom) generate styled scripts in one click, scripts can be saved as templates
 - 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort
 - 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
-- 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX; SSE real-time progress bar, automatic retry, per-shot regeneration
+- 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX (local models auto-apply SD1.5/SDXL/FLUX style presets); SSE real-time progress bar, automatic retry, per-shot regeneration
+- ✅ **Image Quality Evaluation** (optional) - Multimodal LLM scores clarity/relevance/aesthetics (0-10); low-scoring images are automatically regenerated (<=2 retries, best score kept); falls back to rule-based evaluation without a multimodal API; quality badge shown on shot cards (enable via `image.quality.enabled`, off by default)
 - 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc., 5 pre-generated royalty-free tracks), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
 - 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); subtitle language selectable: Chinese / English / bilingual (LLM translation, narration audio stays Chinese); standalone SRT export and single-frame subtitle preview supported
 - 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
 - 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
 
-> **Note**: Video composition requires FFmpeg; narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
+> **Note**: Video composition requires FFmpeg (paths configured via `video.ffmpeg-path` / `video.ffprobe-path`, no PATH dependency); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
 
 #### 5. Test with API
 
@@ -287,7 +288,7 @@ spring-ai-demo/
 │   │   ├── CaptchaService.java         # Captcha service
 │   │   ├── ChatService.java            # Chat service (business logic/compression)
 │   │   ├── ImageService.java           # Image generation service (DashScope API + storage)
-│   │   ├── ImageGenerationService.java # Video studio: parallel generation + SSE + retry
+│   │   ├── ImageGenerationService.java # Video studio: parallel generation + SSE + retry + quality retry
 │   │   ├── ImagePromptOptimizerService.java # Video studio: LLM prompt enhancement
 │   │   ├── RagService.java             # RAG service (parse/vectorize/search)
 │   │   ├── StoryScriptService.java     # Video studio: script generate/edit/reorder
@@ -332,10 +333,14 @@ spring-ai-demo/
 │   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline + multilingual translation
 │   │   ├── SubtitleStyle.java         # Subtitle style (font/size/color/outline/position)
 │   │   └── SubtitleCue.java           # Subtitle cue (text + start/end ms)
+│   ├── quality/                      # Module J: image quality evaluation
+│   │   ├── ImageQualityService.java   # Multimodal scoring + rule fallback
+│   │   └── ImageQualityScore.java     # Score DTO (3 dimensions 0-10 + overall average)
 │   └── generator/                     # Image generation abstraction (strategy + factory)
 │       ├── ImageGenerator.java / GeneratedImage.java
 │       ├── DashScopeImageGenerator.java  # Cloud Tongyi Wanxiang
 │       ├── LocalSdImageGenerator.java   # Local SD WebUI / FLUX
+│       ├── LocalModelStylePreset.java   # SD1.5/SDXL/FLUX style presets (module G)
 │       └── ImageGeneratorFactory.java   # Config-driven + runtime switching
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # Image generation request DTO
@@ -465,14 +470,26 @@ image:
     steps: 25                          # Sampling steps
     cfg-scale: 7.0                     # Prompt guidance (CFG)
     timeout: 120                       # Local generation timeout (seconds)
+    style-prefix: ""                   # Style prefix override (empty = auto built-in preset by model name: SD1.5/SDXL/FLUX)
+    extra-negative-prompt: ""          # Negative prompt override (empty = auto built-in preset by model name)
   generation:
     parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
     retry-attempts: 1                 # Retry attempts on failure
     retry-delay-ms: 2000              # Retry delay (ms)
     total-timeout-seconds: 300        # Batch generation total timeout (seconds)
     default-size: 1280x720           # Default image size (16:9 landscape)
+  quality:                             # Module J: image quality evaluation (off by default)
+    enabled: false                     # When enabled, low-scoring images are regenerated (flow unchanged when off)
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI-compatible multimodal endpoint
+    api-key: ${DASHSCOPE_API_KEY:}     # Multimodal API key (empty = rule-based fallback)
+    model: qwen-vl-max                 # Multimodal evaluation model
+    threshold: 6.0                     # Passing threshold (0-10)
+    max-retries: 2                     # Max retries for low scores (best-scoring image kept)
 
 video:
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg executable path (absolute path recommended on Windows, no PATH dependency; >=4.3 required)
+  ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (used to probe BGM duration)
+  python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows to avoid the Microsoft Store alias stub)
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes); >=8 recommended for 1080p multi-shot
   watermark:                        # Social export: brand watermark
     logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended, bottom-right; empty = disabled)
@@ -487,12 +504,14 @@ bgm:
 
 **Key Notes:**
 
-- **Video composition requires FFmpeg** in PATH (including ffprobe); exports fail with a clear error when missing
-- **Narration requires Edge TTS**: `pip install edge-tts`; automatically skipped when not installed (silent video)
+- **Video composition requires FFmpeg**: paths are specified by `video.ffmpeg-path` / `video.ffprobe-path` (defaults fall back to `ffmpeg`/`ffprobe` in PATH; overridable via `FFMPEG_PATH`/`FFPROBE_PATH` env vars); exports fail with a clear error when missing/misconfigured. **Version >= 4.3 required** (xfade transitions), BGM mixing needs >= 4.4 (amix normalize); old builds bundled with apps like EVCapture (~4.2) lack xfade and cannot be used
+- **Narration requires Edge TTS**: `pip install edge-tts`; the invocation command is specified by `video.python-command` (overridable via `PYTHON_CMD`; on Windows bare `python` may be hijacked by the Microsoft Store "app execution alias" stub, so an absolute interpreter path is recommended); automatically skipped when not installed (silent video)
 - **BGM music library**: Place royalty-free tracks named `category__name.mp3` into `./data/bgm/` for auto-registration, or upload via the frontend button
 - **Subtitles**: Timeline precisely aligned with xfade transitions; font must be installed (default Microsoft YaHei, configurable via `video.subtitle.font-name`); burning uses the FFmpeg subtitles filter (libass, included in common builds)
 - **Export ratios**: 16:9 landscape (Bilibili) / 9:16 portrait (TikTok/Douyin) / 1:1 square (Xiaohongshu); preview is fixed 480p + watermark, formal exports 720p/1080p without watermark
 - **Platform export**: Presets automatically map to 1080p resolution; cover defaults to the middle frame of the latest successful export; the logo corner badge requires `video.watermark.logo-path` and `withLogo: true` in the export request
+- **Local model style presets**: Local generation auto-applies built-in SD1.5/SDXL/FLUX style prefixes and negative prompts based on `image.local.model` (FLUX gets no negative prompt); override via `image.local.style-prefix` / `image.local.extra-negative-prompt`; applies only to the local generator, cloud DashScope is unaffected
+- **Image quality evaluation**: With `image.quality.enabled: true`, each image is scored by a multimodal LLM (clarity/relevance/aesthetics, 0-10); scores below `threshold` trigger regeneration (<= `max-retries` attempts, feedback merged into the negative prompt, best score kept); falls back to resolution-based rule evaluation when no API key is configured or the call fails; evaluation errors never block generation; scores are returned with shot details and SSE progress, shown as a quality badge in the frontend
 
 #### RAG Storage Modes
 
@@ -746,15 +765,16 @@ to add custom BGM (mp3/wav/ogg/m4a/flac supported).
 
 ### 12. Video Export Fails with FFmpeg Errors?
 
-- Ensure `ffmpeg` and `ffprobe` are installed and in PATH: `ffmpeg -version`
+- Verify the executables pointed to by `video.ffmpeg-path` / `video.ffprobe-path` exist and run (defaults fall back to PATH): `ffmpeg -version`
+- **Version >= 4.3 required** (xfade transition filter); BGM mixing needs >= 4.4 (the `amix normalize` option). Old 4.2 builds bundled with apps like EVCapture lack xfade — install a recent build (e.g. BtbN win64-gpl) and update the configured paths
 - Multi-shot composition is slow by nature (1080p may take minutes); the timeout is controlled by `video.compose-timeout-minutes` (default 8)
-- BGM mixing requires ffmpeg >= 4.4 (the `amix normalize` option); upgrade older versions
+- If narration fails, check that the interpreter pointed to by `video.python-command` has edge-tts installed (`python -m edge_tts --version`); on Windows bare `python` may be hijacked by the Microsoft Store alias stub (exit code 49) — use an absolute path
 
 ### 13. How to Use Local Stable Diffusion / FLUX for Video Frames?
 
-1. Start a local SD WebUI (or ComfyUI-compatible service) and verify it responds at `http://127.0.0.1:7860`
+1. Start a local SD WebUI (or OllamaDiffuser-compatible service) and verify it responds at `http://127.0.0.1:7860` (ComfyUI requires an SD WebUI compatibility layer/proxy; the native workflow protocol is not yet supported)
 2. Set `image.generator: local` in config, or switch at runtime via the frontend "Image Generator" dropdown
-3. Local generation natively supports negative prompts, giving more controllable styles with zero API cost
+3. Local generation natively supports negative prompts and auto-applies style presets by model name (SD1.5/SDXL/FLUX), giving more controllable styles with zero API cost; customize via `image.local.style-prefix` / `image.local.extra-negative-prompt`
 
 ### 14. Garbled Text or Wrong Font After Subtitle Burning?
 

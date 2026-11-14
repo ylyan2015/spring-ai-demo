@@ -529,7 +529,7 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 
 Frontend page: http://localhost:8080/video-studio
 
-> Video composition requires FFmpeg (including ffprobe). Narration requires Edge TTS (`pip install edge-tts`; automatically skipped when not installed).
+> Video composition requires FFmpeg (including ffprobe; paths configured via `video.ffmpeg-path` / `video.ffprobe-path`, no PATH dependency, >=4.3 required). Narration requires Edge TTS (`pip install edge-tts`; the Python interpreter is specified by `video.python-command`; automatically skipped when not installed).
 
 ### 7.1 Generate Storyboard Script
 
@@ -659,7 +659,7 @@ curl -X POST http://localhost:8080/api/video/enhance-prompt/script/1 \
 ### 7.5 Image Generation (Single / Batch SSE / Generator Management)
 
 ```bash
-# Generate image for a single shot (style optional; local SD generator appends negative prompt)
+# Generate image for a single shot (style optional; local SD generator appends negative prompt and auto-applies model style presets)
 curl -X POST http://localhost:8080/api/video/images/shot/1/11 \
   -H "Content-Type: application/json" \
   -d '{"style": "CINEMATIC_REALISM"}'
@@ -684,12 +684,14 @@ Accept: text/event-stream
 |-------|--------------|
 | `START` | `{totalShots, message}` |
 | `SHOT_START` | `{shotId, shotOrder, currentShotIndex, message}` |
-| `SHOT_COMPLETE` | `{shotId, imageUrl, completedShots, failedShots, totalShots}` |
+| `SHOT_COMPLETE` | `{shotId, imageUrl, qualityScore, completedShots, failedShots, totalShots}` |
 | `SHOT_FAILED` | `{shotId, completedShots, failedShots, message}` |
 | `COMPLETE` | `{completedShots, failedShots, message}` |
 | `ERROR` | `{message}` |
 
 > Parallelism is controlled by `image.generation.parallelism` (default 3); failures retry automatically (`image.generation.retry-attempts`).
+>
+> **Quality evaluation (module J, off by default)**: With `image.quality.enabled: true`, each image is scored by a multimodal LLM on clarity/relevance/aesthetics (0-10); scores below `image.quality.threshold` (default 6.0) trigger regeneration (<= `image.quality.max-retries` attempts, default 2; feedback merged into the negative prompt, best-scoring image kept). Without a multimodal API key or on call failure, it falls back to resolution-based rule evaluation; evaluation errors never block generation. The score is written to the shot's `qualityScore` field (null when disabled) and returned with single-shot responses, script details, and SSE `SHOT_COMPLETE`. The local generator additionally auto-applies SD1.5/SDXL/FLUX style presets based on `image.local.model` (overridable via `image.local.style-prefix` / `image.local.extra-negative-prompt`).
 
 ---
 
@@ -1208,14 +1210,26 @@ image:
     steps: 25
     cfg-scale: 7.0
     timeout: 120                      # Local generation timeout (seconds)
+    style-prefix: ""                  # Style prefix override (empty = built-in preset by model name: SD1.5/SDXL/FLUX)
+    extra-negative-prompt: ""         # Negative prompt override (empty = built-in preset by model name)
   generation:
     parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
     retry-attempts: 1                 # Retry attempts on failure
     retry-delay-ms: 2000              # Retry delay (ms)
     total-timeout-seconds: 300        # Batch generation total timeout (seconds)
     default-size: 1280x720           # Default image size
+  quality:                            # Module J: image quality evaluation (off by default)
+    enabled: false                    # When enabled, low-scoring images are regenerated
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI-compatible multimodal endpoint
+    api-key: ${DASHSCOPE_API_KEY:}    # Empty = rule-based fallback
+    model: qwen-vl-max                # Multimodal evaluation model
+    threshold: 6.0                    # Passing threshold (0-10)
+    max-retries: 2                    # Max retries for low scores
 
 video:
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg executable path (absolute path recommended on Windows; >=4.3 required)
+  ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe path (BGM duration probing)
+  python-command: ${PYTHON_CMD:python}  # Python interpreter running edge-tts (absolute path recommended on Windows)
   compose-timeout-minutes: 8        # Timeout per FFmpeg command (minutes)
   watermark:                        # Social export: brand watermark
     logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended; empty = disabled)
@@ -1243,13 +1257,14 @@ bgm:
 10. **Database Persistence**: H2 file mode stored in `./data/chatdb.mv.db`
 11. **Image Generation**: Requires `DASHSCOPE_API_KEY` configuration, images auto-stored to configured storage service
 12. **Multi-Storage Switching**: Switch between local/OSS/MinIO/FastDFS via `storage.type`, no code changes needed
-13. **Video Studio Dependencies**: Video composition requires FFmpeg (with ffprobe) in PATH; narration requires `pip install edge-tts` (automatically skipped when missing, silent video output)
+13. **Video Studio Dependencies**: Video composition requires FFmpeg (with ffprobe); paths are configured via `video.ffmpeg-path` / `video.ffprobe-path` (defaults fall back to PATH, overridable via `FFMPEG_PATH`/`FFPROBE_PATH` env vars), version >=4.3 (xfade) / >=4.4 (BGM mixing) required; narration requires `pip install edge-tts`, with the interpreter specified by `video.python-command` (overridable via `PYTHON_CMD`; automatically skipped when missing, silent video output)
 14. **SSE Batch Generation**: Use native EventSource on `GET /api/video/images/script/{id}/stream` (EventSource is GET-only); event types in 7.5
 15. **Prompt Changes**: Updating a shot's imagePrompt clears old image references; images must be regenerated before video export
 16. **BGM Permissions**: Users can only use built-in BGM and their own uploads; export automatically lowers BGM volume (~ -16dB) with fade in/out
 17. **Export Prerequisites**: All shots must be in READY state, otherwise the response lists which shots are not ready
 18. **Subtitle Burning**: Requires the configured CJK font installed (default Microsoft YaHei); the subtitle parameter is automatically ignored when no narration exists; burning happens during export, no separate call needed
 19. **Platform Export**: Presets are fixed to the 1080p tier; exceeding the recommended duration only warns without blocking; the cover defaults to the middle frame of the latest successful export and is written back to the record
+20. **Image Quality Evaluation**: `image.quality.enabled` defaults to false (generation flow unchanged when off); when enabled, low scores trigger <=2 retries keeping the best score, returned via the shot's qualityScore field; falls back to rule-based evaluation without a multimodal API, and evaluation errors never block generation
 
 ---
 
@@ -1287,7 +1302,7 @@ When switched to OSS/MinIO, `imageUrl` returns the corresponding cloud storage a
 A: Change `storage.type` in `application.yml`: `local` → `oss` / `minio` / `fastdfs`. No restart required.
 
 **Q: Video export reports FFmpeg errors or timeouts?**
-A: Verify `ffmpeg -version` works (including ffprobe). Multi-shot 1080p composition is slow by nature; the timeout is controlled by `video.compose-timeout-minutes` (default 8). BGM mixing requires ffmpeg >= 4.4.
+A: Verify the executables pointed to by `video.ffmpeg-path` / `video.ffprobe-path` work (defaults fall back to PATH): `ffmpeg -version`; version >=4.3 required (xfade transitions) — old 4.2 builds bundled with apps like EVCapture cannot be used. Multi-shot 1080p composition is slow by nature; the timeout is controlled by `video.compose-timeout-minutes` (default 8). BGM mixing requires ffmpeg >= 4.4. If narration fails, check that the interpreter pointed to by `video.python-command` has edge-tts installed (on Windows bare `python` may be hijacked by the Microsoft Store alias stub — use an absolute path).
 
 **Q: Narration volume drops after BGM mixing?**
 A: The backend uses `amix normalize=0` to keep narration at original volume; BGM is fixed at 15% (~ -16dB) so it never overpowers narration. Try a softer track if the mix feels off.
@@ -1309,3 +1324,6 @@ A: The subtitle font must be installed (default Microsoft YaHei); on Linux/Docke
 
 **Q: How do I batch-export for multiple platforms?**
 A: The frontend "Batch Three Platforms" button issues three parallel calls to `POST /api/video/export/platform` (Douyin/Bilibili/Xiaohongshu); API users can invoke the endpoint concurrently themselves (one platform per call). FFmpeg encoding is CPU-intensive — keep concurrency to 2-3.
+
+**Q: How to enable automatic image quality evaluation?**
+A: Set `image.quality.enabled: true` (reuses DASHSCOPE_API_KEY by default, via the qwen-vl-max multimodal endpoint). After generation, images are scored on clarity/relevance/aesthetics; scores below the threshold (default 6.0) trigger <=2 retries keeping the best score; shot cards show a quality badge. Without an API key it falls back to resolution-based rule evaluation; keep the default false to leave the generation flow completely unaffected.

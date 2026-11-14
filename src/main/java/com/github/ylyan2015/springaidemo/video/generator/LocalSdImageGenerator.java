@@ -52,6 +52,14 @@ public class LocalSdImageGenerator implements ImageGenerator {
     @Value("${image.local.timeout:120}")
     private int timeoutSeconds;
 
+    /** 风格前缀覆盖（留空时按模型名套用内置预设，见 LocalModelStylePreset） */
+    @Value("${image.local.style-prefix:}")
+    private String stylePrefixOverride;
+
+    /** 负面提示词覆盖（留空时按模型名套用内置预设） */
+    @Value("${image.local.extra-negative-prompt:}")
+    private String negativePromptOverride;
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -64,7 +72,12 @@ public class LocalSdImageGenerator implements ImageGenerator {
     public GeneratedImage generate(String prompt, String negativePrompt, int width, int height) {
         log.info("Generating image via local SD/FLUX ({}): size={}x{}", modelName, width, height);
 
-        ObjectNode requestBody = buildTxt2ImgRequest(prompt, negativePrompt, width, height);
+        // 模块 G：按模型名套用风格预设（配置可覆盖），增强画面质量与风格可控性
+        LocalModelStylePreset preset = LocalModelStylePreset.resolve(modelName, stylePrefixOverride, negativePromptOverride);
+        String finalPrompt = LocalModelStylePreset.composePrompt(preset.getStylePrefix(), prompt);
+        String finalNegative = LocalModelStylePreset.mergeNegative(negativePrompt, preset.getNegativePrompt());
+
+        ObjectNode requestBody = buildTxt2ImgRequest(finalPrompt, finalNegative, width, height);
         JsonNode responseJson = callTxt2ImgApi(requestBody);
 
         // 解析响应中的 base64 图片

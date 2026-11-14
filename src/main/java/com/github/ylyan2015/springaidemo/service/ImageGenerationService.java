@@ -12,6 +12,8 @@ import com.github.ylyan2015.springaidemo.video.VisualStyle;
 import com.github.ylyan2015.springaidemo.video.generator.GeneratedImage;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGeneratorFactory;
+import com.github.ylyan2015.springaidemo.video.quality.ImageQualityScore;
+import com.github.ylyan2015.springaidemo.video.quality.ImageQualityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +49,7 @@ public class ImageGenerationService {
     private final StoryScriptRepository scriptRepository;
     private final StoryShotRepository shotRepository;
     private final UserRepository userRepository;
+    private final ImageQualityService qualityService;
 
     /** 复用 Spring 自动配置的 ObjectMapper（已注册 JavaTimeModule，可正确序列化 LocalDateTime） */
     private final ObjectMapper objectMapper;
@@ -81,12 +84,14 @@ public class ImageGenerationService {
                                   StoryScriptRepository scriptRepository,
                                   StoryShotRepository shotRepository,
                                   UserRepository userRepository,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  ImageQualityService qualityService) {
         this.generatorFactory = generatorFactory;
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.userRepository = userRepository;
         this.objectMapper = objectMapper;
+        this.qualityService = qualityService;
     }
 
     /**
@@ -133,11 +138,13 @@ public class ImageGenerationService {
         shotRepository.save(shot);
 
         try {
-            GeneratedImage image = generateWithRetry(prompt, negativePrompt);
+            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt);
+            GeneratedImage image = result.image();
 
             shot.setImageUrl(image.getImageUrl());
             shot.setImageFileId(image.getFileId());
             shot.setImageStatus("READY");
+            shot.setQualityScore(result.score() != null ? result.score().getOverallScore() : null);
             StoryShot saved = shotRepository.save(shot);
 
             script.setUpdatedAt(LocalDateTime.now());
@@ -301,11 +308,13 @@ public class ImageGenerationService {
 
         try {
             String prompt = composePrompt(shot, visualStyle);
-            GeneratedImage image = generateWithRetry(prompt, visualStyle.getNegativePrompt());
+            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt());
+            GeneratedImage image = result.image();
 
             shot.setImageUrl(image.getImageUrl());
             shot.setImageFileId(image.getFileId());
             shot.setImageStatus("READY");
+            shot.setQualityScore(result.score() != null ? result.score().getOverallScore() : null);
             shotRepository.save(shot);
 
             ImageGenerationProgress done = new ImageGenerationProgress();
@@ -317,6 +326,7 @@ public class ImageGenerationService {
             done.setCompletedShots(completed.incrementAndGet());
             done.setFailedShots(failed.get());
             done.setImageUrl(image.getImageUrl());
+            done.setQualityScore(result.score() != null ? result.score().getOverallScore() : null);
             done.setMessage("第 " + shot.getShotOrder() + "/" + total + " 张图片生成完成");
             progressCallback.accept(done);
 
@@ -367,6 +377,61 @@ public class ImageGenerationService {
     }
 
     // ==================== 内部方法 ====================
+
+    /** 生成结果 + 质量评分（模块 J；未启用评估时 score 为 null） */
+    private record QualityGenResult(GeneratedImage image, ImageQualityScore score) {}
+
+    /**
+     * 带质量评估的生成（模块 J）：先按原有失败重试机制生成，
+     * 启用评估后低分自动重新生成（最多 image.quality.max-retries 次），
+     * 重试时将评分反馈并入负面提示词；始终保留得分最高的一张。
+     * 评估异常不阻塞生成，保留当前图片。
+     */
+    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt) {
+        GeneratedImage current = generateWithRetry(prompt, negativePrompt);
+        if (!qualityService.isEnabled()) {
+            return new QualityGenResult(current, null);
+        }
+
+        GeneratedImage bestImage = current;
+        ImageQualityScore bestScore = null;
+        String negative = negativePrompt;
+        int maxRetries = Math.max(0, qualityService.getMaxRetries());
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            ImageQualityScore score;
+            try {
+                score = qualityService.evaluate(current.getImageUrl(), prompt);
+            } catch (Exception e) {
+                log.warn("Quality evaluation failed, keeping current image: {}", e.getMessage());
+                break;
+            }
+            if (score == null) {
+                break;
+            }
+            if (bestScore == null || score.getOverallScore() > bestScore.getOverallScore()) {
+                bestScore = score;
+                bestImage = current;
+            }
+            if (!qualityService.shouldRegenerate(score) || attempt == maxRetries) {
+                break;
+            }
+
+            log.info("Image score {} below threshold {}, regenerating (retry {}/{})",
+                    score.getOverallScore(), qualityService.getThreshold(), attempt + 1, maxRetries);
+            String feedback = score.getFeedback();
+            if (feedback != null && !feedback.isBlank()) {
+                negative = (negative == null || negative.isBlank()) ? feedback : negative + ", " + feedback;
+            }
+            try {
+                current = generateWithRetry(prompt, negative);
+            } catch (Exception e) {
+                log.warn("Quality retry generation failed, keeping best image: {}", e.getMessage());
+                break;
+            }
+        }
+        return new QualityGenResult(bestImage, bestScore);
+    }
 
     /**
      * 带重试的图片生成

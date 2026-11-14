@@ -57,6 +57,10 @@ public class StoryShot {
     @Column(name = "image_status", length = 20)
     private String imageStatus = "PENDING";
 
+    /** 图片质量综合评分（0-10，模块 J；未启用评估时为 null） */
+    @Column(name = "quality_score")
+    private Double qualityScore;
+
     public StoryShot() {}
 
     // ==================== Getters and Setters ====================
@@ -97,4 +101,7 @@ public class StoryShot {
 
     public String getImageStatus() { return imageStatus; }
     public void setImageStatus(String imageStatus) { this.imageStatus = imageStatus; }
+
+    public Double getQualityScore() { return qualityScore; }
+    public void setQualityScore(Double qualityScore) { this.qualityScore = qualityScore; }
 }

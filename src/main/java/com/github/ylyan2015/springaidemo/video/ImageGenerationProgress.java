@@ -32,6 +32,9 @@ public class ImageGenerationProgress {
     /** 当前镜头生成完成后的图片地址 */
     private String imageUrl;
 
+    /** 当前镜头图片质量综合评分（0-10，模块 J；未启用评估时为 null） */
+    private Double qualityScore;
+
     /** 提示信息 */
     private String message;
 
@@ -75,6 +78,9 @@ public class ImageGenerationProgress {
 
     public String getImageUrl() { return imageUrl; }
     public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
+
+    public Double getQualityScore() { return qualityScore; }
+    public void setQualityScore(Double qualityScore) { this.qualityScore = qualityScore; }
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }

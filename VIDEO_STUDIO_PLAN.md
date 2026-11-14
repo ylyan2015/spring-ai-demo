@@ -4,7 +4,9 @@
 > **定位**：AI 驱动的短视频自动生成工具，面向社交媒体投放
 > **技术栈**：Spring Boot 3.4 + Java 17 + Spring AI 1.0 + DeepSeek/Ollama + DashScope/本地SD + FFmpeg + Edge TTS
 > **创建日期**：2026-11-07
-> **最后更新**：2026-11-14（S1 补齐完成：D 预置 BGM 素材 / F 多语言字幕 / I ZIP 打包下载；模块 H 视频模板已实现；仅剩 G 收尾与 J）
+> **最后更新**：2026-11-14（Phase 2 全部完成：S1 补齐 + 模块 H 模板 + G 收尾本地模型风格预设 + J 图片质量评估；仅剩 Phase 3 Agent 化）
+> **2026-11-14 FFmpeg 落地**：本机安装 `D:/Program Files/ffmpeg`（≥4.3，含 xfade/libass/libx264），可执行文件路径改为 `video.ffmpeg-path` / `video.ffprobe-path` 配置项。同时修复 `VideoComposeService` 三处只有真跑 FFmpeg 才会暴露的缺陷：xfade 输出标签被写在滤镜名之前（解析成第三个输入）、zoompan 的 z 表达式误用不存在的 `t` 变量（应为 `on` 帧号）、多镜头命令缺 `-t` 导致 `-loop 1` 无限输入永不收尾。回归测试见 `VideoComposeFfmpegTest`。
+> **2026-11-14 旁白配音打通**：本机已有 Python 3.14.6（无需重装），补装 edge-tts 7.3.1；`video.python-command` 指向解释器绝对路径后，edge-tts 合成 → apad 补静音拼接 → 音画合并全链路跑通，产物含 aac 音轨。联网用例默认跳过，`-Dtts=true` 执行。
 
 ---
 
@@ -127,10 +129,10 @@ src/main/resources/templates/
 | I. 社交媒体导出 | ✅ 已实现 | `video/PlatformPreset.java`（六平台预设枚举）、`controller/SocialMediaExportController.java`；平台导出映射到已有 `VideoExportService.exportHd()`，封面截帧在 `VideoComposeService.renderVideoCover()`，Logo 角标在 `overlayLogoIntoVideo()`，ZIP 打包下载在 `VideoExportService.prepareBatchZip()/writeBatchZip()` | `/api/video/export/platforms`、`/export/platform`、`/export/batch-download`、`/cover/generate` |
 | 前端工作流界面 | ✅ 已实现 | `templates/video-studio.html`（脚本管理/镜头编辑/拖拽排序/SSE 进度/导出面板/BGM 面板/导出历史） | - |
 | F. 字幕系统 | ✅ 已实现（见上表） | - | - |
-| G. 本地模型集成 | 🔶 部分完成 | `video/generator/LocalSdImageGenerator.java`（SD WebUI/FLUX 本地生成已可用）；Ollama LLM 已有；待收尾：本地模型风格预设提示词/ComfyUI 协议/文档 | - |
+| G. 本地模型集成 | ✅ 已完成 | `video/generator/LocalSdImageGenerator.java`（SD WebUI/FLUX）+ `LocalModelStylePreset.java`（SD1.5/SDXL/FLUX 内置风格预设，配置可覆盖）；ComfyUI 原生协议未实现（需 SD WebUI 兼容层，见模块 G 说明） | - |
 | H. 视频模板系统 | ✅ 已实现 | `entity/VideoTemplate.java`、`repository/VideoTemplateRepository.java`、`service/VideoTemplateService.java`（8 个系统预置 + 自定义）、`controller/VideoTemplateController.java`；模板引导注入 `VideoScriptService.generateScript()` System Prompt | `/api/video/templates` |
 | I. 社交媒体导出优化 | ✅ 已实现（见上表） | - | - |
-| J. 图片质量评估 | ⬜ 未实现 | - | - |
+| J. 图片质量评估 | ✅ 已完成 | `video/quality/ImageQualityService.java` + `ImageQualityScore.java`（多模态评分 + 规则降级 + 低分重试≤2 次）；默认关闭，`image.quality.enabled` 开启 | - |
 
 > **实现说明**：
 > 1. 数据库采用 H2 `ddl-auto: update` 自动建表（项目未启用 Flyway），实际表名：`story_scripts` / `story_shots` / `image_prompt_optimizations` / `video_exports` / `bgm_tracks`
@@ -512,7 +514,10 @@ CREATE TABLE video_shot (
 
 ---
 
-### 模块 G：本地模型集成（新增）
+### 模块 G：本地模型集成（新增） ✅ 已完成（2026-11-14）
+
+> **实现落点**：`video/generator/LocalSdImageGenerator.java`（SD WebUI `/sdapi/v1/txt2img` 协议，兼容 OllamaDiffuser）+ `LocalModelStylePreset.java`（按 `image.local.model` 模型名自动套用 SD1.5/SDXL/FLUX 内置风格前缀与负面词；`image.local.style-prefix` / `image.local.extra-negative-prompt` 可覆盖；负面词去重合并）。回归测试 `LocalModelStylePresetTest`（11 例）。
+> **ComfyUI 说明**：原生 ComfyUI 工作流协议（/prompt + /history）未实现；ComfyUI 用户可通过 SD WebUI 兼容层/代理接入，或后续按需扩展。
 
 > **这是什么**：支持使用本地运行的 AI 模型替代云端 API，包括 LLM（Ollama）和图片生成（Stable Diffusion / FLUX）。
 >
@@ -713,7 +718,12 @@ CREATE TABLE video_template (
 
 ---
 
-### 模块 J：图片质量评估与重试（新增）
+### 模块 J：图片质量评估与重试（新增） ✅ 已实现（2026-11-14）
+
+> **实现落点**：`video/quality/ImageQualityScore.java`（清晰度/相关性/美学三维 0-10 分 + 综合均值 + 反馈）、`video/quality/ImageQualityService.java`（独立 OpenAI 兼容多模态端点，默认 DashScope qwen-vl-max；未配 API Key/调用失败时降级为分辨率规则评估）。
+> 集成：`ImageGenerationService.generateWithQualityCheck()` 低分自动重试（≤ `image.quality.max-retries`，默认 2），重试时评分反馈并入负面提示词，始终保留最高分一张；评估异常不阻塞生成。评分写入 `story_shots.quality_score` 列，随镜头详情/SSE SHOT_COMPLETE 返回，前端镜头卡片显示质量徽章。
+> 配置：`image.quality.enabled`（默认 false，关闭时流程完全不变）/ base-url / api-key / model / threshold（6.0）/ max-retries。测试：`ImageQualityServiceTest`（13 例）+ `ImageGenerationServiceQualityTest`（5 例）。
+> 未实现（YAGNI，后续按需）：跨镜头风格一致性批量检查、内容安全检查、用户“不满意”反馈学习。
 
 > **这是什么**：使用多模态 LLM（或规则引擎）自动评估生成图片的质量，不合格则自动重新生成。
 >
@@ -836,7 +846,7 @@ ChatClient agentClient = ChatClient.builder(chatModel)
 
 | 依赖 | 用途 | 安装命令 |
 |------|------|---------|
-| FFmpeg | 视频合成 + 字幕烧录 + 比例转换 | Windows: `scoop install ffmpeg` / macOS: `brew install ffmpeg` |
+| FFmpeg | 视频合成 + 字幕烧录 + 比例转换 | 路径走 `video.ffmpeg-path` / `video.ffprobe-path` 配置，不依赖系统 PATH。本机已装 `D:/Program Files/ffmpeg/bin/`（BtbN win64-gpl，2026-11-13 构建），该目录已于 2026-11-14 追加到**用户** PATH 末尾（机器 PATH 未动，且此前任何 PATH 作用域里都没有 ffmpeg，不存在被旧版抢命中的情况）。**版本必须 ≥ 4.3**，`xfade` 转场滤镜才存在——EVCapture 自带的 `C:\Program Files\EVCapture\ffmpeg.exe` 是 4.2 构建，无 xfade，不可用 |
 | DeepSeek API Key | 脚本生成 | 设置环境变量 `DEEPSEEK_API_KEY` |
 | DashScope API Key | 图片生成 | 设置环境变量 `DASHSCOPE_API_KEY` |
 
@@ -844,8 +854,8 @@ ChatClient agentClient = ChatClient.builder(chatModel)
 
 | 依赖 | 用途 | 安装命令 |
 |------|------|---------|
-| Edge TTS | 旁白配音 | `pip install edge-tts` |
-| Python 3.x | Edge TTS 运行环境 | 系统自带或 `brew install python` |
+| Edge TTS | 旁白配音 | `pip install edge-tts`（本机已装 7.3.1）。调用命令由 `video.python-command` 指定，见下方 Python 行 |
+| Python 3.x | Edge TTS 运行环境 | 本机已装 3.14.6 于 `%LOCALAPPDATA%\Python\bin\python.exe`（`pip check` 通过）。**曾经的坑**：用户 PATH 里微软商店"应用执行别名"桩 `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` 排在它前面，裸 `python` 会以退出码 49 失败。2026-11-14 已把 `Python\bin` 提到 WindowsApps 之前修好；`video.python-command` 仍保留绝对路径，避免依赖各启动环境（IDE/服务）继承到的 PATH 新旧 |
 | Ollama | 本地 LLM 脚本生成 | `curl -fsSL https://ollama.com/install.sh \| sh` |
 | OllamaDiffuser | 本地图片生成 (SD/FLUX) | `pip install ollamadiffuser` |
 | ComfyUI | 本地图片生成 (更强大) | 参考 https://github.com/comfyanonymous/ComfyUI |
@@ -872,14 +882,14 @@ mvn spring-boot:run
 | P1 | F. 字幕系统 | ✅ 已完成 | 1 天 | 社交媒体必备 | 无 |
 | P1 | B. 提示词优化器 | ✅ 已完成 | 1 天 | 显著提升图片质量 | 无 |
 | P1 | I. 社交媒体导出 | ✅ 已完成（平台预设/封面/Logo/批量已落地） | 1-2 天 | 多平台投放必备 | F |
-| P2 | G. 本地模型集成 | 🔶 部分完成（本地 SD 生成已落地） | 2 天 | 降低成本、无网络依赖 | 无 |
+| P2 | G. 本地模型集成 | ✅ 已完成（本地 SD + 风格预设，2026-11-14） | 2 天 | 降低成本、无网络依赖 | 无 |
 | P2 | C. 视频预览与导出 | ✅ 已完成 | 1-2 天 | 竖屏/横屏多场景 | I |
 | P2 | D. 背景音乐 | ✅ 已完成 | 1-2 天 | 氛围感提升 | 无 |
 | P2 | H. 视频模板系统 | ✅ 已完成（2026-11-14） | 1 天 | 降低使用门槛 | A |
-| P3 | J. 图片质量评估 | ⬜ 未实现 | 1-2 天 | 自动化质量保障 | G |
+| P3 | J. 图片质量评估 | ✅ 已完成（2026-11-14，默认关闭） | 1-2 天 | 自动化质量保障 | G |
 
 **建议实现顺序**: A → E → F → B → I → G → C → D → H → J
-**当前进度**: A / B / C / D / E / F / H / I 已全部完成 ✅（含 S1 补齐：预置 BGM 素材/多语言字幕/ZIP 打包下载）；下一步建议 G 收尾（本地模型风格预设/ComfyUI/文档）→ J（图片质量评估）→ Phase 3 Agent 化
+**当前进度**: Phase 2 全部模块 A / B / C / D / E / F / G / H / I / J 已完成 ✅（含 S1 补齐：预置 BGM 素材/多语言字幕/ZIP 打包下载；FFmpeg/TTS 环境已落地并回归验证）；下一步：Phase 3 Agent 化（长期）
 
 ### Phase 3（Agent 化）— 长期规划
 
@@ -921,6 +931,7 @@ mvn spring-boot:run
 | 视频模板 | JPA 实体 + 系统预置 | 支持用户自定义，系统内置开箱即用 |
 | 存储 | StorageService 工厂模式 | 已有本地/OSS/MinIO/FastDFS 四种实现复用 |
 | 前端 | Thymeleaf + 原生 JS | 与现有项目一致，无需引入新框架 |
+| FFmpeg / Python 调用方式 | 不依赖 PATH，由 `video.ffmpeg-path` / `video.ffprobe-path` / `video.python-command` 指定绝对路径（可用 `FFMPEG_PATH` / `FFPROBE_PATH` / `PYTHON_CMD` 环境变量覆盖） | 本机 PATH 曾经不可控：EVCapture 自带的 4.2 构建缺 xfade；微软商店的应用执行别名桩会把裸 `python` 顶成退出码 49。两处坑现已修好（新 FFmpeg 目录追加、`Python\bin` 提前），但 IDE/服务启动的 JVM 可能仍持有改动前的 PATH 快照，因此配置继续写绝对路径，命令行手工调试则可直接用 `ffmpeg` / `python` |
 
 ---
 
@@ -998,9 +1009,13 @@ src/main/java/com/github/ylyan2015/springaidemo/
 │       ├── ImageGenerator.java / GeneratedImage.java
 │       ├── DashScopeImageGenerator.java        # 云端通义万相
 │       ├── LocalSdImageGenerator.java          # 本地 SD WebUI / FLUX
+│       ├── LocalModelStylePreset.java          # 模块 G：SD1.5/SDXL/FLUX 风格预设（2026-11-14）
 │       └── ImageGeneratorFactory.java          # 配置驱动 + 运行时切换
+├── video/quality/                              # 模块 J：图片质量评估（2026-11-14）
+│   ├── ImageQualityService.java                # 多模态评分 + 规则降级
+│   └── ImageQualityScore.java                  # 评分 DTO
 ├── entity/
-│   ├── StoryScript.java / StoryShot.java       # 模块 A
+│   ├── StoryScript.java / StoryShot.java       # 模块 A（StoryShot 含 quality_score 列，模块 J）
 │   ├── ImagePromptOptimizer.java               # 模块 B
 │   ├── VideoExport.java                        # 模块 C（含 subtitle_language 列）
 │   ├── Bgm.java                                # 模块 D
@@ -1011,7 +1026,7 @@ src/main/java/com/github/ylyan2015/springaidemo/
 ├── service/
 │   ├── StoryScriptService.java                 # 模块 A：脚本生成/编辑/排序（含模板引导重载）
 │   ├── ImagePromptOptimizerService.java        # 模块 B：LLM 提示词优化
-│   ├── ImageGenerationService.java             # 模块 E：并行生成 + SSE + 重试
+│   ├── ImageGenerationService.java             # 模块 E：并行生成 + SSE + 重试 + 质量评估重试（模块 J）
 │   ├── VideoExportService.java                 # 模块 C：预览/高清导出/导出历史 + ZIP 打包（模块 I）
 │   ├── BgmService.java                         # 模块 D：音乐库扫描/推荐/上传
 │   └── VideoTemplateService.java               # 模块 H：模板预置/应用/自定义（2026-11-14）
@@ -1029,5 +1044,5 @@ src/main/resources/
 
 tools/generate-preset-bgm.ps1                  # 预置 BGM 素材生成脚本（模块 D，2026-11-14）
 data/bgm/*.mp3                                 # 5 首预置免版权 BGM（启动自动扫描注册）
-src/test/java/.../                             # 单元测试：SubtitleServiceTest / VideoExportServiceZipTest / VideoTemplateServiceTest（2026-11-14）
+src/test/java/.../                             # 单元测试：SubtitleServiceTest / VideoExportServiceZipTest / VideoTemplateServiceTest / LocalModelStylePresetTest / ImageQualityServiceTest / ImageGenerationServiceQualityTest / VideoComposeFfmpegTest（真实 FFmpeg 回归，TTS 用例 -Dtts=true）
 ```

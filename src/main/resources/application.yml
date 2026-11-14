@@ -66,15 +66,31 @@ image:
     steps: 25                          # 采样步数
     cfg-scale: 7.0                     # 提示词相关性（CFG）
     timeout: 120                       # 本地生成超时（秒）
+    style-prefix: ""                   # 风格前缀覆盖（留空时按模型名自动套用内置预设：SD1.5/SDXL/FLUX）
+    extra-negative-prompt: ""          # 负面提示词覆盖（留空时按模型名自动套用内置预设）
   generation:
     parallelism: 3                     # 并行生成数（避免云端 API 限流）
     retry-attempts: 1                 # 失败重试次数
     retry-delay-ms: 2000              # 重试间隔（毫秒）
     total-timeout-seconds: 300        # 批量生成总超时（秒）；单张超时由 HTTP 客户端层控制（DashScope 60s / image.local.timeout）
     default-size: 1280x720           # 默认图片尺寸（16:9 横屏）
+  quality:                             # 模块 J：图片质量评估（多模态 LLM 打分 + 低分自动重试）
+    enabled: false                     # 是否启用质量评估（关闭时生成流程完全不变）
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容多模态端点
+    api-key: ${DASHSCOPE_API_KEY:}     # 多模态 API Key（留空时降级为规则评估：分辨率启发式）
+    model: qwen-vl-max                 # 多模态评估模型
+    threshold: 6.0                     # 及格阈值（0-10），低于该分自动重新生成
+    max-retries: 2                     # 低分图片最大重试次数（始终保留得分最高的一张）
 
 # 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
 video:
+  # FFmpeg / ffprobe 可执行文件位置。Windows 下建议写绝对路径，避免依赖系统 PATH；
+  # xfade 转场需要 FFmpeg ≥ 4.3，EVCapture 等软件自带的旧版（≈4.2）不含 xfade，不可用。
+  ffmpeg-path: ${FFMPEG_PATH:D:/Program Files/ffmpeg/bin/ffmpeg.exe}
+  ffprobe-path: ${FFPROBE_PATH:D:/Program Files/ffmpeg/bin/ffprobe.exe}
+  # 运行 edge-tts 的 Python 解释器。本机 PATH 上的裸 python 会被微软商店的"应用执行别名"桩
+  # 抢先命中并返回退出码 49，因此这里写绝对路径（pip install edge-tts 已装到该解释器的用户目录）
+  python-command: ${PYTHON_CMD:C:/Users/Yan Yulin/AppData/Local/Python/bin/python.exe}
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
   watermark:                        # 模块 I：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）

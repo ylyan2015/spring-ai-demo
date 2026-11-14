@@ -566,7 +566,7 @@ curl http://localhost:8080/api/image/records/your-session-id
 
 前端页面：http://localhost:8080/video-studio
 
-> 视频合成依赖 FFmpeg（含 ffprobe），旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时自动跳过配音）。
+> 视频合成依赖 FFmpeg（含 ffprobe，路径由 `video.ffmpeg-path` / `video.ffprobe-path` 配置，不依赖 PATH，需 ≥4.3），旁白配音依赖 Edge TTS（`pip install edge-tts`，Python 解释器由 `video.python-command` 指定，未安装时自动跳过配音）。
 
 ### 7.1 生成分镜脚本
 
@@ -696,7 +696,7 @@ curl -X POST http://localhost:8080/api/video/enhance-prompt/script/1 \
 ### 7.5 图片生成（单镜头 / 批量 SSE / 生成器管理）
 
 ```bash
-# 单镜头生成（style 可选；本地 SD 生成器会附加负面提示词）
+# 单镜头生成（style 可选；本地 SD 生成器会附加负面提示词并自动套用模型风格预设）
 curl -X POST http://localhost:8080/api/video/images/shot/1/11 \
   -H "Content-Type: application/json" \
   -d '{"style": "CINEMATIC_REALISM"}'
@@ -721,12 +721,14 @@ Accept: text/event-stream
 |------|-----------|
 | `START` | `{totalShots, message}` |
 | `SHOT_START` | `{shotId, shotOrder, currentShotIndex, message}` |
-| `SHOT_COMPLETE` | `{shotId, imageUrl, completedShots, failedShots, totalShots}` |
+| `SHOT_COMPLETE` | `{shotId, imageUrl, qualityScore, completedShots, failedShots, totalShots}` |
 | `SHOT_FAILED` | `{shotId, completedShots, failedShots, message}` |
 | `COMPLETE` | `{completedShots, failedShots, message}` |
 | `ERROR` | `{message}` |
 
 > 后端并行度由 `image.generation.parallelism` 控制（默认 3），失败自动重试（`image.generation.retry-attempts`）。
+>
+> **质量评估（模块 J，默认关闭）**：`image.quality.enabled: true` 开启后，每张图片由多模态 LLM 按清晰度/相关性/美学打分（0-10），低于 `image.quality.threshold`（默认 6.0）自动重新生成（≤ `image.quality.max-retries` 次，默认 2，评分反馈并入负面提示词，保留最高分一张）；未配多模态 API Key 或调用失败时降级为分辨率规则评估；评估异常不阻塞生成。评分写入镜头 `qualityScore` 字段（未启用时为 null），随单镜头响应、脚本详情与 SSE `SHOT_COMPLETE` 返回。本地生成器另按 `image.local.model` 自动套用 SD1.5/SDXL/FLUX 风格预设（`image.local.style-prefix` / `image.local.extra-negative-prompt` 可覆盖）。
 
 ---
 
@@ -1244,14 +1246,26 @@ image:
     steps: 25
     cfg-scale: 7.0
     timeout: 120                      # 本地生成超时（秒）
+    style-prefix: ""                  # 风格前缀覆盖（留空按模型名套用内置预设：SD1.5/SDXL/FLUX）
+    extra-negative-prompt: ""         # 负面词覆盖（留空按模型名套用内置预设）
   generation:
     parallelism: 3                     # 并行生成数（避免云端 API 限流）
     retry-attempts: 1                 # 失败重试次数
     retry-delay-ms: 2000              # 重试间隔（毫秒）
     total-timeout-seconds: 300        # 批量生成总超时（秒）
     default-size: 1280x720           # 默认图片尺寸
+  quality:                            # 模块 J：图片质量评估（默认关闭）
+    enabled: false                    # 开启后低分图片自动重新生成
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容多模态端点
+    api-key: ${DASHSCOPE_API_KEY:}    # 留空时降级为规则评估
+    model: qwen-vl-max                # 多模态评估模型
+    threshold: 6.0                    # 及格阈值（0-10）
+    max-retries: 2                    # 低分最大重试次数
 
 video:
+  ffmpeg-path: ${FFMPEG_PATH:ffmpeg}   # FFmpeg 可执行文件路径（Windows 建议绝对路径；需 ≥4.3）
+  ffprobe-path: ${FFPROBE_PATH:ffprobe} # ffprobe 路径（BGM 时长探测）
+  python-command: ${PYTHON_CMD:python}  # 运行 edge-tts 的 Python 解释器（Windows 建议绝对路径）
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）
   watermark:                        # 社媒导出：品牌水印
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px；留空禁用）
@@ -1279,13 +1293,14 @@ bgm:
 10. **数据库持久化**：H2 文件模式存储在 `./data/chatdb.mv.db`
 11. **图像生成**：需配置 `DASHSCOPE_API_KEY`，图像自动转存到配置的存储服务
 12. **多存储切换**：通过 `storage.type` 配置切换本地/OSS/MinIO/FastDFS，无需修改业务代码
-13. **短视频依赖**：视频合成需 FFmpeg（含 ffprobe）在 PATH 中；旁白配音需 `pip install edge-tts`（未安装时自动跳过，输出无声视频）
+13. **短视频依赖**：视频合成需 FFmpeg（含 ffprobe），路径由 `video.ffmpeg-path` / `video.ffprobe-path` 配置（默认回退 PATH，可用 `FFMPEG_PATH`/`FFPROBE_PATH` 环境变量覆盖），版本需 ≥4.3（xfade）/≥4.4（BGM 混音）；旁白配音需 `pip install edge-tts`，解释器由 `video.python-command` 指定（可用 `PYTHON_CMD` 覆盖；未安装时自动跳过，输出无声视频）
 14. **SSE 批量生成**：使用原生 EventSource 监听 `GET /api/video/images/script/{id}/stream`（EventSource 仅支持 GET），事件类型见 7.5
 15. **提示词变化**：更新镜头 imagePrompt 后旧图片引用自动清空，需重新生成图片后才能导出视频
 16. **BGM 权限**：用户只能使用内置 BGM 和自己上传的 BGM；导出时自动降低音量（约 -16dB）并淡入淡出
 17. **导出前置条件**：所有镜头 imageStatus 必须为 READY，否则返回具体哪些镜头未就绪
 18. **字幕烧录**：需系统已安装配置的中文字体（默认微软雅黑）；无旁白时 subtitle 参数自动忽略；烧录随导出进行，无需单独调用
 19. **平台导出**：平台预设固定映射 1080p 档位；时长超推荐上限仅提示不拦截；封面默认取最近一次成功导出的中间帧并回写导出记录
+20. **图片质量评估**：`image.quality.enabled` 默认 false（关闭时生成流程不变）；开启后低分自动重试≤2 次并保留最高分，评分随镜头 qualityScore 字段返回；未配多模态 API 时降级为规则评估，评估异常不阻塞生成
 
 ---
 
@@ -1323,7 +1338,7 @@ A: 本地存储模式下图片通过 `/images/日期/文件名` 访问（如 `/i
 A: 修改 `application.yml` 中的 `storage.type` 配置：`local` → `oss` / `minio` / `fastdfs`，无需重启。
 
 **Q: 短视频导出时提示 FFmpeg 错误或超时？**
-A: 确认 `ffmpeg -version` 可用（含 ffprobe）。多镜头 1080p 合成耗时较长属正常现象，超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）。BGM 混音需 ffmpeg ≥ 4.4。
+A: 确认 `video.ffmpeg-path` / `video.ffprobe-path` 指向的可执行文件可用（默认回退 PATH）：`ffmpeg -version`；版本需 ≥4.3（xfade 转场），EVCapture 等自带的 4.2 旧构建不可用。多镜头 1080p 合成耗时较长属正常现象，超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）。BGM 混音需 ffmpeg ≥ 4.4。配音失败时检查 `video.python-command` 指向的解释器已装 edge-tts（Windows 裸 `python` 可能被微软商店别名桩劫持，建议绝对路径）。
 
 **Q: BGM 混音后旁白声音变小了？**
 A: 后端使用 `amix normalize=0` 保证旁白原音量，BGM 音量固定降至 15%（约 -16dB）不抢旁白；若听感不适可更换更轻柔的曲目。
@@ -1345,3 +1360,6 @@ A: 字幕字体需系统已安装，默认微软雅黑；Linux/Docker 可在 `vi
 
 **Q: 如何批量导出多个平台？**
 A: 前端「批量三平台」按钮并行调用三次 `POST /api/video/export/platform`（抖音/B站/小红书）；API 用户可自行并发调用该接口（每次一个平台）。FFmpeg 编码为 CPU 密集型，并发 2-3 个即可。
+
+**Q: 如何开启图片质量自动评估？**
+A: 配置 `image.quality.enabled: true`（可复用 DASHSCOPE_API_KEY，默认走 qwen-vl-max 多模态端点）。生成后自动按清晰度/相关性/美学打分，低于阈值（默认 6.0）自动重试≤2 次并保留最高分；镜头卡片显示质量徽章。未配 API Key 时降级为分辨率规则评估；不想启用时保持默认 false 即可，生成流程完全不受影响。

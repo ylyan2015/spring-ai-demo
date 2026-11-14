@@ -131,6 +131,7 @@ public class ImageGenerationController {
         map.put("imageUrl", shot.getImageUrl());
         map.put("imageFileId", shot.getImageFileId());
         map.put("imageStatus", shot.getImageStatus());
+        map.put("qualityScore", shot.getQualityScore());
         return map;
     }
 }

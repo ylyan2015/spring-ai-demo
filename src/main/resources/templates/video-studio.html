@@ -493,7 +493,7 @@ function shotCardHtml(shot) {
     h += '<div class="drag-hint">⋮⋮ 拖拽排序</div>';
     h += '<div class="shot-image" id="shot-image-' + shot.id + '">' + imgH + '</div>';
     h += '<div class="shot-body">';
-    h += '<span class="shot-number">镜头 ' + shot.shotOrder + '</span><span class="shot-duration">' + shot.durationSeconds + 's</span><span class="badge badge-' + esc(shot.imageStatus) + '">' + esc(shot.imageStatus) + '</span>';
+    h += '<span class="shot-number">镜头 ' + shot.shotOrder + '</span><span class="shot-duration">' + shot.durationSeconds + 's</span><span class="badge badge-' + esc(shot.imageStatus) + '">' + esc(shot.imageStatus) + '</span>' + qualityBadgeHtml(shot.qualityScore, shot.id);
 
     if (editingShotId === shot.id) {
         h += '<div class="edit-form">';
@@ -543,6 +543,13 @@ async function saveShotEdit(shotId) {
 }
 
 function findShot(shotId) { return (currentScript.shots || []).find(s => s.id === shotId); }
+
+// 质量评分徽章（模块 J：未启用评估时不显示）
+function qualityBadgeHtml(score, shotId) {
+    if (score == null) return '';
+    const color = score >= 8 ? '#2ecc71' : (score >= 6 ? '#f39c12' : '#f74a4a');
+    return '<span class="badge" id="quality-badge-' + shotId + '" style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '" title="图片质量综合评分（0-10）">质量 ' + Number(score).toFixed(1) + '</span>';
+}
 
 async function deleteShot(shotId) {
     if (!confirm('确定删除该镜头？')) return;
@@ -640,6 +647,7 @@ async function generateShotImage(shotId) {
     shot.imageUrl = updated.imageUrl;
     shot.imageFileId = updated.imageFileId;
     shot.imageStatus = updated.imageStatus;
+    shot.qualityScore = updated.qualityScore;
     toast('镜头 ' + shot.shotOrder + ' 图片生成成功', 'success');
     renderScript();
 }
@@ -704,7 +712,7 @@ function handleSseEvent(type, p) {
     }
     if (type === 'SHOT_COMPLETE') {
         const shot = findShot(p.shotId);
-        if (shot) { shot.imageUrl = p.imageUrl; shot.imageStatus = 'READY'; }
+        if (shot) { shot.imageUrl = p.imageUrl; shot.imageStatus = 'READY'; shot.qualityScore = p.qualityScore; }
         const imgBox = document.getElementById('shot-image-' + p.shotId);
         if (imgBox && p.imageUrl) imgBox.innerHTML = '<img src="' + esc(p.imageUrl) + '">';
         const card = document.getElementById('shot-' + p.shotId);
@@ -713,6 +721,11 @@ function handleSseEvent(type, p) {
             // 同步更新卡片状态徽章，避免等待全量重渲染
             const badge = card.querySelector('.badge');
             if (badge) { badge.className = 'badge badge-READY'; badge.textContent = 'READY'; }
+            // 同步质量评分徽章（模块 J）
+            const qb = document.getElementById('quality-badge-' + p.shotId);
+            const qHtml = qualityBadgeHtml(p.qualityScore, p.shotId);
+            if (qb) { qb.outerHTML = qHtml; }
+            else if (qHtml && badge) { badge.insertAdjacentHTML('afterend', qHtml); }
         }
         updateProgressAndCount(p);
         return;

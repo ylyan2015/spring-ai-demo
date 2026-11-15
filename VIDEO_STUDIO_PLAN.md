@@ -1078,3 +1078,14 @@ src/test/java/.../                             # 单元测试：SubtitleServiceT
 切片 3 抽卡多候选与局部重绘：已实现（ShotCandidate/评分择优 provisional/wan27 bbox 重绘/Agent inpaintImage）。
 切片 4 多角色配音与后期增强：已实现（对白/多声线 TTS/字幕含对白/SFX 分层混音/Real-ESRGAN 超分+RIFE 补帧可选导出）。
 切片 5 视频转绘：已实现（RestyleTask 独立实体/wan2.7-videoedit 异步转绘/转绘面板；spike 实测验收达标，local 存储带 oss/minio 指引）。Phase 4 五切片全部完成。
+
+### UI 验证闭环修复记录（2026-11-15 浏览器级验证）
+
+- C1 模板截断渲染：video-studio.html 纯客户端 JS 的数组字面量 `[[...]]` 被 Thymeleaf 3 默认内联解析，
+  模板解析失败致页面截断（后半 JS 丢失、全部按钮无响应）；修复为 `<script th:inline="none">`，
+  新增 VideoStudioPageRenderTest 断言整页完整渲染（submitInpaint/saveShotEdit/restylePanel/upscaleToggle）。
+- M1 错误掩码：SecurityConfig 未放行 `/error`，任何未处理异常的错误转发被鉴权层掩码为匿名 403 空响应；
+  修复为 permitAll 增加 `/error`，SecurityConfigIntegrationTest 新增 malformed JSON → 400 回归。
+- 浏览器实测通过：注册/登录（RSA+验证码）、脚本生成角色卡、角色声线编辑（林晚→Xiaoyi）、
+  镜头对白+对白角色编辑与卡片展示、超分/补帧/SFX 三开关勾选导出（徽章：含旁白配音/含环境音效/含烧录字幕）、
+  转绘面板上传→提交→轮询→FAILED 带 oss/minio 指引且终态停止轮询。

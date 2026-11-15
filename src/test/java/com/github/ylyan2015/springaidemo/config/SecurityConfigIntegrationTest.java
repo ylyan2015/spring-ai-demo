@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -60,5 +61,15 @@ class SecurityConfigIntegrationTest {
     void actuatorHealthRemainsPublic() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void unhandledErrorForwardIsNotMaskedAsAnonymous403() throws Exception {
+        // /error 未放行时，未处理异常（如 malformed JSON）的错误转发会被鉴权层
+        // 掩码为匿名 403 空响应；放行后应返回 Spring 默认 400（UI 验证闭环审查修复）
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType("application/json")
+                        .content("{malformed"))
+                .andExpect(status().isBadRequest());
     }
 }

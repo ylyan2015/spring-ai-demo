@@ -39,7 +39,8 @@ public class VideoExportController {
 
     /**
      * 生成高清正式版（无水印）
-     * 请求体: { "scriptId": 1, "resolution": "720p", "aspectRatio": "9:16", "bgmId": 3, "subtitle": true }
+     * 请求体: { "scriptId": 1, "resolution": "720p", "aspectRatio": "9:16", "bgmId": 3, "subtitle": true,
+     *          "upscale": true, "interpolate": false, "sfx": true }（后三者为 Phase 4 切片 4 可选后期增强）
      */
     @PostMapping("/export/hd")
     public ResponseEntity<Map<String, Object>> exportHd(@RequestBody Map<String, Object> request) {
@@ -118,8 +119,14 @@ public class VideoExportController {
             if (preview) {
                 data = videoExportService.exportPreview(scriptId, aspectRatio, bgmId, subtitle, subtitleLanguage);
             } else {
-                data = videoExportService.exportHd(scriptId,
-                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle, withLogo, subtitleLanguage);
+                // Phase 4 切片 4：可选后期增强参数（缺省全 false，存量请求零变化）
+                VideoExportService.PostFlags postFlags = new VideoExportService.PostFlags(
+                        toBoolean(request.get("upscale"), false),
+                        toBoolean(request.get("interpolate"), false),
+                        toBoolean(request.get("sfx"), false));
+                data = videoExportService.exportHdWithPost(scriptId,
+                        (String) request.get("resolution"), aspectRatio, bgmId, subtitle, withLogo,
+                        subtitleLanguage, postFlags);
             }
 
             result.put("success", true);

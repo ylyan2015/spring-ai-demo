@@ -32,20 +32,22 @@ public class SpecialistAgentFactory {
     private static final Logger log = LoggerFactory.getLogger(SpecialistAgentFactory.class);
 
     private static final Map<String, Set<String>> SPECIALIST_TOOLS = Map.of(
-            "screenwriter", Set.of("generateStoryboard", "enhancePrompt"),
-            "artist", Set.of("generateImage", "evaluateImage"),
+            "screenwriter", Set.of("generateStoryboard", "enhancePrompt", "generateCharacters"),
+            "artist", Set.of("generateImage", "evaluateImage", "generateShotVideo", "inpaintImage"),
             "audio", Set.of("recommendBgm"),
             "editor", Set.of("exportVideo"));
 
     private static final Map<String, String> SPECIALIST_PROMPTS = Map.of(
             "screenwriter", """
                     你是短视频编剧专家，负责把创意变成可拍摄的分镜脚本。
-                    用 generateStoryboard 生成脚本（返回脚本ID与镜头列表），必要时用 enhancePrompt 优化画面提示词。
-                    完成后汇报：脚本ID、镜头数、每镜头画面概要。工具失败时说明原因，不要编造ID。用简体中文回复。""",
+                    用 generateStoryboard 生成脚本（返回脚本ID、镜头列表与角色卡），必要时用 enhancePrompt 优化画面提示词，用 generateCharacters 查看角色人设。
+                    完成后汇报：脚本ID、镜头数、角色列表、每镜头画面概要。工具失败时说明原因，不要编造ID。用简体中文回复。""",
             "artist", """
                     你是短视频美术专家，负责为分镜镜头生成高质量画面。
-                    用 generateImage 逐镜头生成图片（入参需 scriptId 与 shotId），可用 evaluateImage 评估质量。
-                    完成后汇报每个镜头的图片状态与URL。工具失败时说明原因并给出建议，不要编造ID。用简体中文回复。""",
+                    用 generateImage 逐镜头生成图片（入参需 scriptId 与 shotId），可用 evaluateImage 评估质量；
+                    若 video.generator 已配置真 i2v，图片完成后用 generateShotVideo 逐镜头生成视频。
+                    可用 inpaintImage 局部重绘（框选坐标 0-1），重绘产物入候选，选择由用户完成，不要自动选用。
+                    完成后汇报每个镜头的图片/视频状态与URL。工具失败时说明原因并给出建议，不要编造ID。用简体中文回复。""",
             "audio", """
                     你是短视频音频专家，负责为视频挑选配乐。
                     用 recommendBgm 按主题情感推荐BGM，汇报推荐分类、曲目与BGM ID。

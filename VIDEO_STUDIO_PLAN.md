@@ -1068,3 +1068,13 @@ tools/generate-preset-bgm.ps1                  # 预置 BGM 素材生成脚本�
 data/bgm/*.mp3                                 # 5 首预置免版权 BGM（启动自动扫描注册）
 src/test/java/.../                             # 单元测试：SubtitleServiceTest / VideoExportServiceZipTest / VideoTemplateServiceTest / LocalModelStylePresetTest / ImageQualityServiceTest / ImageGenerationServiceQualityTest / VideoComposeFfmpegTest（真实 FFmpeg 回归，TTS 用例 -Dtts=true）
 ```
+
+
+## 五、Phase 4 AI 漫剧质量升级（2026-11-15 起）
+
+规格：docs/superpowers/specs/2026-11-15-phase4-manga-drama-design.md；实施计划：docs/superpowers/plans/2026-11-15-phase4-slice1..5-*.md。
+切片 1 角色卡与图像一致性：已实现（角色卡/参考图/wan27/画风锁/景别/Agent generateCharacters）。
+切片 2 真 i2v 与首尾帧连续性：已实现（dashscope-wan 生成器/连续性三模式/混合合成实测时长/Agent generateShotVideo）。
+切片 3 抽卡多候选与局部重绘：已实现（ShotCandidate/评分择优 provisional/wan27 bbox 重绘/Agent inpaintImage）。
+切片 4 多角色配音与后期增强：已实现（对白/多声线 TTS/字幕含对白/SFX 分层混音/Real-ESRGAN 超分+RIFE 补帧可选导出）。
+切片 5 视频转绘：已实现（RestyleTask 独立实体/wan2.7-videoedit 异步转绘/转绘面板；spike 实测验收达标，local 存储带 oss/minio 指引）。Phase 4 五切片全部完成。

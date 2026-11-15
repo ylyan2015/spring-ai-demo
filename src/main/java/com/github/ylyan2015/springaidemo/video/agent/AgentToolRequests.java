@@ -50,4 +50,22 @@ public final class AgentToolRequests {
     /** 委托专家 Agent 执行子任务（Phase 3 切片3） */
     public record DelegateTask(
             @ToolParam(description = "交给专家的子任务描述，需包含必要上下文（如脚本ID、镜头ID、主题），专家不共享导演对话历史") String taskDescription) {}
+
+    /** 角色卡查询（Phase 4 切片 1：角色卡随分镜脚本自动生成，本工具返回人设列表） */
+    public record GenerateCharacters(
+            @ToolParam(description = "脚本ID") Long scriptId) {}
+
+    /** 单镜头图生视频（Phase 4 切片 2） */
+    public record GenerateShotVideo(
+            @ToolParam(description = "脚本ID") Long scriptId,
+            @ToolParam(description = "镜头ID（须已生成图片）") Long shotId) {}
+
+    /** 框选局部重绘（Phase 4 切片 3；坐标 0-1 相对值，产物入候选，选择由用户完成） */
+    public record InpaintImage(
+            @ToolParam(description = "镜头ID（须已生成图片）") Long shotId,
+            @ToolParam(description = "框选左上角 x（0-1 相对值）") Double x,
+            @ToolParam(description = "框选左上角 y（0-1 相对值）") Double y,
+            @ToolParam(description = "框选宽度（0-1 相对值，x+w≤1）") Double w,
+            @ToolParam(description = "框选高度（0-1 相对值，y+h≤1）") Double h,
+            @ToolParam(description = "重绘指令，如：把雨伞换成红色") String instruction) {}
 }

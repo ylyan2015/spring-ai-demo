@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +47,9 @@ class VideoAgentToolFactoryTest {
     private ImageQualityService qualityService;
     private VideoExportService videoExportService;
     private BgmService bgmService;
+    private com.github.ylyan2015.springaidemo.service.StoryCharacterService storyCharacterService;
+    private com.github.ylyan2015.springaidemo.service.VideoGenerationService videoGenerationService;
+    private com.github.ylyan2015.springaidemo.service.ShotCandidateService shotCandidateService;
     private VideoAgentToolFactory factory;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -58,9 +62,13 @@ class VideoAgentToolFactoryTest {
         qualityService = mock(ImageQualityService.class);
         videoExportService = mock(VideoExportService.class);
         bgmService = mock(BgmService.class);
+        storyCharacterService = mock(com.github.ylyan2015.springaidemo.service.StoryCharacterService.class);
+        videoGenerationService = mock(com.github.ylyan2015.springaidemo.service.VideoGenerationService.class);
+        shotCandidateService = mock(com.github.ylyan2015.springaidemo.service.ShotCandidateService.class);
         factory = new VideoAgentToolFactory(storyScriptService, videoTemplateService,
                 promptOptimizerService, imageGenerationService, qualityService,
-                videoExportService, bgmService);
+                videoExportService, bgmService, storyCharacterService, videoGenerationService,
+                shotCandidateService);
         ReflectionTestUtils.setField(factory, "selfBaseUrl", "http://localhost:8080");
     }
 
@@ -75,10 +83,47 @@ class VideoAgentToolFactoryTest {
     }
 
     @Test
-    void registersSixToolsWithUniqueNames() {
+    void registersNineToolsWithUniqueNames() {
         List<ToolCallback> tools = factory.createTools();
-        assertEquals(6, tools.size());
-        assertEquals(6, tools.stream().map(t -> t.getToolDefinition().name()).distinct().count());
+        assertEquals(9, tools.size());
+        assertEquals(9, tools.stream().map(t -> t.getToolDefinition().name()).distinct().count());
+    }
+
+    @Test
+    void inpaintImageDelegates() throws Exception {
+        com.github.ylyan2015.springaidemo.entity.ShotCandidate c =
+                new com.github.ylyan2015.springaidemo.entity.ShotCandidate();
+        c.setId(8L);
+        c.setUrl("/images/inpainted.png");
+        when(shotCandidateService.inpaint(eq(5L), any(double[].class), eq("fix hands")))
+                .thenReturn(c);
+        JsonNode out = call("inpaintImage",
+                "{\"shotId\":5,\"x\":0.1,\"y\":0.2,\"w\":0.5,\"h\":0.4,\"instruction\":\"fix hands\"}");
+        assertTrue(out.get("success").asBoolean());
+        assertEquals("/images/inpainted.png", out.get("url").asText());
+    }
+
+    @Test
+    void generateShotVideoDelegates() throws Exception {
+        StoryShot shot = new StoryShot();
+        shot.setId(5L);
+        shot.setVideoStatus("READY");
+        when(videoGenerationService.generateForShot(1L, 5L)).thenReturn(shot);
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", 5L);
+        map.put("videoStatus", "READY");
+        when(storyScriptService.shotToMap(shot)).thenReturn(map);
+        JsonNode out = call("generateShotVideo", "{\"scriptId\":1,\"shotId\":5}");
+        assertTrue(out.get("success").asBoolean());
+        assertEquals("READY", out.get("videoStatus").asText());
+    }
+
+    @Test
+    void generateCharactersDelegates() throws Exception {
+        when(storyCharacterService.listByScript(1L)).thenReturn(List.of(Map.of("name", "林晚")));
+        JsonNode out = call("generateCharacters", "{\"scriptId\":1}");
+        assertTrue(out.get("success").asBoolean());
+        assertEquals("林晚", out.get("characters").get(0).get("name").asText());
     }
 
     @Test

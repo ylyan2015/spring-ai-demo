@@ -57,9 +57,43 @@ public class StoryShot {
     @Column(name = "image_status", length = 20)
     private String imageStatus = "PENDING";
 
+    /** Phase 4 切片 1：逗号分隔角色 id */
+    @Column(name = "character_ids", length = 200)
+    private String characterIds;
+
+    /** Phase 4 切片 1：景别 CLOSE/MEDIUM/LONG */
+    @Column(name = "shot_size", length = 20)
+    private String shotSize = "MEDIUM";
+
+    /** Phase 4 切片 2：i2v 产物视频地址（存储转存后） */
+    @Column(name = "video_url", length = 1024)
+    private String videoUrl;
+
+    @Column(name = "video_file_id", length = 200)
+    private String videoFileId;
+
+    /** Phase 4 切片 2：NONE/PENDING/GENERATING/READY/FAILED */
+    @Column(name = "video_status", length = 20)
+    private String videoStatus = "NONE";
+
+    /** Phase 4 切片 2：末帧图（连续性模式消费） */
+    @Column(name = "last_frame_url", length = 1024)
+    private String lastFrameUrl;
+
+    @Column(name = "last_frame_file_id", length = 200)
+    private String lastFrameFileId;
+
     /** 图片质量综合评分（0-10，模块 J；未启用评估时为 null） */
     @Column(name = "quality_score")
     private Double qualityScore;
+
+    /** Phase 4 切片 4：本镜角色对白（中文，无对白为空） */
+    @Column(name = "dialogue", columnDefinition = "TEXT")
+    private String dialogue;
+
+    /** Phase 4 切片 4：对白角色 id（声线取角色卡 voice） */
+    @Column(name = "dialogue_character_id")
+    private Long dialogueCharacterId;
 
     public StoryShot() {}
 
@@ -101,7 +135,35 @@ public class StoryShot {
 
     public String getImageStatus() { return imageStatus; }
     public void setImageStatus(String imageStatus) { this.imageStatus = imageStatus; }
+    public String getCharacterIds() { return characterIds; }
+    public void setCharacterIds(String characterIds) { this.characterIds = characterIds; }
+    public String getShotSize() { return shotSize; }
+    public void setShotSize(String shotSize) { this.shotSize = shotSize; }
+    public String getVideoUrl() { return videoUrl; }
+    public void setVideoUrl(String videoUrl) { this.videoUrl = videoUrl; }
+    public String getVideoFileId() { return videoFileId; }
+    public void setVideoFileId(String videoFileId) { this.videoFileId = videoFileId; }
+    public String getVideoStatus() { return videoStatus; }
+    public void setVideoStatus(String videoStatus) { this.videoStatus = videoStatus; }
+    public String getLastFrameUrl() { return lastFrameUrl; }
+    public void setLastFrameUrl(String lastFrameUrl) { this.lastFrameUrl = lastFrameUrl; }
+    public String getLastFrameFileId() { return lastFrameFileId; }
+    public void setLastFrameFileId(String lastFrameFileId) { this.lastFrameFileId = lastFrameFileId; }
+
+    /** Phase 4 切片 2：图片变更后失效旧视频/尾帧，避免导出静默混入与新图不符的旧片段 */
+    public void invalidateVideo() {
+        this.videoUrl = null;
+        this.videoFileId = null;
+        this.lastFrameUrl = null;
+        this.lastFrameFileId = null;
+        this.videoStatus = "NONE";
+    }
 
     public Double getQualityScore() { return qualityScore; }
     public void setQualityScore(Double qualityScore) { this.qualityScore = qualityScore; }
+
+    public String getDialogue() { return dialogue; }
+    public void setDialogue(String dialogue) { this.dialogue = dialogue; }
+    public Long getDialogueCharacterId() { return dialogueCharacterId; }
+    public void setDialogueCharacterId(Long dialogueCharacterId) { this.dialogueCharacterId = dialogueCharacterId; }
 }

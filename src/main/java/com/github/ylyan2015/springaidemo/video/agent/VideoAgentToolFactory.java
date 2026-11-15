@@ -6,6 +6,7 @@ import com.github.ylyan2015.springaidemo.service.BgmService;
 import com.github.ylyan2015.springaidemo.service.ImageGenerationService;
 import com.github.ylyan2015.springaidemo.service.ImagePromptOptimizerService;
 import com.github.ylyan2015.springaidemo.service.StoryScriptService;
+import com.github.ylyan2015.springaidemo.service.StoryCharacterService;
 import com.github.ylyan2015.springaidemo.service.VideoExportService;
 import com.github.ylyan2015.springaidemo.service.VideoTemplateService;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityScore;
@@ -41,6 +42,9 @@ public class VideoAgentToolFactory {
     private final ImageQualityService qualityService;
     private final VideoExportService videoExportService;
     private final BgmService bgmService;
+    private final StoryCharacterService storyCharacterService;
+    private final com.github.ylyan2015.springaidemo.service.VideoGenerationService videoGenerationService;
+    private final com.github.ylyan2015.springaidemo.service.ShotCandidateService shotCandidateService;
 
     /** 本服务访问基址：evaluateImage 仅接受存储相对路径，解析为同源绝对 URL（SSRF 防护） */
     @Value("${agent.tools.self-base-url:http://localhost:8080}")
@@ -52,7 +56,10 @@ public class VideoAgentToolFactory {
                                  ImageGenerationService imageGenerationService,
                                  ImageQualityService qualityService,
                                  VideoExportService videoExportService,
-                                 BgmService bgmService) {
+                                 BgmService bgmService,
+                                 StoryCharacterService storyCharacterService,
+                                 com.github.ylyan2015.springaidemo.service.VideoGenerationService videoGenerationService,
+                                 com.github.ylyan2015.springaidemo.service.ShotCandidateService shotCandidateService) {
         this.storyScriptService = storyScriptService;
         this.videoTemplateService = videoTemplateService;
         this.promptOptimizerService = promptOptimizerService;
@@ -60,9 +67,12 @@ public class VideoAgentToolFactory {
         this.qualityService = qualityService;
         this.videoExportService = videoExportService;
         this.bgmService = bgmService;
+        this.storyCharacterService = storyCharacterService;
+        this.videoGenerationService = videoGenerationService;
+        this.shotCandidateService = shotCandidateService;
     }
 
-    /** 构建全部 6 个工具（每次调用新建，无状态） */
+    /** 构建全部 9 个工具（每次调用新建，无状态） */
     public List<ToolCallback> createTools() {
         return List.of(
                 FunctionToolCallback.builder("generateStoryboard", guarded(this::generateStoryboard))
@@ -82,7 +92,16 @@ public class VideoAgentToolFactory {
                         .inputType(AgentToolRequests.ExportVideo.class).build(),
                 FunctionToolCallback.builder("recommendBgm", guarded(this::recommendBgm))
                         .description("按视频主题情感智能推荐背景音乐，返回推荐分类与曲目")
-                        .inputType(AgentToolRequests.RecommendBgm.class).build());
+                        .inputType(AgentToolRequests.RecommendBgm.class).build(),
+                FunctionToolCallback.builder("generateCharacters", guarded(this::generateCharacters))
+                        .description("返回脚本的角色卡列表（角色卡随分镜脚本自动生成）：名字/英文特征表/性格/声线/定妆参考图，供一致性出图与配音使用")
+                        .inputType(AgentToolRequests.GenerateCharacters.class).build(),
+                FunctionToolCallback.builder("generateShotVideo", guarded(this::generateShotVideo))
+                        .description("为指定镜头图生视频（i2v，含首尾帧连续性），返回镜头视频状态与URL；video.generator=none 时失败")
+                        .inputType(AgentToolRequests.GenerateShotVideo.class).build(),
+                FunctionToolCallback.builder("inpaintImage", guarded(this::inpaintImage))
+                        .description("对镜头图片框选局部重绘（坐标 0-1 相对值，需 wan27 生成器）；重绘产物入候选不覆盖主图，选择由用户完成")
+                        .inputType(AgentToolRequests.InpaintImage.class).build());
     }
 
     /** 统一异常包装：工具失败返回 JSON 而非抛异常，便于 LLM 感知与重试决策 */
@@ -170,6 +189,30 @@ public class VideoAgentToolFactory {
     private Map<String, Object> recommendBgm(AgentToolRequests.RecommendBgm req) {
         Map<String, Object> out = new LinkedHashMap<>(
                 bgmService.recommendBgm(req.theme(), bgmService.requireCurrentUserId()));
+        out.put("success", true);
+        return out;
+    }
+
+    private Map<String, Object> generateCharacters(AgentToolRequests.GenerateCharacters req) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("characters", storyCharacterService.listByScript(req.scriptId()));
+        return out;
+    }
+
+    private Map<String, Object> generateShotVideo(AgentToolRequests.GenerateShotVideo req) {
+        StoryShot shot = videoGenerationService.generateForShot(req.scriptId(), req.shotId());
+        Map<String, Object> out = new LinkedHashMap<>(storyScriptService.shotToMap(shot));
+        out.put("success", true);
+        return out;
+    }
+
+    private Map<String, Object> inpaintImage(AgentToolRequests.InpaintImage req) {
+        double[] rect = new double[]{req.x(), req.y(), req.w(), req.h()};
+        com.github.ylyan2015.springaidemo.entity.ShotCandidate candidate =
+                shotCandidateService.inpaint(req.shotId(), rect, req.instruction());
+        Map<String, Object> out = new LinkedHashMap<>(
+                com.github.ylyan2015.springaidemo.service.ShotCandidateService.candidateToMap(candidate));
         out.put("success", true);
         return out;
     }

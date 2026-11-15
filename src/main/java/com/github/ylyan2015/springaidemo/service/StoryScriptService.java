@@ -1,11 +1,14 @@
 package com.github.ylyan2015.springaidemo.service;
 
+import com.github.ylyan2015.springaidemo.entity.StoryCharacter;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.entity.User;
+import com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryShotRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
+import com.github.ylyan2015.springaidemo.video.CharacterDesign;
 import com.github.ylyan2015.springaidemo.video.Shot;
 import com.github.ylyan2015.springaidemo.video.Storyboard;
 import com.github.ylyan2015.springaidemo.video.VideoScriptService;
@@ -33,15 +36,18 @@ public class StoryScriptService {
     private final StoryShotRepository shotRepository;
     private final UserRepository userRepository;
     private final VideoScriptService videoScriptService;
+    private final StoryCharacterRepository characterRepository;
 
     public StoryScriptService(StoryScriptRepository scriptRepository,
                               StoryShotRepository shotRepository,
                               UserRepository userRepository,
-                              VideoScriptService videoScriptService) {
+                              VideoScriptService videoScriptService,
+                              StoryCharacterRepository characterRepository) {
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.userRepository = userRepository;
         this.videoScriptService = videoScriptService;
+        this.characterRepository = characterRepository;
     }
 
     // ==================== 脚本生成与保存 ====================
@@ -90,12 +96,16 @@ public class StoryScriptService {
                 shot.setDurationSeconds(shotDto.getDurationSeconds());
                 shot.setNarration(shotDto.getNarration());
                 shot.setImagePrompt(shotDto.getImagePrompt());
+                shot.setShotSize(normalizeShotSize(shotDto.getShotSize()));
+                shot.setDialogue(shotDto.getDialogue());
                 shot.setImageStatus("PENDING");
                 script.addShot(shot);
             }
         }
 
         StoryScript saved = scriptRepository.save(script);
+        attachCharacters(saved, storyboard);
+        saved = scriptRepository.save(saved);
         log.info("Story script saved: id={}, title='{}', {} shots",
                 saved.getId(), saved.getTitle(), saved.getShots().size());
 
@@ -129,12 +139,16 @@ public class StoryScriptService {
                 shot.setDurationSeconds(shotDto.getDurationSeconds());
                 shot.setNarration(shotDto.getNarration());
                 shot.setImagePrompt(shotDto.getImagePrompt());
+                shot.setShotSize(normalizeShotSize(shotDto.getShotSize()));
+                shot.setDialogue(shotDto.getDialogue());
                 shot.setImageStatus("PENDING");
                 script.addShot(shot);
             }
         }
 
-        return scriptRepository.save(script);
+        StoryScript saved = scriptRepository.save(script);
+        attachCharacters(saved, storyboard);
+        return scriptRepository.save(saved);
     }
 
     // ==================== 脚本查询 ====================
@@ -164,6 +178,21 @@ public class StoryScriptService {
         storyboard.setTitle(script.getTitle());
         storyboard.setTheme(script.getTheme());
 
+        // Phase 4 切片 1：角色卡反向装配 + id→name 映射
+        List<StoryCharacter> characters = characterRepository.findByScriptIdOrderByIdAsc(script.getId());
+        Map<Long, String> idToName = new LinkedHashMap<>();
+        List<CharacterDesign> designs = new ArrayList<>();
+        for (StoryCharacter c : characters) {
+            idToName.put(c.getId(), c.getName());
+            CharacterDesign cd = new CharacterDesign();
+            cd.setName(c.getName());
+            cd.setFeatureTable(c.getFeatureTable());
+            cd.setPersonality(c.getPersonality());
+            cd.setSuggestedVoice(c.getVoice());
+            designs.add(cd);
+        }
+        storyboard.setCharacters(designs);
+
         List<Shot> shots = script.getShots().stream().map(entity -> {
             Shot dto = new Shot();
             dto.setOrder(entity.getShotOrder());
@@ -172,11 +201,47 @@ public class StoryScriptService {
             dto.setDurationSeconds(entity.getDurationSeconds());
             dto.setNarration(entity.getNarration());
             dto.setImagePrompt(entity.getImagePrompt());
+            dto.setShotSize(entity.getShotSize());
+            dto.setCharacterNames(namesOf(entity.getCharacterIds(), idToName));
+            dto.setDialogue(entity.getDialogue());
+            dto.setDialogueCharacterName(entity.getDialogueCharacterId() == null
+                    ? null : idToName.get(entity.getDialogueCharacterId()));
             return dto;
         }).collect(Collectors.toList());
 
         storyboard.setShots(shots);
         return storyboard;
+    }
+
+    /**
+     * Phase 4 切片 1：脚本级画风锁更新（VisualStyle 枚举名校验）
+     */
+    @Transactional
+    public StoryScript updateStyle(Long scriptId, String style) {
+        if (style != null && !style.isBlank()) {
+            try {
+                com.github.ylyan2015.springaidemo.video.VisualStyle.valueOf(style.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("不支持的画风: " + style);
+            }
+        }
+        StoryScript script = getScript(scriptId);
+        script.setStyle(style == null || style.isBlank() ? null : style.trim().toUpperCase());
+        return scriptRepository.save(script);
+    }
+
+    /**
+     * Phase 4 切片 2：首尾帧连续性模式更新
+     */
+    @Transactional
+    public StoryScript updateContinuity(Long scriptId, String mode) {
+        String m = mode == null || mode.isBlank() ? "NONE" : mode.trim().toUpperCase();
+        if (!List.of("NONE", "PREV_LAST_FRAME", "GENERATED_LAST_FRAME").contains(m)) {
+            throw new IllegalArgumentException("不支持的连续性模式: " + mode);
+        }
+        StoryScript script = getScript(scriptId);
+        script.setContinuityMode(m);
+        return scriptRepository.save(script);
     }
 
     // ==================== 脚本更新 ====================
@@ -210,6 +275,7 @@ public class StoryScriptService {
         Long userId = getCurrentUserId();
         StoryScript script = scriptRepository.findByIdAndUserId(scriptId, userId)
                 .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
+        characterRepository.deleteByScriptId(scriptId);
         scriptRepository.delete(script);
         log.info("Story script deleted: id={}, userId={}", scriptId, userId);
     }
@@ -239,19 +305,71 @@ public class StoryScriptService {
         }
         if (updates.containsKey("imagePrompt")) {
             shot.setImagePrompt((String) updates.get("imagePrompt"));
-            // 提示词修改后，图片需要重新生成
+            // 提示词修改后，图片需要重新生成；旧视频/尾帧同步失效
             shot.setImageStatus("PENDING");
             shot.setImageUrl(null);
             shot.setImageFileId(null);
+            shot.invalidateVideo();
         }
         if (updates.containsKey("imageUrl")) {
-            shot.setImageUrl((String) updates.get("imageUrl"));
+            String newUrl = (String) updates.get("imageUrl");
+            if (!java.util.Objects.equals(newUrl, shot.getImageUrl())) {
+                shot.invalidateVideo();
+            }
+            shot.setImageUrl(newUrl);
         }
         if (updates.containsKey("imageFileId")) {
-            shot.setImageFileId((String) updates.get("imageFileId"));
+            String newFileId = (String) updates.get("imageFileId");
+            if (!java.util.Objects.equals(newFileId, shot.getImageFileId())) {
+                shot.invalidateVideo();
+            }
+            shot.setImageFileId(newFileId);
         }
         if (updates.containsKey("imageStatus")) {
             shot.setImageStatus((String) updates.get("imageStatus"));
+        }
+        if (updates.containsKey("characterIds")) {
+            Object v = updates.get("characterIds");
+            List<Long> owned = characterRepository.findByScriptIdOrderByIdAsc(scriptId).stream()
+                    .map(StoryCharacter::getId).collect(Collectors.toList());
+            if (v instanceof List<?> list) {
+                List<String> filtered = list.stream().map(String::valueOf)
+                        .filter(s -> {
+                            try {
+                                return owned.contains(Long.parseLong(s.trim()));
+                            } catch (NumberFormatException e) {
+                                return false;
+                            }
+                        }).collect(Collectors.toList());
+                shot.setCharacterIds(filtered.isEmpty() ? null : String.join(",", filtered));
+            } else if (v instanceof String s && !s.isBlank()) {
+                List<String> filtered = parseCharacterIds(s).stream()
+                        .filter(owned::contains).map(String::valueOf).collect(Collectors.toList());
+                shot.setCharacterIds(filtered.isEmpty() ? null : String.join(",", filtered));
+            } else {
+                shot.setCharacterIds(null);
+            }
+        }
+        if (updates.containsKey("shotSize")) {
+            shot.setShotSize(normalizeShotSize((String) updates.get("shotSize")));
+        }
+        if (updates.containsKey("dialogue")) {
+            shot.setDialogue((String) updates.get("dialogue"));
+        }
+        if (updates.containsKey("dialogueCharacterId")) {
+            Object v = updates.get("dialogueCharacterId");
+            Long cid = null;
+            if (v instanceof Number n) {
+                cid = n.longValue();
+            } else if (v instanceof String s && !s.isBlank()) {
+                try {
+                    cid = Long.parseLong(s.trim());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            // 归属过滤：非本脚本角色置 null（与 addShot/batchUpdateShots 共用，审查修复）
+            shot.setDialogueCharacterId(cid);
+            filterOwnedDialogueCharacterId(scriptId, shot);
         }
 
         script.setUpdatedAt(LocalDateTime.now());
@@ -282,6 +400,7 @@ public class StoryScriptService {
         }
 
         // 设置新镜头的顺序并添加
+        filterOwnedDialogueCharacterId(scriptId, newShot);
         newShot.setShotOrder(insertOrder);
         script.addShot(newShot);
         script.setUpdatedAt(LocalDateTime.now());
@@ -363,6 +482,7 @@ public class StoryScriptService {
             StoryShot shot = updatedShots.get(i);
             shot.setShotOrder(i + 1);
             shot.setId(null); // 确保是新记录
+            filterOwnedDialogueCharacterId(scriptId, shot);
             script.addShot(shot);
         }
 
@@ -374,6 +494,19 @@ public class StoryScriptService {
 
     // ==================== 工具方法 ====================
 
+    /** 对白角色归属过滤：非本脚本角色置 null（updateShot/addShot/batchUpdateShots 三入口一致，审查修复） */
+    private void filterOwnedDialogueCharacterId(Long scriptId, StoryShot shot) {
+        Long cid = shot.getDialogueCharacterId();
+        if (cid == null) {
+            return;
+        }
+        boolean owned = characterRepository.findByScriptIdOrderByIdAsc(scriptId).stream()
+                .anyMatch(c -> c.getId().equals(cid));
+        if (!owned) {
+            shot.setDialogueCharacterId(null);
+        }
+    }
+
     /**
      * 将 StoryScript 实体转换为完整 Map（含镜头详情，供控制器统一复用）
      */
@@ -384,6 +517,10 @@ public class StoryScriptService {
         map.put("theme", script.getTheme());
         map.put("idea", script.getIdea());
         map.put("status", script.getStatus());
+        map.put("style", script.getStyle());
+        map.put("continuityMode", script.getContinuityMode() != null ? script.getContinuityMode() : "NONE");
+        map.put("characters", characterRepository.findByScriptIdOrderByIdAsc(script.getId()).stream()
+                .map(StoryCharacterService::characterToMap).collect(Collectors.toList()));
         map.put("createdAt", script.getCreatedAt());
         map.put("updatedAt", script.getUpdatedAt());
 
@@ -419,7 +556,114 @@ public class StoryScriptService {
         map.put("imageFileId", shot.getImageFileId());
         map.put("imageStatus", shot.getImageStatus());
         map.put("qualityScore", shot.getQualityScore());
+        map.put("characterIds", parseCharacterIds(shot.getCharacterIds()));
+        map.put("shotSize", shot.getShotSize() != null ? shot.getShotSize() : "MEDIUM");
+        map.put("videoUrl", shot.getVideoUrl());
+        map.put("videoFileId", shot.getVideoFileId());
+        map.put("videoStatus", shot.getVideoStatus() != null ? shot.getVideoStatus() : "NONE");
+        map.put("lastFrameUrl", shot.getLastFrameUrl());
+        map.put("dialogue", shot.getDialogue());
+        map.put("dialogueCharacterId", shot.getDialogueCharacterId());
         return map;
+    }
+
+    // ==================== Phase 4 切片 1：角色关联辅助 ====================
+
+    /**
+     * 持久化角色卡并回写镜头 characterIds（name→id；未匹配 warn 不阻断）
+     */
+    private void attachCharacters(StoryScript saved, Storyboard storyboard) {
+        Map<String, Long> ids = new LinkedHashMap<>();
+        if (storyboard.getCharacters() != null) {
+            for (CharacterDesign cd : storyboard.getCharacters()) {
+                if (cd == null || cd.getName() == null || cd.getName().isBlank()) {
+                    continue;
+                }
+                StoryCharacter c = new StoryCharacter();
+                c.setScript(saved);
+                c.setName(cd.getName());
+                c.setFeatureTable(cd.getFeatureTable());
+                c.setPersonality(cd.getPersonality());
+                c.setVoice(cd.getSuggestedVoice() == null || cd.getSuggestedVoice().isBlank()
+                        ? "zh-CN-XiaoxiaoNeural" : cd.getSuggestedVoice());
+                StoryCharacter persisted = characterRepository.save(c);
+                ids.put(persisted.getName(), persisted.getId());
+            }
+        }
+        List<Shot> dtos = storyboard.getShots();
+        List<StoryShot> entities = saved.getShots();
+        if (dtos != null) {
+            for (int i = 0; i < entities.size() && i < dtos.size(); i++) {
+                entities.get(i).setCharacterIds(linkCharacters(ids, dtos.get(i).getCharacterNames()));
+                // Phase 4 切片 4：对白角色 name→id（未匹配 warn 置 null）
+                String dialogueName = dtos.get(i).getDialogueCharacterName();
+                if (dialogueName != null && !dialogueName.isBlank()) {
+                    Long dialogueId = ids.get(dialogueName);
+                    if (dialogueId == null) {
+                        log.warn("Dialogue character name not matched, ignored: {}", dialogueName);
+                    }
+                    entities.get(i).setDialogueCharacterId(dialogueId);
+                }
+            }
+        }
+    }
+
+    private String linkCharacters(Map<String, Long> ids, List<String> names) {
+        if (names == null || names.isEmpty()) {
+            return null;
+        }
+        List<String> matched = new ArrayList<>();
+        for (String name : names) {
+            Long id = ids.get(name);
+            if (id != null) {
+                matched.add(String.valueOf(id));
+            } else {
+                log.warn("Storyboard character name not matched, ignored: {}", name);
+            }
+        }
+        return matched.isEmpty() ? null : String.join(",", matched);
+    }
+
+    private List<String> namesOf(String characterIds, Map<Long, String> idToName) {
+        List<Long> ids = parseCharacterIds(characterIds);
+        if (ids.isEmpty()) {
+            return null;
+        }
+        List<String> names = new ArrayList<>();
+        for (Long id : ids) {
+            String name = idToName.get(id);
+            if (name != null) {
+                names.add(name);
+            }
+        }
+        return names.isEmpty() ? null : names;
+    }
+
+    /** 逗号分隔角色 id 解析（非法片段跳过） */
+    public static List<Long> parseCharacterIds(String characterIds) {
+        if (characterIds == null || characterIds.isBlank()) {
+            return List.of();
+        }
+        List<Long> ids = new ArrayList<>();
+        for (String part : characterIds.split(",")) {
+            try {
+                ids.add(Long.parseLong(part.trim()));
+            } catch (NumberFormatException ignored) {
+                // 非法片段跳过
+            }
+        }
+        return ids;
+    }
+
+    private static String normalizeShotSize(String shotSize) {
+        if (shotSize == null || shotSize.isBlank()) {
+            return "MEDIUM";
+        }
+        String upper = shotSize.trim().toUpperCase();
+        return switch (upper) {
+            case "CLOSE", "MEDIUM", "LONG" -> upper;
+            default -> "MEDIUM";
+        };
     }
 
     /**

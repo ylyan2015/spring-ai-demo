@@ -56,7 +56,9 @@ class VideoExportServiceZipTest {
                 userRepository,
                 videoComposeService,
                 Mockito.mock(BgmService.class),
-                Mockito.mock(SubtitleService.class));
+                Mockito.mock(SubtitleService.class),
+                Mockito.mock(com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository.class),
+                Mockito.mock(SfxService.class));
 
         User user = Mockito.mock(User.class);
         when(user.getId()).thenReturn(1L);

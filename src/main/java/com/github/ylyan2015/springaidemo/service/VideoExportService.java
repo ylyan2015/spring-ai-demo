@@ -3,6 +3,7 @@ package com.github.ylyan2015.springaidemo.service;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.entity.VideoExport;
+import com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryShotRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
@@ -44,6 +45,10 @@ public class VideoExportService {
     @Value("${video.watermark.logo-path:}")
     private String logoPathConfig;
 
+    /** Phase 4 切片 4：音效推荐总开关（默认关，开启且请求勾选 sfx 才推荐混音） */
+    @Value("${video.sfx.enabled:false}")
+    private boolean sfxEnabled;
+
     private final StoryScriptRepository scriptRepository;
     private final StoryShotRepository shotRepository;
     private final VideoExportRepository exportRepository;
@@ -51,6 +56,8 @@ public class VideoExportService {
     private final VideoComposeService videoComposeService;
     private final BgmService bgmService;
     private final SubtitleService subtitleService;
+    private final StoryCharacterRepository characterRepository;
+    private final SfxService sfxService;
 
     public VideoExportService(StoryScriptRepository scriptRepository,
                               StoryShotRepository shotRepository,
@@ -58,7 +65,9 @@ public class VideoExportService {
                               UserRepository userRepository,
                               VideoComposeService videoComposeService,
                               BgmService bgmService,
-                              SubtitleService subtitleService) {
+                              SubtitleService subtitleService,
+                              StoryCharacterRepository characterRepository,
+                              SfxService sfxService) {
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.exportRepository = exportRepository;
@@ -66,6 +75,13 @@ public class VideoExportService {
         this.videoComposeService = videoComposeService;
         this.bgmService = bgmService;
         this.subtitleService = subtitleService;
+        this.characterRepository = characterRepository;
+        this.sfxService = sfxService;
+    }
+
+    /** Phase 4 切片 4：导出后期增强开关（超分/补帧/音效；存量入口全 false 零变化） */
+    public record PostFlags(boolean upscale, boolean interpolate, boolean sfx) {
+        static final PostFlags NONE = new PostFlags(false, false, false);
     }
 
     // ==================== 快速预览（480p） ====================
@@ -83,7 +99,7 @@ public class VideoExportService {
                                              String subtitleLanguage) {
         Long userId = getCurrentUserId();
         return doExport(scriptId, userId, "480p", normalizeAspect(aspectRatio), bgmId, subtitle, false, true,
-                subtitleLanguage);
+                subtitleLanguage, PostFlags.NONE);
     }
 
     // ==================== 高清导出 ====================
@@ -101,10 +117,21 @@ public class VideoExportService {
      */
     public Map<String, Object> exportHd(Long scriptId, String resolution, String aspectRatio, Long bgmId,
                                          boolean subtitle, boolean withLogo, String subtitleLanguage) {
+        return exportHdWithPost(scriptId, resolution, aspectRatio, bgmId, subtitle, withLogo,
+                subtitleLanguage, PostFlags.NONE);
+    }
+
+    /**
+     * 高清导出 + 可选后期增强（Phase 4 切片 4）：超分/补帧/音效按 PostFlags 开启，
+     * 存量 exportHd/Agent 工具/平台导出签名与行为不变
+     */
+    public Map<String, Object> exportHdWithPost(Long scriptId, String resolution, String aspectRatio, Long bgmId,
+                                                boolean subtitle, boolean withLogo, String subtitleLanguage,
+                                                PostFlags postFlags) {
         Long userId = getCurrentUserId();
         String res = normalizeResolution(resolution);
         return doExport(scriptId, userId, res, normalizeAspect(aspectRatio), bgmId, subtitle, withLogo, false,
-                subtitleLanguage);
+                subtitleLanguage, postFlags == null ? PostFlags.NONE : postFlags);
     }
 
     // ==================== 平台导出（模块 I） ====================
@@ -330,7 +357,8 @@ public class VideoExportService {
      */
     private Map<String, Object> doExport(Long scriptId, Long userId, String resolution,
                                          String aspectRatio, Long bgmId, boolean subtitle,
-                                         boolean withLogo, boolean preview, String subtitleLanguage) {
+                                         boolean withLogo, boolean preview, String subtitleLanguage,
+                                         PostFlags postFlags) {
         StoryScript script = requireOwnedScript(scriptId, userId);
         List<StoryShot> shots = shotRepository.findByScriptIdOrderByShotOrderAsc(scriptId);
         if (shots.isEmpty()) {
@@ -371,7 +399,8 @@ public class VideoExportService {
         String subtitleAss = null;
         if (subtitle) {
             boolean anyNarration = shots.stream()
-                    .anyMatch(s -> s.getNarration() != null && !s.getNarration().isBlank());
+                    .anyMatch(s -> (s.getNarration() != null && !s.getNarration().isBlank())
+                            || (s.getDialogue() != null && !s.getDialogue().isBlank()));
             if (anyNarration) {
                 subtitleAss = subtitleService.generateAss(shots, null, subtitleLanguage);
             } else {
@@ -382,7 +411,31 @@ public class VideoExportService {
         // 组装合成入参（兼容 VideoComposeService 的 Map 结构）
         List<Map<String, Object>> shotMaps = new ArrayList<>();
         for (StoryShot shot : shots) {
-            shotMaps.add(toComposeMap(shot));
+            Map<String, Object> m = toComposeMap(shot);
+            // 切片 4：对白声线取角色卡 voice（角色不存在→null→旁白声线）
+            if (shot.getDialogueCharacterId() != null) {
+                characterRepository.findById(shot.getDialogueCharacterId())
+                        .ifPresent(c -> m.put("dialogueVoice", c.getVoice()));
+            }
+            shotMaps.add(m);
+        }
+
+        // Phase 4 切片 4：音效推荐（配置开启且请求勾选才执行；起始秒按镜头累计起始扣 xfade 重叠）
+        List<VideoComposeService.SfxSpec> sfxSpecs = new ArrayList<>();
+        if (sfxEnabled && postFlags.sfx()) {
+            Map<Long, String> recommended = sfxService.recommendForScript(shots);
+            double cursor = 0;
+            for (StoryShot shot : shots) {
+                String category = recommended.get(shot.getId());
+                if (category != null) {
+                    Path sfxFile = sfxService.getSfxFilePath(category);
+                    if (sfxFile != null) {
+                        sfxSpecs.add(new VideoComposeService.SfxSpec(sfxFile, cursor));
+                    }
+                }
+                cursor += (shot.getDurationSeconds() == null ? 5 : shot.getDurationSeconds())
+                        - VideoComposeService.XFADE_DURATION;
+            }
         }
 
         int[] size = resolveDimensions(resolution, aspectRatio);
@@ -392,7 +445,10 @@ public class VideoExportService {
                 .crf(preview ? 28 : 23)          // 预览低画质快速出片，正式版标准画质
                 .bgmPath(bgmFile)
                 .subtitleAss(subtitleAss)
-                .logoPath(logoFile);
+                .logoPath(logoFile)
+                .sfxTracks(sfxSpecs)
+                .upscale(postFlags.upscale())
+                .interpolate(postFlags.interpolate());
         if (preview) {
             options.watermark(PREVIEW_WATERMARK);
         }
@@ -439,6 +495,9 @@ public class VideoExportService {
         m.put("narration", shot.getNarration());
         m.put("imagePrompt", shot.getImagePrompt());
         m.put("cameraMovement", shot.getCameraMovement());
+        m.put("videoUrl", shot.getVideoUrl());
+        m.put("dialogue", shot.getDialogue());
+        m.put("dialogueCharacterId", shot.getDialogueCharacterId());
         return m;
     }
 

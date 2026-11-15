@@ -44,11 +44,11 @@ spring:
       hibernate:
         format_sql: false
 
-  # Multipart 文件上传配置（RAG 知识库）
+  # Multipart 文件上传配置（RAG 知识库 + Phase 4 切片 5 转绘视频≤100MB）
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 100MB
+      max-request-size: 100MB
 
 # Actuator 监控配置（release 审查 M7：仅暴露 health/info，env/loggers 等敏感端点不对外）
 management:
@@ -136,6 +136,19 @@ agent:
 
 # 视频合成与导出（模块 C：预览/导出；模块 D：BGM）
 video:
+  # Phase 4 切片 2：图生视频生成源 none（默认，静图运镜回退）/ dashscope-wan；kling/seedance 预留未实现
+  generator: ${VIDEO_GENERATOR:none}
+  workers: 2                          # i2v 并行工作线程数（云端限流+成本控）
+  retry-attempts: 1                   # i2v 失败重试次数（按秒计费，成本红线）
+  candidates:                         # Phase 4 切片 3：抽卡候选数（成本敏感可降 1；一键编排不抽卡）
+    image-count: 3
+    video-count: 2
+  wan:
+    base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
+    model: ${VIDEO_WAN_MODEL:wan2.7-i2v}   # wan2.7-i2v 首尾帧 / wan2.6-i2v 仅首帧
+    resolution: 720P                  # 成本基线：720P/5s/中低运动幅度
+    timeout-seconds: 600
+    poll-interval-ms: 5000
   # FFmpeg / ffprobe 可执行文件位置。默认裸名走系统 PATH（release 审查 M10：可移植）；
   # 不在 PATH 时用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定绝对路径。
   # xfade 转场需要 FFmpeg ≥ 4.3，EVCapture 等软件自带的旧版（≈4.2）不含 xfade，不可用。
@@ -152,6 +165,22 @@ video:
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN / Noto Sans CJK SC）
+  # Phase 4 切片 4：导出后期增强（默认全关；工具未配置/执行失败时自动跳过不阻断导出）
+  sfx:
+    enabled: false                   # 音效推荐混音总开关（开启后导出勾选“音效”才生效；库见 sfx.library-path）
+  realesrgan-path: ""                # Real-ESRGAN ncnn-vulkan 可执行绝对路径（空=跳过超分；下载见 ncnn-vulkan release）
+  realesrgan-model: realesrgan-x4plus-anime  # 超分模型名（动漫风格推荐 x4plus-anime）
+  rife-path: ""                      # RIFE ncnn-vulkan 可执行绝对路径（空=跳过补帧；依赖超分抽帧链）
+  rife-model: ""                     # RIFE 模型目录（如 rife-v4.6）
+  restyle:                           # Phase 4 切片 5：视频转绘（独立输出模式，复用 DASHSCOPE_API_KEY，空 Key 不可用）
+    model: wan2.7-videoedit          # 转绘模型（spike 实测：纯指令风格编辑，输入 mp4/mov 2-10s）
+    timeout-seconds: 600
+    poll-interval-ms: 5000
+
+# 音效库配置（Phase 4 切片 4：分层混音，预置生成见 tools/generate-preset-sfx.ps1）
+sfx:
+  library-path: ./data/sfx          # 音效库目录；文件名格式 category__name.mp3，
+                                    # 分类: wind / rain / footsteps / heartbeat，启动时自动扫描注册
 
 # 背景音乐库配置（模块 D：BGM）
 bgm:

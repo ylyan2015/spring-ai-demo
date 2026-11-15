@@ -51,12 +51,31 @@ public class VideoComposeService {
     @Value("${video.ffmpeg-path:ffmpeg}")
     private String ffmpegPath;
 
+    /** ffprobe 可执行文件路径（Phase 4 切片 2：实测时长回写） */
+    @Value("${video.ffprobe-path:ffprobe}")
+    private String ffprobePath;
+
     /**
      * 运行 edge-tts 的 Python 解释器命令。Windows 上 PATH 里的裸 python 常被微软商店的
      * "应用执行别名" 桩挡住（退出码 49），此时必须填绝对路径。
      */
     @Value("${video.python-command:python}")
     private String pythonCommand;
+
+    /** Phase 4 切片 4：Real-ESRGAN ncnn-vulkan 可执行路径（空=跳过超分） */
+    @Value("${video.realesrgan-path:}")
+    private String realesrganPath;
+
+    @Value("${video.realesrgan-model:realesrgan-x4plus-anime}")
+    private String realesrganModel;
+
+    /** Phase 4 切片 4：RIFE ncnn-vulkan 可执行路径（空=跳过补帧） */
+    @Value("${video.rife-path:}")
+    private String rifePath;
+
+    /** RIFE 模型目录 */
+    @Value("${video.rife-model:}")
+    private String rifeModel;
 
     /** 运镜缩放幅度（占画面比例）；越小画面越稳 */
     @Value("${video.motion.zoom-amount:0.06}")
@@ -102,41 +121,59 @@ public class VideoComposeService {
                     workDir, options.getWidth(), options.getHeight(), options.getCrf(),
                     options.getWatermark(), options.getBgmPath());
 
-            List<Path> imageFiles = downloadImages(shots, workDir);
-            if (imageFiles.size() != shots.size()) {
-                throw new RuntimeException("Failed to download all shot images ("
-                        + imageFiles.size() + "/" + shots.size() + ")");
+            MediaList media = downloadShotsMedia(shots, workDir);
+            if (media.paths().size() != shots.size()) {
+                throw new RuntimeException("Failed to download all shot media ("
+                        + media.paths().size() + "/" + shots.size() + ")");
             }
-
-            List<Integer> durations = shots.stream()
+            
+            List<Integer> durations = new ArrayList<>();
+            for (int i = 0; i < shots.size(); i++) {
+                if (Boolean.TRUE.equals(media.isVideo().get(i))) {
+                    // 真片段：ffprobe 实测时长（字幕/BGM 时间轴按实际时长对齐）
+                    durations.add(Math.max(2, probeDurationSeconds(media.paths().get(i))));
+                } else {
                     // 缺省/非法时长兜底 5s，防 NPE→500（release 审查 Minor#11）
-                    .map(s -> s.get("durationSeconds") instanceof Number n ? n.intValue() : 5)
-                    .toList();
-            List<String> narrations = shots.stream()
-                    .map(s -> (String) s.getOrDefault("narration", ""))
-                    .toList();
+                    durations.add(shots.get(i).get("durationSeconds") instanceof Number n ? n.intValue() : 5);
+                }
+            }
+            // Phase 4 切片 4：对白/旁白分行多声线（对白在前，声线取角色卡 voice；旁白默认 Yunxi）
+            List<List<TtsLine>> linesPerShot = new ArrayList<>();
+            for (Map<String, Object> s : shots) {
+                List<TtsLine> lines = new ArrayList<>();
+                String dialogue = (String) s.getOrDefault("dialogue", "");
+                if (dialogue != null && !dialogue.isBlank()) {
+                    lines.add(new TtsLine(dialogue, (String) s.get("dialogueVoice")));
+                }
+                String narration = (String) s.getOrDefault("narration", "");
+                if (narration != null && !narration.isBlank()) {
+                    lines.add(new TtsLine(narration, null));
+                }
+                linesPerShot.add(lines);
+            }
             // 运镜字段贯穿到滤镜层：固定=静态、推/拉/pan 按设置生效（不再按序号奇偶交替）
             List<String> movements = shots.stream()
                     .map(s -> (String) s.getOrDefault("cameraMovement", ""))
                     .toList();
 
-            boolean hasNarration = narrations.stream().anyMatch(n -> n != null && !n.isBlank());
+            boolean hasNarration = linesPerShot.stream().anyMatch(ls -> !ls.isEmpty());
             boolean ttsAvailable = hasNarration && isEdgeTtsAvailable();
 
             List<Path> audioFiles = null;
             if (ttsAvailable) {
-                audioFiles = generateTtsAudio(narrations, durations, workDir);
+                audioFiles = generateTtsAudio(linesPerShot, durations, workDir);
             }
 
             // xfade 转场会吃掉相邻镜头的重叠时长，BGM 淡出与展示时长必须按实际视频时长计算，
             // 否则结尾淡出会被 -shortest 截掉，BGM 以全音量戛然而止
-            double exactDuration = imageFiles.size() == 1
+            double exactDuration = media.paths().size() == 1
                     ? durations.get(0)
                     : durations.stream().mapToInt(Integer::intValue).sum()
-                        - (imageFiles.size() - 1) * XFADE_DURATION;
+                        - (media.paths().size() - 1) * XFADE_DURATION;
             int totalDuration = (int) Math.round(exactDuration);
 
-            Path videoOnly = composeVideoWithFfmpeg(imageFiles, durations, movements, workDir, options, exactDuration);
+            Path videoOnly = composeVideoWithFfmpeg(media.paths(), durations, movements, media.isVideo(),
+                    workDir, options, exactDuration);
 
             Path finalVideo;
             boolean hasNarrationTrack = false;
@@ -157,6 +194,21 @@ public class VideoComposeService {
                 log.warn("BGM file not found, skipping BGM mix: {}", options.getBgmPath());
             }
 
+            // Phase 4 切片 4：音效分层混音（人声100%/BGM15%/SFX30%，BGM 之后叠加）
+            boolean hasSfx = false;
+            if (options.getSfxTracks() != null && !options.getSfxTracks().isEmpty()) {
+                List<SfxSpec> existing = options.getSfxTracks().stream()
+                        .filter(t -> t.path() != null && Files.exists(t.path()))
+                        .toList();
+                if (!existing.isEmpty()) {
+                    finalVideo = mixSfxIntoVideo(finalVideo, existing, totalDuration,
+                            hasNarrationTrack || hasBgm, workDir);
+                    hasSfx = true;
+                } else {
+                    log.warn("SFX tracks requested but no file exists, skipping SFX mix");
+                }
+            }
+
             // 模块 I：可选品牌 Logo 角标叠加（右下角，独立重编码 pass，不影响主合成滤镜链）
             boolean hasLogo = false;
             if (options.getLogoPath() != null && Files.exists(options.getLogoPath())) {
@@ -175,6 +227,21 @@ public class VideoComposeService {
                 hasSubtitle = true;
             }
 
+            // Phase 4 切片 4：可选超分/补帧增强 pass（失败 warn 跳过不阻断导出，未配置静默跳过）
+            boolean hasEnhance = false;
+            if (options.isUpscale() || options.isInterpolate()) {
+                try {
+                    Path enhanced = enhanceVideo(finalVideo, options, workDir,
+                            hasNarrationTrack || hasBgm || hasSfx);
+                    if (enhanced != null) {
+                        finalVideo = enhanced;
+                        hasEnhance = true;
+                    }
+                } catch (Exception e) {
+                    log.warn("Enhance pass failed, keeping original video: {}", e.getMessage());
+                }
+            }
+
             StoreResult stored = storeVideo(finalVideo);
 
             Map<String, Object> result = new LinkedHashMap<>();
@@ -184,8 +251,10 @@ public class VideoComposeService {
             result.put("height", options.getHeight());
             result.put("totalDuration", totalDuration);
             result.put("hasNarration", hasNarrationTrack);
-            result.put("hasAudio", hasNarrationTrack || hasBgm); // 最终视频是否含音轨
+            result.put("hasAudio", hasNarrationTrack || hasBgm || hasSfx); // 最终视频是否含音轨
             result.put("hasBgm", hasBgm);
+            result.put("hasSfx", hasSfx);
+            result.put("hasEnhance", hasEnhance);
             result.put("hasSubtitle", hasSubtitle);
             result.put("hasLogo", hasLogo);
             return result;
@@ -200,26 +269,34 @@ public class VideoComposeService {
         }
     }
 
-    // ==================== Image Download ====================
+    // ==================== Media Download ====================
 
-    private List<Path> downloadImages(List<Map<String, Object>> shots, Path workDir) {
+    /** 混合媒体下载结果（Phase 4 切片 2：真片段+静图） */
+    private record MediaList(List<Path> paths, List<Boolean> isVideo) {}
+
+    private MediaList downloadShotsMedia(List<Map<String, Object>> shots, Path workDir) {
         List<Path> paths = new ArrayList<>();
+        List<Boolean> isVideo = new ArrayList<>();
         for (int i = 0; i < shots.size(); i++) {
+            String videoUrl = (String) shots.get(i).get("videoUrl");
             String imageUrl = (String) shots.get(i).get("imageUrl");
-            if (imageUrl == null || imageUrl.isBlank()) {
-                log.warn("Shot {} has no image URL, skipping", i);
+            boolean video = videoUrl != null && !videoUrl.isBlank();
+            String url = video ? videoUrl : imageUrl;
+            if (url == null || url.isBlank()) {
+                log.warn("Shot {} has no media URL, skipping", i);
                 continue;
             }
             try {
-                Path imgFile = workDir.resolve("shot_" + i + ".png");
-                downloadImageTo(imageUrl, imgFile);
-                paths.add(imgFile);
-                log.info("Downloaded shot {} image: {}", i, imgFile.getFileName());
+                Path file = workDir.resolve("shot_" + i + (video ? ".mp4" : ".png"));
+                downloadImageTo(url, file);
+                paths.add(file);
+                isVideo.add(video);
+                log.info("Downloaded shot {} {}: {}", i, video ? "video" : "image", file.getFileName());
             } catch (Exception e) {
-                log.error("Failed to download shot {} image: {}", i, e.getMessage());
+                log.error("Failed to download shot {} media: {}", i, e.getMessage());
             }
         }
-        return paths;
+        return new MediaList(paths, isVideo);
     }
 
     /** 下载单张图片到指定文件（含本地相对地址解析，亦可用于视频等任意媒体下载） */
@@ -291,13 +368,18 @@ public class VideoComposeService {
                 z, x, y, width, height, fps);
     }
 
-    private Path composeVideoWithFfmpeg(List<Path> images, List<Integer> durations, List<String> movements,
-                                        Path workDir, ComposeOptions options, double exactDuration)
+    private Path composeVideoWithFfmpeg(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
+                                        List<Boolean> isVideo, Path workDir, ComposeOptions options,
+                                        double exactDuration)
             throws Exception {
         Path output = workDir.resolve("output_video.mp4");
 
-        if (images.size() == 1) {
-            buildSingleImageVideo(images.get(0), durations.get(0), movements.get(0), output, options);
+        if (mediaFiles.size() == 1) {
+            if (Boolean.TRUE.equals(isVideo.get(0))) {
+                buildSingleVideoClip(mediaFiles.get(0), durations.get(0), output, options);
+            } else {
+                buildSingleImageVideo(mediaFiles.get(0), durations.get(0), movements.get(0), output, options);
+            }
             return output;
         }
 
@@ -305,33 +387,45 @@ public class VideoComposeService {
         cmd.add(ffmpegPath);
         cmd.add("-y");
 
-        for (Path img : images) {
-            cmd.add("-loop");
-            cmd.add("1");
+        for (int i = 0; i < mediaFiles.size(); i++) {
+            // 真片段有限流不需要 -loop；静图无限流必须 -loop 1
+            if (!Boolean.TRUE.equals(isVideo.get(i))) {
+                cmd.add("-loop");
+                cmd.add("1");
+            }
             cmd.add("-i");
-            cmd.add(img.toAbsolutePath().toString());
+            cmd.add(mediaFiles.get(i).toAbsolutePath().toString());
         }
 
         StringBuilder filter = new StringBuilder();
 
-        for (int i = 0; i < images.size(); i++) {
-            // 先按目标比例居中裁剪，再按运镜字段加动效（超采样消抖），避免非 16:9 比例下画面变形
-            filter.append(String.format(
-                    "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
-                            + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
-                    i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
-                    motionFilter(movements.get(i), durations.get(i) * FPS, FPS,
-                            options.getWidth(), options.getHeight(), zoomAmount, supersampleFactor), i));
+        for (int i = 0; i < mediaFiles.size(); i++) {
+            if (Boolean.TRUE.equals(isVideo.get(i))) {
+                // 真片段：仅对齐比例/帧率，不加 zoompan（运动来自片段本身）
+                filter.append(String.format(
+                        "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,"
+                                + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
+                        i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
+                        FPS, i));
+            } else {
+                // 先按目标比例居中裁剪，再按运镜字段加动效（超采样消抖），避免非 16:9 比例下画面变形
+                filter.append(String.format(
+                        "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
+                                + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
+                        i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
+                        motionFilter(movements.get(i), durations.get(i) * FPS, FPS,
+                                options.getWidth(), options.getHeight(), zoomAmount, supersampleFactor), i));
+            }
         }
 
         double offset = 0;
-        for (int i = 0; i < images.size() - 1; i++) {
+        for (int i = 0; i < mediaFiles.size() - 1; i++) {
             offset += durations.get(i);
             double xfadeOffset = offset - (i + 1) * XFADE_DURATION;
 
             String labelA = (i == 0) ? "[v0]" : "[xf" + (i - 1) + "]";
             String labelB = "[v" + (i + 1) + "]";
-            String labelOut = (i < images.size() - 2) ? "[xf" + i + "]" : "[vout]";
+            String labelOut = (i < mediaFiles.size() - 2) ? "[xf" + i + "]" : "[vout]";
 
             // 输出标签必须紧跟在 xfade 之后；放在滤镜名之前会被解析成第三个输入，
             // 报 "More input link labels specified for filter 'xfade' than it has inputs: 3 > 2"
@@ -407,6 +501,87 @@ public class VideoComposeService {
 
     // ==================== TTS Audio ====================
 
+    /** 包私有测试 seam：混合媒体合成（真片段+静图），委托真实私有合成方法 */
+    Path composeMediaForTest(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
+                             List<Boolean> isVideo, Path workDir, ComposeOptions options, double exactDuration)
+            throws Exception {
+        return composeVideoWithFfmpeg(mediaFiles, durations, movements, isVideo, workDir, options, exactDuration);
+    }
+
+    /** 真片段单镜头：对齐比例/帧率，无 zoompan 无 -loop */
+    private void buildSingleVideoClip(Path video, int duration, Path output, ComposeOptions options)
+            throws Exception {
+        String vf = String.format(
+                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,format=yuv420p",
+                options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(), FPS);
+        if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
+            vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
+                            + ":x=(w-text_w)/2:y=(h-text_h)/2",
+                    options.getWatermark(), Math.max(16, options.getHeight() / 14));
+        }
+        executeCommand(List.of(
+                ffmpegPath, "-y",
+                "-i", video.toAbsolutePath().toString(),
+                "-vf", vf,
+                "-t", String.valueOf(duration),
+                "-c:v", "libx264", "-profile:v", "high", "-crf", String.valueOf(options.getCrf()),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                output.toAbsolutePath().toString()
+        ), video.getParent(), "ffmpeg single video clip");
+    }
+
+    /** ffprobe 实测时长（秒，取整；失败抛异常）；输出落盘+先 waitFor，对齐 executeCommand 超时 idiom */
+    public int probeDurationSeconds(Path video) {
+        Path outFile = null;
+        Process p = null;
+        try {
+            outFile = Files.createTempFile("ffprobe-", ".txt");
+            p = new ProcessBuilder(ffprobePath, "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", video.toAbsolutePath().toString())
+                    .redirectErrorStream(true)
+                    .redirectOutput(outFile.toFile())
+                    .start();
+            if (!p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                throw new RuntimeException("ffprobe 超时(30s): " + video.getFileName());
+            }
+            String out = Files.readString(outFile, StandardCharsets.UTF_8).trim();
+            if (p.exitValue() != 0) {
+                throw new RuntimeException("ffprobe failed: " + out);
+            }
+            return (int) Math.round(Double.parseDouble(out));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("ffprobe 时长失败: " + e.getMessage(), e);
+        } finally {
+            if (p != null && p.isAlive()) {
+                p.destroyForcibly();
+            }
+            if (outFile != null) {
+                try {
+                    Files.deleteIfExists(outFile);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    /** 抽取视频真末帧（-sseof -0.5 + -update 1 覆盖写至 EOF）供连续性模式使用 */
+    public Path extractLastFrame(Path video, Path workDir) {
+        try {
+            Path out = workDir.resolve("last_" + System.nanoTime() + ".jpg");
+            executeCommand(List.of(ffmpegPath, "-y", "-sseof", "-0.5",
+                    "-i", video.toAbsolutePath().toString(),
+                    "-update", "1", "-q:v", "2", out.toAbsolutePath().toString()),
+                    workDir, "ffmpeg extract last frame");
+            return out;
+        } catch (Exception e) {
+            throw new RuntimeException("末帧抽取失败: " + e.getMessage(), e);
+        }
+    }
+
     private boolean isEdgeTtsAvailable() {
         // 带超时探测，防挂起进程阻塞请求线程（release 审查 Minor#5）
         if (probeVersion(pythonCommand, "-m", "edge_tts", "--version")) return true;
@@ -440,7 +615,7 @@ public class VideoComposeService {
         }
     }
 
-    private List<Path> generateTtsAudio(List<String> narrations, List<Integer> durations, Path workDir) {
+    private List<Path> generateTtsAudio(List<List<TtsLine>> linesPerShot, List<Integer> durations, Path workDir) {
         List<Path> audioFiles = new ArrayList<>();
         Path ttsDir = workDir.resolve("tts");
         try {
@@ -450,31 +625,70 @@ public class VideoComposeService {
             return audioFiles;
         }
 
-        for (int i = 0; i < narrations.size(); i++) {
-            String text = narrations.get(i);
-            Path mp3File = ttsDir.resolve("narration_" + i + ".mp3");
-
-            if (text == null || text.isBlank()) {
+        for (int i = 0; i < linesPerShot.size(); i++) {
+            List<TtsLine> lines = linesPerShot.get(i);
+            if (lines == null || lines.isEmpty()) {
                 audioFiles.add(null);
                 continue;
             }
-
             try {
-                List<String> cmd = List.of(
-                        pythonCommand, "-m", "edge_tts",
-                        "--voice", "zh-CN-YunxiNeural",
-                        "--text", text,
-                        "--write-media", mp3File.toAbsolutePath().toString()
-                );
-                executeCommand(cmd, workDir, "edge-tts shot " + i);
-                audioFiles.add(mp3File);
-                log.info("TTS generated for shot {}: {}", i, mp3File.getFileName());
+                List<Path> lineFiles = new ArrayList<>();
+                for (int j = 0; j < lines.size(); j++) {
+                    TtsLine line = lines.get(j);
+                    if (line.text() == null || line.text().isBlank()) {
+                        continue;
+                    }
+                    Path mp3File = ttsDir.resolve("narration_" + i + "_" + j + ".mp3");
+                    executeCommand(buildTtsCommand(pythonCommand, line, mp3File),
+                            workDir, "edge-tts shot " + i + " line " + j);
+                    lineFiles.add(mp3File);
+                }
+                if (lineFiles.isEmpty()) {
+                    audioFiles.add(null);
+                    continue;
+                }
+                if (lineFiles.size() == 1) {
+                    audioFiles.add(lineFiles.get(0));
+                    log.info("TTS generated for shot {}: {} line(s)", i, 1);
+                    continue;
+                }
+                // 镜内多行拼接（对白+旁白），镜间拼接沿用 concatAudioWithSilence
+                Path shotAudio = ttsDir.resolve("shot_" + i + ".mp3");
+                List<String> cmd = new ArrayList<>();
+                cmd.add(ffmpegPath);
+                cmd.add("-y");
+                StringBuilder filter = new StringBuilder();
+                for (int j = 0; j < lineFiles.size(); j++) {
+                    cmd.add("-i");
+                    cmd.add(lineFiles.get(j).toAbsolutePath().toString());
+                    filter.append("[").append(j).append(":a]");
+                }
+                filter.append("concat=n=").append(lineFiles.size()).append(":v=0:a=1[out]");
+                cmd.add("-filter_complex");
+                cmd.add(filter.toString());
+                cmd.add("-map");
+                cmd.add("[out]");
+                cmd.add(shotAudio.toAbsolutePath().toString());
+                executeCommand(cmd, workDir, "ffmpeg concat tts lines shot " + i);
+                audioFiles.add(shotAudio);
+                log.info("TTS generated for shot {}: {} line(s)", i, lineFiles.size());
             } catch (Exception e) {
                 log.warn("TTS failed for shot {}: {}", i, e.getMessage());
                 audioFiles.add(null);
             }
         }
         return audioFiles;
+    }
+
+    /** 包私有测试 seam：单行 TTS 命令（voice 空→默认旁白声线 YunxiNeural，无对白时行为与存量一致） */
+    static List<String> buildTtsCommand(String pythonCommand, TtsLine line, Path mp3File) {
+        String voice = line.voice() == null || line.voice().isBlank() ? "zh-CN-YunxiNeural" : line.voice();
+        return List.of(
+                pythonCommand, "-m", "edge_tts",
+                "--voice", voice,
+                "--text", line.text(),
+                "--write-media", mp3File.toAbsolutePath().toString()
+        );
     }
 
     private Path concatAudioWithSilence(List<Path> audioFiles, List<Integer> durations, Path workDir)
@@ -737,6 +951,142 @@ public class VideoComposeService {
      * 合成参数：输出分辨率/比例、画质、预览水印、BGM
      * 比例裁剪由滤镜 scale+crop 完成（支持 16:9 / 9:16 / 1:1）
      */
+    // ==================== SFX Mix（Phase 4 切片 4） ====================
+
+    /** 音效轨规格：文件路径 + 视频时间轴起始秒 */
+    public record SfxSpec(Path path, double startSeconds) {}
+
+    /**
+     * 包私有测试 seam：SFX 混音滤镜。
+     * 输入索引从 audioInputCount 起（0=视频既有音轨）；每轨 volume=0.3 + adelay 定位；
+     * amix normalize=0 防人声减半；无既有音轨且单轨时首轨作基直接映射。
+     */
+    static String buildSfxFilter(List<SfxSpec> tracks, int audioInputCount, boolean hasAudio) {
+        if (tracks == null || tracks.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        List<String> labels = new ArrayList<>();
+        if (hasAudio) {
+            labels.add("[0:a]");
+        }
+        for (int i = 0; i < tracks.size(); i++) {
+            long ms = Math.round(tracks.get(i).startSeconds() * 1000);
+            String label = "sfx" + i;
+            sb.append("[").append(audioInputCount + i).append(":a]volume=0.3,adelay=")
+                    .append(ms).append("|").append(ms).append("[").append(label).append("];");
+            labels.add("[" + label + "]");
+        }
+        if (!hasAudio && tracks.size() == 1) {
+            return sb.substring(0, sb.length() - 1);
+        }
+        // 无既有音轨时首输入是延迟后的首条 SFX，duration=first 会截掉后续音效，
+        // 改用 longest（外层 -t totalDuration 兜底）；有既有音轨时首输入为全长音轨，first 正确（审查修复）
+        sb.append(String.join("", labels))
+                .append("amix=inputs=").append(labels.size())
+                .append(":duration=").append(hasAudio ? "first" : "longest")
+                .append(":normalize=0[aout]");
+        return sb.toString();
+    }
+
+    /** 音效分层混音（BGM 之后）：SFX 30% 音量，adelay 按镜头起始定位，保视频流不重编码 */
+    private Path mixSfxIntoVideo(Path video, List<SfxSpec> tracks, int totalDuration,
+                                 boolean hasAudio, Path workDir) throws Exception {
+        Path output = workDir.resolve("video_with_sfx.mp4");
+        List<String> cmd = new ArrayList<>();
+        cmd.add(ffmpegPath);
+        cmd.add("-y");
+        cmd.add("-i");
+        cmd.add(video.toAbsolutePath().toString());
+        for (SfxSpec t : tracks) {
+            cmd.add("-i");
+            cmd.add(t.path().toAbsolutePath().toString());
+        }
+        cmd.add("-filter_complex");
+        cmd.add(buildSfxFilter(tracks, 1, hasAudio));
+        cmd.add("-map");
+        cmd.add("0:v");
+        cmd.add("-map");
+        cmd.add(hasAudio || tracks.size() > 1 ? "[aout]" : "[sfx0]");
+        cmd.add("-c:v");
+        cmd.add("copy");
+        cmd.add("-c:a");
+        cmd.add("aac");
+        cmd.add("-b:a");
+        cmd.add("128k");
+        cmd.add("-t");
+        cmd.add(String.valueOf(totalDuration));
+        cmd.add("-movflags");
+        cmd.add("+faststart");
+        cmd.add(output.toAbsolutePath().toString());
+        executeCommand(cmd, workDir, "ffmpeg sfx mix");
+        log.info("SFX mixed: {} track(s), totalDuration={}s, hasAudio={}", tracks.size(), totalDuration, hasAudio);
+        return output;
+    }
+
+    // ==================== Enhance Pass（Phase 4 切片 4：超分/补帧） ====================
+
+    /**
+     * 包私有测试 seam：增强命令序列（抽帧→realesrgan→可选 rife→重编码保音轨）。
+     * rife 默认帧数翻倍，补帧输出帧率=2×原 fps（30→60）保持时长不变；hasAudio=false 时不映射音轨。
+     */
+    static List<List<String>> buildEnhanceCommands(String ffmpeg, String realesrgan, String rgModel,
+                                                   String rife, String rifeModel, Path src, Path workDir,
+                                                   int fps, boolean hasAudio) {
+        boolean interpolate = rife != null && !rife.isBlank();
+        Path frames = workDir.resolve("frames");
+        Path up = workDir.resolve("up");
+        Path interp = workDir.resolve("interp");
+        List<List<String>> cmds = new ArrayList<>();
+        cmds.add(List.of(ffmpeg, "-y", "-i", src.toAbsolutePath().toString(), "-q:v", "2",
+                frames.resolve("f_%05d.png").toAbsolutePath().toString()));
+        cmds.add(List.of(realesrgan, "-i", frames.toAbsolutePath().toString(),
+                "-o", up.toAbsolutePath().toString(), "-s", "2", "-n", rgModel));
+        if (interpolate) {
+            cmds.add(List.of(rife, "-i", up.toAbsolutePath().toString(),
+                    "-o", interp.toAbsolutePath().toString(), "-m", rifeModel));
+        }
+        Path finalFrames = interpolate ? interp : up;
+        // rife 帧数翻倍：输出帧率必须同步翻倍，否则成品变速/被 -shortest 截断（审查修复）
+        int outFps = interpolate ? fps * 2 : fps;
+        List<String> reencode = new ArrayList<>(List.of(ffmpeg, "-y",
+                "-framerate", String.valueOf(outFps),
+                "-i", finalFrames.resolve("f_%05d.png").toAbsolutePath().toString()));
+        if (hasAudio) {
+            reencode.addAll(List.of("-i", src.toAbsolutePath().toString(), "-map", "0:v", "-map", "1:a?"));
+        } else {
+            reencode.addAll(List.of("-map", "0:v"));
+        }
+        reencode.addAll(List.of("-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p"));
+        if (hasAudio) {
+            reencode.addAll(List.of("-c:a", "aac", "-shortest"));
+        }
+        reencode.add(workDir.resolve("enhanced.mp4").toAbsolutePath().toString());
+        cmds.add(reencode);
+        return cmds;
+    }
+
+    /** 增强 pass：未配置对应工具静默跳过；任一命令失败由调用方 catch 后保留原视频 */
+    private Path enhanceVideo(Path src, ComposeOptions options, Path workDir, boolean hasAudio) throws Exception {
+        boolean doUpscale = options.isUpscale() && realesrganPath != null && !realesrganPath.isBlank();
+        boolean doInterpolate = options.isInterpolate() && rifePath != null && !rifePath.isBlank();
+        if (!doUpscale) {
+            if (doInterpolate) {
+                log.warn("补帧依赖超分抽帧链，未配置 video.realesrgan-path，跳过增强");
+            }
+            return null;
+        }
+        Files.createDirectories(workDir.resolve("frames"));
+        List<List<String>> cmds = buildEnhanceCommands(ffmpegPath, realesrganPath, realesrganModel,
+                doInterpolate ? rifePath : "", rifeModel, src, workDir, FPS, hasAudio);
+        for (List<String> cmd : cmds) {
+            executeCommand(cmd, workDir, "enhance (" + Path.of(cmd.get(0)).getFileName() + ")");
+        }
+        Path enhanced = workDir.resolve("enhanced.mp4");
+        log.info("Enhance pass done: upscale={}, interpolate={}", true, doInterpolate);
+        return enhanced;
+    }
+
     public static class ComposeOptions {
         private int width = VIDEO_WIDTH;
         private int height = VIDEO_HEIGHT;
@@ -745,6 +1095,9 @@ public class VideoComposeService {
         private Path bgmPath;
         private String subtitleAss;
         private Path logoPath;
+        private List<SfxSpec> sfxTracks;
+        private boolean upscale;
+        private boolean interpolate;
 
         public ComposeOptions width(int width) { this.width = width; return this; }
         public ComposeOptions height(int height) { this.height = height; return this; }
@@ -753,6 +1106,9 @@ public class VideoComposeService {
         public ComposeOptions bgmPath(Path bgmPath) { this.bgmPath = bgmPath; return this; }
         public ComposeOptions subtitleAss(String subtitleAss) { this.subtitleAss = subtitleAss; return this; }
         public ComposeOptions logoPath(Path logoPath) { this.logoPath = logoPath; return this; }
+        public ComposeOptions sfxTracks(List<SfxSpec> sfxTracks) { this.sfxTracks = sfxTracks; return this; }
+        public ComposeOptions upscale(boolean upscale) { this.upscale = upscale; return this; }
+        public ComposeOptions interpolate(boolean interpolate) { this.interpolate = interpolate; return this; }
 
         public int getWidth() { return width; }
         public int getHeight() { return height; }
@@ -761,6 +1117,9 @@ public class VideoComposeService {
         public Path getBgmPath() { return bgmPath; }
         public String getSubtitleAss() { return subtitleAss; }
         public Path getLogoPath() { return logoPath; }
+        public List<SfxSpec> getSfxTracks() { return sfxTracks; }
+        public boolean isUpscale() { return upscale; }
+        public boolean isInterpolate() { return interpolate; }
     }
 
     // ==================== Utilities ====================

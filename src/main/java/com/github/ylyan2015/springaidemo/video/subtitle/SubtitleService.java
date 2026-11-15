@@ -217,9 +217,18 @@ public class SubtitleService {
         };
     }
 
-    /** 按目标语言解析旁白文本：en 仅译文，bilingual 原文+换行+译文，zh 原文 */
+    /** 按目标语言解析旁白文本：en 仅译文，bilingual 原文+换行+译文，zh 原文；对白在前拼接（切片 4） */
     private List<String> resolveNarrations(List<StoryShot> shots, String language) {
-        List<String> originals = shots.stream().map(StoryShot::getNarration).toList();
+        List<String> originals = shots.stream().map(s -> {
+            String d = s.getDialogue();
+            String n = s.getNarration();
+            boolean hasD = d != null && !d.isBlank();
+            boolean hasN = n != null && !n.isBlank();
+            if (hasD && hasN) {
+                return d.trim() + " " + n.trim();
+            }
+            return hasD ? d : n;
+        }).toList();
         String lang = normalizeLanguage(language);
         if ("zh".equals(lang)) {
             return originals;
@@ -236,6 +245,11 @@ public class SubtitleService {
             result.add("bilingual".equals(lang) ? orig.trim() + "\n" + en : en);
         }
         return result;
+    }
+
+    /** 包私有测试 seam：委托私有 resolveNarrations（对白+旁白拼接验证） */
+    List<String> resolveNarrationsForTest(List<StoryShot> shots, String language) {
+        return resolveNarrations(shots, language);
     }
 
     /**

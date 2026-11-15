@@ -33,6 +33,7 @@ public class ImagePromptOptimizerService {
     private final StoryScriptRepository scriptRepository;
     private final StoryShotRepository shotRepository;
     private final UserRepository userRepository;
+    private final com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository characterRepository;
 
     /** 提示词优化 System Prompt */
     private static final String SYSTEM_PROMPT = """
@@ -58,12 +59,14 @@ public class ImagePromptOptimizerService {
                                        ImagePromptOptimizerRepository optimizerRepository,
                                        StoryScriptRepository scriptRepository,
                                        StoryShotRepository shotRepository,
-                                       UserRepository userRepository) {
+                                       UserRepository userRepository,
+                                       com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository characterRepository) {
         this.modelService = modelService;
         this.optimizerRepository = optimizerRepository;
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.userRepository = userRepository;
+        this.characterRepository = characterRepository;
     }
 
     // ==================== 单个提示词优化 ====================
@@ -149,6 +152,8 @@ public class ImagePromptOptimizerService {
 
         VisualStyle visualStyle = VisualStyle.fromName(style);
         List<StoryShot> shots = shotRepository.findByScriptIdOrderByShotOrderAsc(scriptId);
+        List<com.github.ylyan2015.springaidemo.entity.StoryCharacter> allChars =
+                characterRepository.findByScriptIdOrderByIdAsc(scriptId);
         List<Map<String, Object>> results = new ArrayList<>();
 
         log.info("Batch enhancing {} shots for script {} with style '{}'",
@@ -165,7 +170,8 @@ public class ImagePromptOptimizerService {
             }
 
             try {
-                String userMessage = buildUserMessage(description, visualStyle);
+                String userMessage = buildUserMessage(description, visualStyle,
+                        characterContext(shot, allChars));
 
                 String enhancedPrompt = modelService.getChatClient()
                         .prompt()
@@ -265,7 +271,14 @@ public class ImagePromptOptimizerService {
      * 构建发送给 LLM 的用户消息
      */
     private String buildUserMessage(String sceneDescription, VisualStyle visualStyle) {
-        return String.format("""
+        return buildUserMessage(sceneDescription, visualStyle, null);
+    }
+
+    /**
+     * Phase 4 切片 1：角色一致性锚点注入（特征表逐角色，空则不追加）
+     */
+    private String buildUserMessage(String sceneDescription, VisualStyle visualStyle, String characterContext) {
+        String base = String.format("""
                 请将以下场景描述优化为高质量的英文图像生成提示词：
 
                 场景描述：%s
@@ -274,6 +287,25 @@ public class ImagePromptOptimizerService {
 
                 请直接输出英文提示词，不要包含任何解释。
                 """, sceneDescription, visualStyle.getDisplayName(), visualStyle.getPromptPrefix());
+        if (characterContext != null && !characterContext.isBlank()) {
+            base += "\n角色一致性锚点（必须保持）：" + characterContext + "\n";
+        }
+        return base;
+    }
+
+    private String characterContext(StoryShot shot,
+                                    List<com.github.ylyan2015.springaidemo.entity.StoryCharacter> allChars) {
+        List<Long> ids = StoryScriptService.parseCharacterIds(shot.getCharacterIds());
+        if (ids.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (com.github.ylyan2015.springaidemo.entity.StoryCharacter c : allChars) {
+            if (ids.contains(c.getId()) && c.getFeatureTable() != null && !c.getFeatureTable().isBlank()) {
+                sb.append("Character ").append(c.getName()).append(": ").append(c.getFeatureTable()).append(". ");
+            }
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     /**

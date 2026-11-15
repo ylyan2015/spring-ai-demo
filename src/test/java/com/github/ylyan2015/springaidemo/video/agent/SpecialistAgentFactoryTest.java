@@ -76,12 +76,12 @@ class SpecialistAgentFactoryTest {
     @SuppressWarnings("unchecked")
     void screenwriterGetsScriptAndPromptToolsOnly() {
         invokeDelegate(List.of(rawTool("generateStoryboard"), rawTool("enhancePrompt"),
-                rawTool("generateImage"), rawTool("exportVideo")), "delegateToScreenwriter");
+                rawTool("generateCharacters"), rawTool("generateImage"), rawTool("exportVideo")), "delegateToScreenwriter");
         ArgumentCaptor<List<ToolCallback>> captor = ArgumentCaptor.forClass(List.class);
         verify(baseClient.mutate(), atLeastOnce()).defaultToolCallbacks(captor.capture());
         List<ToolCallback> mounted = captor.getAllValues().stream()
                 .filter(java.util.Objects::nonNull).reduce((a, b) -> b).orElseThrow();
-        assertEquals(List.of("generateStoryboard", "enhancePrompt"),
+        assertEquals(List.of("generateStoryboard", "enhancePrompt", "generateCharacters"),
                 mounted.stream().map(t -> t.getToolDefinition().name()).toList());
     }
 
@@ -89,12 +89,13 @@ class SpecialistAgentFactoryTest {
     @SuppressWarnings("unchecked")
     void artistGetsImageToolsOnly() {
         invokeDelegate(List.of(rawTool("generateStoryboard"), rawTool("generateImage"),
-                rawTool("evaluateImage"), rawTool("exportVideo")), "delegateToArtist");
+                rawTool("evaluateImage"), rawTool("generateShotVideo"), rawTool("inpaintImage"),
+                rawTool("exportVideo")), "delegateToArtist");
         ArgumentCaptor<List<ToolCallback>> captor = ArgumentCaptor.forClass(List.class);
         verify(baseClient.mutate(), atLeastOnce()).defaultToolCallbacks(captor.capture());
         List<ToolCallback> mounted = captor.getAllValues().stream()
                 .filter(java.util.Objects::nonNull).reduce((a, b) -> b).orElseThrow();
-        assertEquals(List.of("generateImage", "evaluateImage"),
+        assertEquals(List.of("generateImage", "evaluateImage", "generateShotVideo", "inpaintImage"),
                 mounted.stream().map(t -> t.getToolDefinition().name()).toList());
     }
 

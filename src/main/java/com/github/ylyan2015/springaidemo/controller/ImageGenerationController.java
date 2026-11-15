@@ -151,6 +151,11 @@ public class ImageGenerationController {
         map.put("imageFileId", shot.getImageFileId());
         map.put("imageStatus", shot.getImageStatus());
         map.put("qualityScore", shot.getQualityScore());
+        // 切片 2：与 StoryScriptService.shotToMap 装配点一致，暴露 video 状态
+        map.put("videoUrl", shot.getVideoUrl());
+        map.put("videoFileId", shot.getVideoFileId());
+        map.put("videoStatus", shot.getVideoStatus() != null ? shot.getVideoStatus() : "NONE");
+        map.put("lastFrameUrl", shot.getLastFrameUrl());
         return map;
     }
 }

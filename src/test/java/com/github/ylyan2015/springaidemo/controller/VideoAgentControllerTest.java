@@ -57,8 +57,8 @@ class VideoAgentControllerTest {
     }
 
     @Test
-    void listToolsWithRealFactoryReturnsSixTools() {
-        // 真实工厂 + 全 mock 服务：验证装配后 6 工具可被内省
+    void listToolsWithRealFactoryReturnsNineTools() {
+        // 真实工厂 + 全 mock 服务：验证装配后 9 工具可被内省
         VideoAgentToolFactory factory = new VideoAgentToolFactory(
                 mock(StoryScriptService.class),
                 mock(VideoTemplateService.class),
@@ -66,9 +66,12 @@ class VideoAgentControllerTest {
                 mock(ImageGenerationService.class),
                 mock(ImageQualityService.class),
                 mock(VideoExportService.class),
-                mock(BgmService.class));
+                mock(BgmService.class),
+                mock(com.github.ylyan2015.springaidemo.service.StoryCharacterService.class),
+                mock(com.github.ylyan2015.springaidemo.service.VideoGenerationService.class),
+                mock(com.github.ylyan2015.springaidemo.service.ShotCandidateService.class));
         VideoAgentController controller = new VideoAgentController(factory,
                 mock(DirectorAgentService.class), mock(AgentOrchestrationService.class));
-        assertEquals(6, dataOf(controller.listTools()).size());
+        assertEquals(9, dataOf(controller.listTools()).size());
     }
 }

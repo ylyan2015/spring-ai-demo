@@ -66,7 +66,11 @@ class ImageGenerationServiceTimeoutCancelTest {
         });
 
         ImageGenerationService service = new ImageGenerationService(factory, scriptRepository,
-                shotRepository, userRepository, new ObjectMapper(), qualityService);
+                shotRepository, userRepository, new ObjectMapper(), qualityService,
+                new com.github.ylyan2015.springaidemo.video.ShotPromptAssembler(),
+                new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
+                        mock(com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository.class),
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)));
         setField(service, "parallelism", 1);
         setField(service, "retryAttempts", 0);
         setField(service, "retryDelayMs", 0L);

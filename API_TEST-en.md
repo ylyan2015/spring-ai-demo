@@ -1511,3 +1511,84 @@ A: The frontend "Batch Three Platforms" button issues three parallel calls to `P
 
 **Q: How to enable automatic image quality evaluation?**
 A: Set `image.quality.enabled: true` (reuses DASHSCOPE_API_KEY by default, via the qwen-vl-max multimodal endpoint). After generation, images are scored on clarity/relevance/aesthetics; scores below the threshold (default 6.0) trigger <=2 retries keeping the best score; shot cards show a quality badge. Without an API key it falls back to resolution-based rule evaluation; keep the default false to leave the generation flow completely unaffected.
+
+
+## Phase 4 Slice 1 Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/video/characters?scriptId= | list character cards |
+| POST | /api/video/characters?scriptId= | create {name,featureTable,personality,voice} |
+| PUT | /api/video/characters/{id}?scriptId= | update |
+| DELETE | /api/video/characters/{id}?scriptId= | delete |
+| POST | /api/video/characters/{id}/reference-image?scriptId= | multipart reference image (image/*) |
+| GET | /api/video/characters/voices | built-in zh voices |
+| PUT | /api/video/scripts/{id}/style | script-level style lock {style} |
+
+Shot map adds characterIds (id array) and shotSize; script map adds style and characters.
+
+## Phase 4 Slice 2 Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/video/videos/shot/{scriptId}/{shotId} | single-shot i2v sync generation (returns shot map; 400 when generator=none) |
+| GET | /api/video/videos/script/{scriptId}/stream | batch generation SSE (VIDEO_BATCH_START/SHOT_VIDEO_COMPLETE/VIDEO_BATCH_COMPLETE/ERROR) |
+| GET | /api/video/videos/generators | video generator list (none/dashscope-wan) |
+| PUT | /api/video/videos/generator?type= | switch video generator |
+| PUT | /api/video/scripts/{id}/continuity | continuity mode {mode: NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME} |
+
+Shot map adds videoUrl/videoFileId/videoStatus (NONE/GENERATING/READY/FAILED)/lastFrameUrl; script map adds continuityMode.
+Config: video.generator (default none), video.workers (2), video.retry-attempts (1), video.wan.model (wan2.7-i2v; wan2.6-i2v = first frame only)/resolution (720P)/timeout-seconds (600)/poll-interval-ms (5000).
+FAQ: local storage cannot serve a public first-frame URL; i2v returns 400 with guidance to switch storage to oss/minio. Cost baseline: 720P/4-5s/low motion; retry defaults to 1 (per-second billing red line).
+
+## Phase 4 Slice 3 Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/video/candidates?scriptId=&shotId= | candidate list (quality score / selected) |
+| POST | /api/video/candidates/generate | draw {scriptId,shotId,type:IMAGE\|VIDEO}; sync candidate list (frontend loading) |
+| POST | /api/video/candidates/{id}/select?scriptId= | human selection, writes back main asset (VIDEO incl. probe/last frame) |
+| POST | /api/video/images/inpaint | bbox inpaint {shotId,x,y,w,h,instruction}, coords 0-1; result stored as candidate |
+
+Config: video.candidates.image-count (default 3), video.candidates.video-count (default 2); one-click orchestration never draws.
+FAQ: inpaint requires image.generator=wan27 (supportsEdit), else 400; out-of-bounds rect (x+w>1 etc.) 400; candidate cost = N x generation, lower to 1 if needed; provisional best-score main asset is not final until human select.
+
+## Phase 4 Slice 4: Multi-Voice Dubbing & Post Enhancement
+
+No new endpoints; existing APIs extended:
+
+| Method | Path | Change |
+|---|---|---|
+| POST | /api/video/export/hd | body gains optional upscale/interpolate/sfx (boolean, all default false); HD export only — preview/platform/batch exports unaffected |
+| PUT | /api/video/scripts/{id}/shots/{shotId} | body gains dialogue (line text) / dialogueCharacterId (speaking character; null = narration voice) |
+| GET | /api/video/scripts/{id} | shot map gains dialogue/dialogueCharacterId; export result video gains hasSfx/hasEnhance |
+
+curl example (upscale + SFX export):
+
+```bash
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId":1,"resolution":"1080p","aspectRatio":"16:9","subtitle":true,"upscale":true,"sfx":true}'
+```
+
+Config: video.sfx.enabled (default false, master switch), sfx.library-path (./data/sfx; presets via tools/generate-preset-sfx.ps1), video.realesrgan-path (empty = skip upscale)/realesrgan-model (default realesrgan-x4plus-anime), video.rife-path (empty = skip interpolation)/rife-model (model dir).
+FAQ: dialogue TTS voice = character card voice (editable via PUT /api/video/characters/{id}); narration stays zh-CN-YunxiNeural; without dialogue exports are byte-identical to before; SFX recommendation falls back to keywords (rain/wind/walk/tense) when the LLM fails; checking enhancement boxes is safe even when tools are unconfigured (silent skip); enhancement failures only warn and never block export; interpolation depends on the upscale frame chain — interpolate-only without realesrgan is skipped; download Real-ESRGAN/RIFE from their ncnn-vulkan releases; CPU runs are slow (minutes per shot); Docker does not bundle them.
+
+## Phase 4 Slice 5 Endpoints (Video Restyle)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/video/restyle | multipart: file (mp4/mov, 2-10s, <=100MB) + style (optional, empty = default anime); sync return task RUNNING |
+| GET | /api/video/restyle/{id} | task status (ownership checked): status PENDING/RUNNING/SUCCEEDED/FAILED + resultUrl/error |
+| GET | /api/video/restyle | my restyle tasks (createdAt desc) |
+
+curl example:
+
+```bash
+curl -X POST http://localhost:8080/api/video/restyle \
+  -F "file=@live.mp4" -F "style=anime style, cel shading, keep original motion and camera"
+curl http://localhost:8080/api/video/restyle/1
+```
+
+Config: video.restyle.model (default wan2.7-videoedit)/timeout-seconds (600)/poll-interval-ms (5000); reuses DASHSCOPE_API_KEY (empty key = submit error).
+FAQ: restyle is an independent output mode (RestyleTask), never mixed into export history; takes 1-5 minutes, billing = input + output duration (720P baseline); video input accepts public URL / oss temp URL only (protocol has no base64), local storage tasks FAILED with oss/minio switch guidance; spike live test passed motion/camera preservation + anime stylization; Kling transform is a 2-OPT alternative (requires KLING_API_KEY, not implemented); smoke -Drestyle=true skipped by default.

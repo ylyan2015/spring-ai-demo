@@ -188,6 +188,44 @@ public class StoryScriptController {
     }
 
     /**
+     * Phase 4 切片 1：脚本级整体画风锁更新
+     */
+    @PutMapping("/{id}/style")
+    public ResponseEntity<Map<String, Object>> updateStyle(@PathVariable Long id,
+                                                           @RequestBody Map<String, String> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            StoryScript updated = storyScriptService.updateStyle(id, request.get("style"));
+            result.put("success", true);
+            result.put("data", scriptToMap(updated));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * Phase 4 切片 2：首尾帧连续性模式更新
+     */
+    @PutMapping("/{id}/continuity")
+    public ResponseEntity<Map<String, Object>> updateContinuity(@PathVariable Long id,
+                                                                @RequestBody Map<String, String> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            StoryScript updated = storyScriptService.updateContinuity(id, request.get("mode"));
+            result.put("success", true);
+            result.put("data", scriptToMap(updated));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
      * 删除脚本
      *
      * @param id 脚本ID
@@ -432,6 +470,17 @@ public class StoryScriptController {
         shot.setImageUrl((String) data.get("imageUrl"));
         shot.setImageFileId((String) data.get("imageFileId"));
         shot.setImageStatus((String) data.getOrDefault("imageStatus", "PENDING"));
+        if (data.get("characterIds") instanceof List<?> list) {
+            shot.setCharacterIds(list.isEmpty() ? null : list.stream()
+                    .map(String::valueOf).collect(Collectors.joining(",")));
+        }
+        if (data.get("shotSize") != null) {
+            shot.setShotSize((String) data.get("shotSize"));
+        }
+        shot.setDialogue((String) data.get("dialogue"));
+        if (data.get("dialogueCharacterId") != null) {
+            shot.setDialogueCharacterId(toLong(data.get("dialogueCharacterId")));
+        }
 
         return shot;
     }
@@ -447,6 +496,22 @@ public class StoryScriptController {
         storyboard.setTitle((String) data.get("title"));
         storyboard.setTheme((String) data.get("theme"));
 
+        if (data.get("characters") instanceof List<?> charsData) {
+            List<com.github.ylyan2015.springaidemo.video.CharacterDesign> chars = new ArrayList<>();
+            for (Object o : charsData) {
+                if (o instanceof Map<?, ?> cm) {
+                    com.github.ylyan2015.springaidemo.video.CharacterDesign cd =
+                            new com.github.ylyan2015.springaidemo.video.CharacterDesign();
+                    cd.setName((String) cm.get("name"));
+                    cd.setFeatureTable((String) cm.get("featureTable"));
+                    cd.setPersonality((String) cm.get("personality"));
+                    cd.setSuggestedVoice((String) cm.get("suggestedVoice"));
+                    chars.add(cd);
+                }
+            }
+            storyboard.setCharacters(chars);
+        }
+
         List<Map<String, Object>> shotsData = (List<Map<String, Object>>) data.get("shots");
         if (shotsData != null) {
             List<com.github.ylyan2015.springaidemo.video.Shot> shots = shotsData.stream()
@@ -458,6 +523,13 @@ public class StoryScriptController {
                         if (s.get("durationSeconds") != null) shot.setDurationSeconds(((Number) s.get("durationSeconds")).intValue());
                         shot.setNarration((String) s.get("narration"));
                         shot.setImagePrompt((String) s.get("imagePrompt"));
+                        if (s.get("characterNames") instanceof List<?> names) {
+                            shot.setCharacterNames(names.stream().map(String::valueOf)
+                                    .collect(Collectors.toList()));
+                        }
+                        shot.setShotSize((String) s.get("shotSize"));
+                        shot.setDialogue((String) s.get("dialogue"));
+                        shot.setDialogueCharacterName((String) s.get("dialogueCharacterName"));
                         return shot;
                     })
                     .collect(Collectors.toList());

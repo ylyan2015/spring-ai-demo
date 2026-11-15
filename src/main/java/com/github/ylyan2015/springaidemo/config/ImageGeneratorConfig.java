@@ -3,6 +3,8 @@ package com.github.ylyan2015.springaidemo.config;
 import com.github.ylyan2015.springaidemo.storage.StorageService;
 import com.github.ylyan2015.springaidemo.video.generator.ImageSizeMapper;
 import com.github.ylyan2015.springaidemo.video.generator.OpenAiCompatibleImageGenerator;
+import com.github.ylyan2015.springaidemo.video.generator.Wan27ImageGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -65,5 +67,19 @@ public class ImageGeneratorConfig {
             @Value("${image.compat.ark.fixed-sizes:}") String fixedSizes) {
         return new OpenAiCompatibleImageGenerator("ark", "火山方舟 Seedream (" + model + ")",
                 baseUrl, apiKey, model, ImageSizeMapper.parse(fixedSizes), storageService, defaultHttpClient());
+    }
+
+    /**
+     * Phase 4 切片 1：万相 2.7 参考图生成器（复用 DASHSCOPE_API_KEY；空 Key 不可用）
+     */
+    @Bean
+    public Wan27ImageGenerator wan27ImageGenerator(
+            StorageService storageService,
+            @Value("${image.wan27.base-url:https://dashscope.aliyuncs.com/api/v1}") String baseUrl,
+            @Value("${spring.ai.dashscope.api-key:}") String apiKey,
+            @Value("${image.wan27.model:wan2.7-image}") String model,
+            @Value("${image.wan27.timeout-seconds:120}") int timeoutSeconds) {
+        return new Wan27ImageGenerator(storageService, new ObjectMapper(), defaultHttpClient(),
+                baseUrl, apiKey, model, timeoutSeconds);
     }
 }

@@ -144,7 +144,7 @@
             <button class="btn btn-sm" onclick="newScriptMode()">+ 新建脚本</button>
             <div class="divider"></div>
             <span class="bar-label">视觉风格</span>
-            <select id="styleSelect"></select>
+            <select id="styleSelect" onchange="onStyleChange()"></select>
             <div class="divider"></div>
             <span class="bar-label">图像生成器</span>
             <select id="generatorSelect" onchange="switchGenerator()"></select>
@@ -174,6 +174,17 @@
 
         <!-- 脚本详情区 -->
         <div id="scriptArea"></div>
+        <!-- 角色卡面板（Phase 4 切片 1） -->
+        <div class="input-section" id="characterPanel" style="display:none;">
+            <h3 style="color:#fff;font-size:16px;margin-bottom:10px">🎭 角色卡 <span style="font-size:12px;color:#888;font-weight:normal">（角色一致性 · 定妆参考图 · 声线）</span></h3>
+            <div id="characterList"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                <input id="charName" placeholder="角色名" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
+                <input id="charFeatures" placeholder="英文特征表（发型/瞳色/服装/体型）" style="flex:2;background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
+                <select id="charVoiceSelect" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px"></select>
+                <button class="btn btn-sm" onclick="createCharacter()">保存角色</button>
+            </div>
+        </div>
         <!-- 空状态 -->
         <div id="emptyArea"><div class="status">选择已有脚本，或点击「+ 新建脚本」输入创意开始</div></div>
 
@@ -188,6 +199,21 @@
                 <button class="btn btn-ghost" onclick="clearAgentChat()">清空</button>
                 <button class="btn btn-green" id="agentPipelineBtn" onclick="startAgentPipeline()" title="多 Agent 异步流水线：编剧→美术→音频→剪辑，导出需确认">一键流水线</button>
             </div>
+        </div>
+        <!-- 视频转绘（Phase 4 切片 5：独立输出模式） -->
+        <div class="input-section" id="restylePanel">
+            <h3 style="color:#fff;font-size:16px;margin-bottom:10px">🎨 视频转绘 <span style="font-size:12px;color:#888;font-weight:normal">（实拍→漫剧画风 · 独立输出 · 需 DASHSCOPE_API_KEY）</span></h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="file" id="restyleFile" accept="video/*" style="font-size:13px;color:#ccc">
+                <select id="restyleStyle" style="background:#0f0f1a;border:1px solid #333;color:#e0e0e0;border-radius:6px;padding:6px 10px;font-size:13px">
+                    <option value="日系动漫风格，赛璐璐着色，干净线条，保持原有动作与机位">日系动漫</option>
+                    <option value="美漫风格，粗墨线，高饱和色彩，保持原有动作与机位">美漫</option>
+                    <option value="水彩画风格，柔和边缘，纸张质感，保持原有动作与机位">水彩</option>
+                </select>
+                <button class="btn" id="restyleSubmitBtn" onclick="submitRestyle()">转绘</button>
+            </div>
+            <div style="font-size:12px;color:#888;margin-top:6px">mp4/mov、2-10 秒、≤100MB；耗时数分钟，按输入+输出时长计费；local 存储需切换 oss/minio</div>
+            <div id="restyleList" style="margin-top:10px"></div>
         </div>
     </div>
     <div class="toast" id="toast"></div>
@@ -208,6 +234,9 @@ let currentResolution = '720p'; // 高清导出分辨率
 let currentSubtitle = true; // 导出时是否烧录字幕（模块 F）
 let currentSubtitleLang = 'zh'; // 字幕语言：zh 原文 / en 英文 / bilingual 中英双语（模块 F）
 let currentWithLogo = false; // 导出时是否叠加品牌 Logo 角标（模块 I，需服务端配置）
+let currentUpscale = false; // 导出超分增强（Phase 4 切片 4，需服务端配置 realesrgan）
+let currentInterpolate = false; // 导出补帧增强（Phase 4 切片 4，需服务端配置 rife）
+let currentSfx = false; // 导出音效混音（Phase 4 切片 4，需服务端开启 video.sfx.enabled）
 let currentPlatform = '';  // 社媒平台预设（模块 I；空 = 自定义比例/分辨率）
 let platformList = [];     // 平台预设列表（GET /export/platforms 加载）
 let templates = [];        // 视频模板列表（模块 H）
@@ -266,8 +295,9 @@ async function init() {
             '<div class="status error">请先 <a href="/login" style="color:#4a6cf7;">登录</a> 后使用短视频工作室</div>';
         return;
     }
-    await Promise.all([loadStyles(), loadGenerators(), loadBgmList(), loadPlatforms(), loadTemplates()]);
+    await Promise.all([loadStyles(), loadGenerators(), loadBgmList(), loadPlatforms(), loadTemplates(), loadVoices(), loadVideoGenerators()]);
     await loadScriptList();
+    loadRestyleTasks();
 }
 window.addEventListener('DOMContentLoaded', init);
 
@@ -378,10 +408,13 @@ async function loadScriptDetail(id) {
     if (!data.success) { toast(data.message || '加载脚本失败', 'error'); return; }
     currentScript = data.data;
     editingShotId = null;
+    document.getElementById('styleSelect').value = data.data.style || '';
     document.getElementById('ideaSection').style.display = 'none';
     document.getElementById('emptyArea').style.display = 'none';
     renderScript();
+    loadCharacters(id);
     loadExportHistory();
+    loadCandidateFlags();
 }
 
 // ==================== 脚本生成（模块 A） ====================
@@ -402,9 +435,11 @@ async function generateScript() {
     await loadScriptList(true);
     document.getElementById('scriptSelect').value = data.data.id;
     currentScript = data.data;
+    document.getElementById('styleSelect').value = data.data.style || '';
     document.getElementById('ideaSection').style.display = 'none';
     document.getElementById('emptyArea').style.display = 'none';
     renderScript();
+    loadCharacters(data.data.id);
 }
 
 // ==================== 脚本信息管理 ====================
@@ -427,6 +462,255 @@ async function deleteScript() {
     document.getElementById('scriptArea').innerHTML = '';
     document.getElementById('emptyArea').style.display = '';
     await loadScriptList();
+}
+
+// ==================== 角色卡（Phase 4 切片 1） ====================
+let currentCharacters = [];
+let editingCharacterId = null;
+let voiceList = [];
+
+async function loadVoices() {
+    const d = await api('/api/video/characters/voices');
+    if (!d.success) return;
+    voiceList = d.data || [];
+    document.getElementById('charVoiceSelect').innerHTML = voiceList.map(v =>
+        '<option value="' + esc(v.name) + '">' + esc(v.name) + '</option>').join('');
+}
+
+async function loadCharacters(scriptId) {
+    const d = await api('/api/video/characters?scriptId=' + scriptId);
+    currentCharacters = d.success ? (d.data || []) : [];
+    renderCharacters();
+    if (currentScript) renderScript();
+}
+
+function renderCharacters() {
+    const panel = document.getElementById('characterPanel');
+    if (!currentScript) { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    document.getElementById('characterList').innerHTML = currentCharacters.map(c =>
+        '<div style="display:flex;gap:8px;align-items:center;background:#12121f;border-radius:8px;padding:8px;margin-bottom:6px;font-size:13px">' +
+        (c.referenceImageUrl ? '<img src="' + esc(c.referenceImageUrl) + '" style="width:40px;height:40px;object-fit:cover;border-radius:6px">' : '<span style="width:40px;height:40px;background:#222;border-radius:6px;display:inline-block"></span>') +
+        '<div style="flex:1"><strong>' + esc(c.name) + '</strong> <span style="color:#888">' + esc(c.voice || '') + '</span>' +
+        '<div style="color:#aaa;font-size:12px">' + esc((c.featureTable || '').slice(0, 80)) + '</div></div>' +
+        '<button class="btn btn-sm btn-ghost" onclick="startEditCharacter(' + c.id + ')">编辑</button>' +
+        '<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'charRefInput-' + c.id + '\').click()">定妆图</button>' +
+        '<input type="file" id="charRefInput-' + c.id + '" accept="image/*" style="display:none" onchange="uploadCharacterRef(' + c.id + ',this)">' +
+        '<button class="btn btn-sm btn-red" onclick="deleteCharacter(' + c.id + ')">删除</button></div>').join('') ||
+        '<div style="color:#888;font-size:13px">暂无角色卡（随分镜脚本自动生成，也可手动添加）</div>';
+}
+
+function startEditCharacter(id) {
+    const c = currentCharacters.find(x => x.id === id);
+    if (!c) return;
+    editingCharacterId = id;
+    document.getElementById('charName').value = c.name || '';
+    document.getElementById('charFeatures').value = c.featureTable || '';
+    document.getElementById('charVoiceSelect').value = c.voice || 'zh-CN-XiaoxiaoNeural';
+}
+
+async function createCharacter() {
+    if (!currentScript) return;
+    const body = { name: document.getElementById('charName').value, featureTable: document.getElementById('charFeatures').value, voice: document.getElementById('charVoiceSelect').value };
+    const d = editingCharacterId
+        ? await put('/api/video/characters/' + editingCharacterId + '?scriptId=' + currentScript.id, body)
+        : await post('/api/video/characters?scriptId=' + currentScript.id, body);
+    if (!d.success) { toast(d.message || '保存失败', 'error'); return; }
+    editingCharacterId = null;
+    document.getElementById('charName').value = '';
+    document.getElementById('charFeatures').value = '';
+    toast('角色卡已保存', 'success');
+    await loadCharacters(currentScript.id);
+}
+
+async function deleteCharacter(id) {
+    if (!confirm('删除该角色卡？')) return;
+    const d = await api('/api/video/characters/' + id + '?scriptId=' + currentScript.id, { method: 'DELETE' });
+    if (!d.success) { toast(d.message || '删除失败', 'error'); return; }
+    await loadCharacters(currentScript.id);
+}
+
+async function uploadCharacterRef(id, input) {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const d = await api('/api/video/characters/' + id + '/reference-image?scriptId=' + currentScript.id, { method: 'POST', body: fd });
+    if (!d.success) { toast(d.message || '上传失败', 'error'); return; }
+    toast('定妆参考图已上传', 'success');
+    input.value = '';
+    await loadCharacters(currentScript.id);
+}
+
+async function onStyleChange() {
+    if (!currentScript) return;
+    const d = await put('/api/video/scripts/' + currentScript.id + '/style', { style: document.getElementById('styleSelect').value });
+    if (d.success) { currentScript.style = d.data.style; toast('脚本级画风已锁定', 'success'); }
+    else toast(d.message || '更新失败', 'error');
+}
+
+// ==================== 图生视频（Phase 4 切片 2） ====================
+let videoGenerators = [];
+
+async function loadVideoGenerators() {
+    const d = await api('/api/video/videos/generators');
+    if (!d.success) return;
+    videoGenerators = d.data || [];
+    fillVideoGeneratorSelect();
+}
+
+/** 从缓存装配下拉；元素由 renderScript 动态创建，init 时不存在需 guard（切片 2 审查 C1） */
+function fillVideoGeneratorSelect() {
+    const sel = document.getElementById('videoGeneratorSelect');
+    if (!sel) return;
+    sel.innerHTML = videoGenerators.map(g =>
+        '<option value="' + esc(g.type) + '"' + (g.active ? ' selected' : '') + '>' +
+        esc(g.name) + (g.available ? '' : '（不可用）') + '</option>').join('');
+}
+
+async function switchVideoGenerator() {
+    const type = document.getElementById('videoGeneratorSelect').value;
+    const d = await put('/api/video/videos/generator?type=' + encodeURIComponent(type));
+    if (d.success) toast('视频生成器已切换为: ' + type, 'success');
+    else { toast(d.message || '切换失败', 'error'); loadVideoGenerators(); }
+}
+
+async function onContinuityChange() {
+    if (!currentScript) return;
+    const d = await put('/api/video/scripts/' + currentScript.id + '/continuity', { mode: document.getElementById('continuitySelect').value });
+    if (d.success) { currentScript.continuityMode = d.data.continuityMode; toast('连续性模式已更新', 'success'); }
+    else toast(d.message || '更新失败', 'error');
+}
+
+async function generateShotVideo(shotId) {
+    showProgress('正在图生视频（约 1-5 分钟）...', true);
+    const d = await post('/api/video/videos/shot/' + currentScript.id + '/' + shotId);
+    hideProgress();
+    if (!d.success) { toast(d.message || '视频生成失败', 'error'); return; }
+    toast('镜头视频已生成', 'success');
+    await loadScriptDetail(currentScript.id);
+}
+
+function generateAllVideos() {
+    if (!currentScript) return;
+    showProgress('批量图生视频...', true);
+    const es = new EventSource('/api/video/videos/script/' + currentScript.id + '/stream');
+    es.onmessage = async (ev) => {
+        try {
+            const p = JSON.parse(ev.data);
+            if (p.type === 'VIDEO_BATCH_COMPLETE' || p.type === 'ERROR') {
+                es.close(); hideProgress();
+                if (p.type === 'ERROR') toast(p.message || '批量视频生成失败', 'error');
+                else toast('批量视频生成完成', 'success');
+                await loadScriptDetail(currentScript.id);
+            }
+        } catch (e) { /* 忽略非 JSON 心跳 */ }
+    };
+    es.onerror = () => { es.close(); hideProgress(); loadScriptDetail(currentScript.id); };
+}
+
+// ==================== 候选抽卡与局部重绘（Phase 4 切片 3） ====================
+let candidateFlags = {};   // shotId -> 存在未 selected 候选（待择优徽章）
+let currentCandidateShotId = null;
+
+function activeVideoGeneratorType() {
+    const g = videoGenerators.find(x => x.active);
+    return g ? g.type : 'none';
+}
+
+async function loadCandidateFlags() {
+    if (!currentScript || !currentScript.shots) return;
+    const entries = await Promise.all(currentScript.shots.map(async s => {
+        const d = await api('/api/video/candidates?scriptId=' + currentScript.id + '&shotId=' + s.id);
+        const list = d.success ? (d.data || []) : [];
+        return [s.id, list.some(c => !c.selected)];
+    }));
+    candidateFlags = Object.fromEntries(entries);
+    renderScript();
+}
+
+async function generateCandidates(shotId, type) {
+    showProgress(type === 'VIDEO' ? '抽卡视频候选（约数分钟）...' : '抽卡图像候选...', true);
+    const d = await post('/api/video/candidates/generate', { scriptId: currentScript.id, shotId: shotId, type: type });
+    hideProgress();
+    if (!d.success) { toast(d.message || '抽卡失败', 'error'); return; }
+    toast('抽卡完成：' + (d.data || []).length + ' 个候选，已暂取最高分，请择优', 'success');
+    await loadScriptDetail(currentScript.id);
+    openCandidateModal(shotId);
+}
+
+function modalHolder(id) {
+    let holder = document.getElementById(id);
+    if (!holder) { holder = document.createElement('div'); holder.id = id; document.body.appendChild(holder); }
+    return holder;
+}
+const MODAL_OVERLAY = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000';
+const MODAL_BOX = 'background:#1e2130;border:1px solid #333;border-radius:12px;padding:20px;max-height:85vh;overflow:auto';
+
+async function openCandidateModal(shotId) {
+    currentCandidateShotId = shotId;
+    const d = await api('/api/video/candidates?scriptId=' + currentScript.id + '&shotId=' + shotId);
+    if (!d.success) { toast(d.message || '获取候选失败', 'error'); return; }
+    const list = d.data || [];
+    let h = '<div style="' + MODAL_OVERLAY + '" onclick="if(event.target===this)closeCandidateModal()">';
+    h += '<div style="' + MODAL_BOX + ';width:860px"><h3 style="margin:0 0 8px">镜头候选 · 择优选用</h3>';
+    if (!list.length) h += '<div class="status">暂无候选，可在镜头卡片点「抽卡图/抽卡视频」生成。</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin:12px 0">';
+    list.forEach(c => {
+        h += '<div style="border:1px solid ' + (c.selected ? '#4a6cf7' : '#333') + ';border-radius:8px;padding:8px">';
+        h += c.type === 'VIDEO'
+            ? '<video src="' + esc(c.url) + '" controls style="width:100%;border-radius:6px"></video>'
+            : '<img src="' + esc(c.url) + '" style="width:100%;border-radius:6px">';
+        h += '<div style="font-size:12px;color:#aaa;margin:6px 0">' + esc(c.type)
+            + (c.qualityScore != null ? ' · 评分 ' + Number(c.qualityScore).toFixed(1) : '')
+            + (c.durationSeconds ? ' · ' + c.durationSeconds + 's' : '')
+            + (c.selected ? ' · <span style="color:#4a6cf7">已选用</span>' : '') + '</div>';
+        h += '<button class="btn btn-sm" onclick="selectCandidate(' + c.id + ')"' + (c.selected ? ' disabled' : '') + '>选用</button>';
+        h += '</div>';
+    });
+    h += '</div><div class="form-actions"><button class="btn btn-sm btn-ghost" onclick="closeCandidateModal()">关闭</button></div></div></div>';
+    modalHolder('candidateModalHolder').innerHTML = h;
+}
+function closeCandidateModal() { modalHolder('candidateModalHolder').innerHTML = ''; }
+
+async function selectCandidate(candidateId) {
+    const d = await post('/api/video/candidates/' + candidateId + '/select?scriptId=' + currentScript.id);
+    if (!d.success) { toast(d.message || '选用失败', 'error'); return; }
+    toast('已选用，主资产已回写', 'success');
+    const shotId = currentCandidateShotId;
+    await loadScriptDetail(currentScript.id);
+    openCandidateModal(shotId);
+}
+
+function openInpaintDialog(shotId) {
+    let h = '<div style="' + MODAL_OVERLAY + '" onclick="if(event.target===this)closeInpaintDialog()">';
+    h += '<div style="' + MODAL_BOX + ';width:440px"><h3 style="margin:0 0 8px">局部重绘（框选）</h3>';
+    h += '<div style="font-size:12px;color:#aaa">坐标为相对原图百分比（0-100）；产物入候选，不直接覆盖主图。需 wan27 生成器。</div>';
+    h += '<div style="display:flex;gap:10px;margin:12px 0;flex-wrap:wrap">';
+    [['inpX', 'X%', 10], ['inpY', 'Y%', 10], ['inpW', '宽%', 40], ['inpH', '高%', 40]].forEach(f => {
+        h += '<label style="font-size:12px;color:#ccc">' + f[1] + '<br><input type="number" id="' + f[0] + '" value="' + f[2] + '" min="0" max="100" style="width:70px"></label>';
+    });
+    h += '</div><textarea id="inpInstruction" placeholder="重绘指令，如：把雨伞换成红色" style="width:100%;min-height:64px"></textarea>';
+    h += '<div class="form-actions"><button class="btn btn-sm" onclick="submitInpaint(' + shotId + ')">开始重绘</button>';
+    h += '<button class="btn btn-sm btn-ghost" onclick="closeInpaintDialog()">取消</button></div></div></div>';
+    modalHolder('inpaintModalHolder').innerHTML = h;
+}
+function closeInpaintDialog() { modalHolder('inpaintModalHolder').innerHTML = ''; }
+
+async function submitInpaint(shotId) {
+    const x = parseFloat(document.getElementById('inpX').value) / 100;
+    const y = parseFloat(document.getElementById('inpY').value) / 100;
+    const w = parseFloat(document.getElementById('inpW').value) / 100;
+    const h = parseFloat(document.getElementById('inpH').value) / 100;
+    const instruction = document.getElementById('inpInstruction').value.trim();
+    if (!instruction) { toast('请输入重绘指令', 'error'); return; }
+    showProgress('局部重绘中...', true);
+    const d = await post('/api/video/images/inpaint', { shotId: shotId, x: x, y: y, w: w, h: h, instruction: instruction });
+    hideProgress();
+    if (!d.success) { toast(d.message || '重绘失败', 'error'); return; }
+    toast('重绘完成，已入候选', 'success');
+    closeInpaintDialog();
+    await loadScriptDetail(currentScript.id);
+    openCandidateModal(shotId);
 }
 
 // ==================== 渲染 ====================
@@ -464,6 +748,9 @@ function renderScript() {
     h += '<option value="bilingual"' + (currentSubtitleLang === 'bilingual' ? ' selected' : '') + '>字幕:双语</option>';
     h += '</select>';
     h += '<label class="subtitle-toggle"><input type="checkbox" id="logoToggle"' + (currentWithLogo ? ' checked' : '') + ' onchange="currentWithLogo=this.checked" title="叠加品牌 Logo 角标（需服务端配置 video.watermark.logo-path，未配置时自动忽略）"> Logo</label>';
+    h += '<label class="subtitle-toggle"><input type="checkbox" id="upscaleToggle"' + (currentUpscale ? ' checked' : '') + ' onchange="currentUpscale=this.checked" title="Real-ESRGAN 超分增强（需服务端配置 video.realesrgan-path，未配置/失败时自动跳过，仅高清导出生效）"> 超分</label>';
+    h += '<label class="subtitle-toggle"><input type="checkbox" id="interpolateToggle"' + (currentInterpolate ? ' checked' : '') + ' onchange="currentInterpolate=this.checked" title="RIFE 补帧（帧率翻倍 30→60fps，需同时配置超分与 video.rife-path，仅高清导出生效）"> 补帧</label>';
+    h += '<label class="subtitle-toggle"><input type="checkbox" id="sfxToggle"' + (currentSfx ? ' checked' : '') + ' onchange="currentSfx=this.checked" title="AI 推荐环境音效分层混音（需服务端开启 video.sfx.enabled，仅高清导出生效）"> 音效</label>';
     h += '<span class="divider"></span>';
     h += '<span class="bar-label">平台</span>';
     h += '<select id="platformSelect" onchange="onPlatformSelect(this)" title="社媒平台预设：自动套用比例/分辨率并校验推荐时长；选「自定义」则使用右侧手动设置">';
@@ -487,6 +774,14 @@ function renderScript() {
     h += '<button class="btn btn-sm" id="exportBtn" onclick="exportVideo(false)" ' + (!allReady || exporting ? 'disabled' : '') + '>高清导出</button>';
     h += '<button class="btn btn-sm btn-ghost" id="batchExportBtn" onclick="batchExport()" ' + (!allReady || exporting ? 'disabled' : '') + ' title="一键并行导出抖音(9:16)/B站(16:9)/小红书(1:1) 三个 1080p 版本">批量三平台</button>';
     h += '<button class="btn btn-sm btn-ghost" id="srtBtn" onclick="exportSrt()" ' + (batchGenerating ? 'disabled' : '') + ' title="单独导出 SRT 字幕文件（社媒平台上传用，不烧录画面）">导出SRT</button>';
+    h += '<span class="divider"></span>';
+    h += '<span class="bar-label">i2v</span>';
+    h += '<select id="videoGeneratorSelect" onchange="switchVideoGenerator()" title="图生视频生成源；none=静图运镜回退"></select>';
+    h += '<select id="continuitySelect" onchange="onContinuityChange()" title="首尾帧连续性：NONE=本镜定妆图首帧；PREV=上一镜末帧；GENERATED=wan2.7 延伸尾帧">' +
+        '<option value="NONE"' + ((sc.continuityMode || 'NONE') === 'NONE' ? ' selected' : '') + '>连续性:关</option>' +
+        '<option value="PREV_LAST_FRAME"' + (sc.continuityMode === 'PREV_LAST_FRAME' ? ' selected' : '') + '>连续性:上镜末帧</option>' +
+        '<option value="GENERATED_LAST_FRAME"' + (sc.continuityMode === 'GENERATED_LAST_FRAME' ? ' selected' : '') + '>连续性:生成尾帧</option></select>';
+    h += '<button class="btn btn-sm" onclick="generateAllVideos()" title="批量图生视频（SSE 进度）">批量生成视频</button>';
     h += '<button class="btn btn-sm btn-ghost" id="subtitlePreviewBtn" onclick="previewSubtitle()" ' + (batchGenerating ? 'disabled' : '') + ' title="按当前比例生成一帧字幕效果预览图（需首镜头已生成图片）">字幕预览</button>';
     h += '<span class="info" id="imageCountInfo">已生成: ' + readyCount + '/' + total + ' 张图片 · 镜头卡片可拖拽排序</span>';
     h += '</div>';
@@ -496,37 +791,50 @@ function renderScript() {
     h += '</div><div id="videoResultArea"></div><div id="exportHistoryArea"></div>';
 
     document.getElementById('scriptArea').innerHTML = h;
+    fillVideoGeneratorSelect();
 }
 
 function shotCardHtml(shot) {
     const hasImg = shot.imageUrl && shot.imageStatus === 'READY';
+    const hasVideo = shot.videoUrl && shot.videoStatus === 'READY';
     let imgH = '<span class="placeholder">' + (shot.imageStatus === 'FAILED' ? '<span style="color:#f74a4a">生成失败</span>' : (shot.imageStatus === 'GENERATING' ? '<span class="loading-spinner">生成中...</span>' : '未生成图片')) + '</span>';
-    if (hasImg) imgH = '<img src="' + esc(shot.imageUrl) + '" alt="Shot ' + shot.shotOrder + '">';
+    if (hasVideo) imgH = '<video src="' + esc(shot.videoUrl) + '" controls style="width:100%;height:100%;object-fit:cover"></video>';
+    else if (hasImg) imgH = '<img src="' + esc(shot.imageUrl) + '" alt="Shot ' + shot.shotOrder + '">';
 
     let h = '<div class="shot-card ' + (hasImg ? 'has-image' : '') + '" id="shot-' + shot.id + '" draggable="true" ondragstart="dragStart(event, ' + shot.id + ')" ondragend="dragEnd(event)" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="drop(event, ' + shot.id + ')">';
     h += '<div class="drag-hint">⋮⋮ 拖拽排序</div>';
     h += '<div class="shot-image" id="shot-image-' + shot.id + '">' + imgH + '</div>';
     h += '<div class="shot-body">';
-    h += '<span class="shot-number">镜头 ' + shot.shotOrder + '</span><span class="shot-duration">' + shot.durationSeconds + 's</span><span class="badge badge-' + esc(shot.imageStatus) + '">' + esc(shot.imageStatus) + '</span>' + qualityBadgeHtml(shot.qualityScore, shot.id);
+    h += '<span class="shot-number">镜头 ' + shot.shotOrder + '</span><span class="shot-duration">' + shot.durationSeconds + 's</span><span class="badge badge-' + esc(shot.imageStatus) + '">' + esc(shot.imageStatus) + '</span>' + (candidateFlags[shot.id] ? '<span class="badge" style="background:#8a6d1a;color:#ffd75e" title="存在未选用候选，主资产为暂取最高分">待择优</span>' : '') + qualityBadgeHtml(shot.qualityScore, shot.id);
 
     if (editingShotId === shot.id) {
         h += '<div class="edit-form">';
         h += '<label>画面描述</label><textarea id="edit-scene-' + shot.id + '">' + esc(shot.sceneDescription) + '</textarea>';
         h += '<label>旁白</label><textarea id="edit-narr-' + shot.id + '">' + esc(shot.narration) + '</textarea>';
+        h += '<label>对白（角色台词，TTS 用角色声线）</label><textarea id="edit-dialogue-' + shot.id + '">' + esc(shot.dialogue) + '</textarea>';
+        h += '<label>对白角色</label><select id="edit-dialogue-char-' + shot.id + '"><option value="">无（旁白声线）</option>' + currentCharacters.map(c => '<option value="' + c.id + '"' + (String(c.id) === String(shot.dialogueCharacterId) ? ' selected' : '') + '>' + esc(c.name) + (c.voice ? '（' + esc(c.voice) + '）' : '') + '</option>').join('') + '</select>';
         h += '<label>图像提示词（英文）</label><textarea id="edit-prompt-' + shot.id + '" style="min-height:70px">' + esc(shot.imagePrompt) + '</textarea>';
         h += '<label>镜头运动</label><input id="edit-camera-' + shot.id + '" value="' + esc(shot.cameraMovement) + '">';
+        h += '<label>景别</label><select id="edit-size-' + shot.id + '"><option value="CLOSE"' + (shot.shotSize === 'CLOSE' ? ' selected' : '') + '>特写</option><option value="MEDIUM"' + (!shot.shotSize || shot.shotSize === 'MEDIUM' ? ' selected' : '') + '>中景</option><option value="LONG"' + (shot.shotSize === 'LONG' ? ' selected' : '') + '>远景</option></select>';
+        h += '<label>出场角色</label><div style="display:flex;gap:6px;flex-wrap:wrap">' + (currentCharacters.length ? currentCharacters.map(c => '<label style="font-size:12px;color:#ccc"><input type="checkbox" class="edit-char-' + shot.id + '" value="' + c.id + '"' + ((shot.characterIds || []).includes(c.id) ? ' checked' : '') + '> ' + esc(c.name) + '</label>').join('') : '<span style="color:#888;font-size:12px">暂无角色卡</span>') + '</div>';
         h += '<label>时长（秒）</label><input type="number" min="1" max="30" id="edit-dur-' + shot.id + '" value="' + (shot.durationSeconds || 5) + '">';
         h += '<div class="form-actions"><button class="btn btn-sm" onclick="saveShotEdit(' + shot.id + ')">保存</button><button class="btn btn-sm btn-ghost" onclick="toggleShotEdit(null)">取消</button></div>';
         h += '</div>';
     } else {
         h += '<div class="shot-scene">' + esc(shot.sceneDescription) + '</div>';
         h += '<div class="shot-narration">' + esc(shot.narration) + '</div>';
-        h += '<div class="shot-camera">镜头运动: ' + esc(shot.cameraMovement || '固定') + '</div>';
+        if (shot.dialogue) { const dc = currentCharacters.find(x => String(x.id) === String(shot.dialogueCharacterId)); h += '<div class="shot-narration" style="font-style:normal;color:#aac">对白' + (dc ? '（' + esc(dc.name) + '）' : '') + ': ' + esc(shot.dialogue) + '</div>'; }
+        h += '<div class="shot-camera">镜头运动: ' + esc(shot.cameraMovement || '固定') + ' | 景别: ' + esc(shot.shotSize || 'MEDIUM') + ((shot.characterIds || []).length ? ' | 角色: ' + (shot.characterIds || []).map(id => { const c = currentCharacters.find(x => x.id === id); return c ? esc(c.name) : id; }).join(', ') : '') + '</div>';
         h += '<div class="shot-prompt"><strong>Image Prompt: </strong>' + esc(shot.imagePrompt) + '</div>';
         h += '<div class="shot-actions">';
         h += '<button class="btn btn-sm btn-ghost" onclick="toggleShotEdit(' + shot.id + ')">编辑</button>';
         h += '<button class="btn btn-sm btn-orange" onclick="enhanceShotPrompt(' + shot.id + ')" ' + (batchGenerating ? 'disabled' : '') + '>优化提示词</button>';
         h += '<button class="btn btn-sm" onclick="generateShotImage(' + shot.id + ')" ' + (batchGenerating ? 'disabled' : '') + '>' + (hasImg ? '重新生成' : '生成图片') + '</button>';
+        h += '<button class="btn btn-sm btn-orange" onclick="generateShotVideo(' + shot.id + ')" ' + (batchGenerating || !hasImg ? 'disabled' : '') + ' title="图生视频（需已生成图片；video.generator=none 时不可用）">' + (hasVideo ? '重生成视频' : '生成视频') + '</button>';
+        h += '<button class="btn btn-sm btn-ghost" onclick="generateCandidates(' + shot.id + ',\'IMAGE\')" ' + (batchGenerating ? 'disabled' : '') + ' title="抽卡多候选图像，评分排序后人工择优">抽卡图</button>';
+        h += '<button class="btn btn-sm btn-ghost" onclick="generateCandidates(' + shot.id + ',\'VIDEO\')" ' + (batchGenerating || !hasImg || activeVideoGeneratorType() === 'none' ? 'disabled' : '') + ' title="抽卡多候选视频（需已生成图片且视频生成器非 none）">抽卡视频</button>';
+        h += '<button class="btn btn-sm btn-ghost" onclick="openInpaintDialog(' + shot.id + ')" ' + (!hasImg ? 'disabled' : '') + ' title="框选局部重绘（需 wan27），产物入候选">重绘</button>';
+        h += '<button class="btn btn-sm btn-ghost" onclick="openCandidateModal(' + shot.id + ')">候选</button>';
         h += '<button class="btn btn-sm btn-red" onclick="deleteShot(' + shot.id + ')">删除</button>';
         h += '</div>';
     }
@@ -545,8 +853,12 @@ async function saveShotEdit(shotId) {
     const body = {
         sceneDescription: document.getElementById('edit-scene-' + shotId).value,
         narration: document.getElementById('edit-narr-' + shotId).value,
+        dialogue: document.getElementById('edit-dialogue-' + shotId).value,
+        dialogueCharacterId: parseInt(document.getElementById('edit-dialogue-char-' + shotId).value) || null,
         imagePrompt: document.getElementById('edit-prompt-' + shotId).value,
         cameraMovement: document.getElementById('edit-camera-' + shotId).value,
+        shotSize: document.getElementById('edit-size-' + shotId).value,
+        characterIds: Array.from(document.querySelectorAll('.edit-char-' + shotId + ':checked')).map(el => parseInt(el.value)),
         durationSeconds: parseInt(document.getElementById('edit-dur-' + shotId).value) || 5
     };
     const data = await put('/api/video/scripts/' + currentScript.id + '/shots/' + shotId, body);
@@ -853,7 +1165,7 @@ async function exportVideo(preview) {
     const batchBtn = document.getElementById('batchExportBtn');
     const bgmId = document.getElementById('bgmSelect') ? document.getElementById('bgmSelect').value : currentBgmId;
 
-    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle, subtitleLanguage: currentSubtitleLang, withLogo: currentWithLogo };
+    const body = { scriptId: currentScript.id, aspectRatio: currentAspect, bgmId: bgmId || null, subtitle: currentSubtitle, subtitleLanguage: currentSubtitleLang, withLogo: currentWithLogo, upscale: currentUpscale, interpolate: currentInterpolate, sfx: currentSfx };
     if (!preview) body.resolution = currentResolution;
 
     // 模块 I：选了平台预设时走平台导出（比例/分辨率由后端映射，同时校验推荐时长）
@@ -910,6 +1222,8 @@ function renderVideoResult(video, exportInfo) {
     tags.push(video.totalDuration + 's');
     if (video.hasNarration) tags.push('含旁白配音');
     if (video.hasBgm && exportInfo) tags.push('BGM: ' + esc(exportInfo.bgmName || ''));
+    if (video.hasSfx) tags.push('含环境音效');
+    if (video.hasEnhance) tags.push('超分/补帧增强');
     if (video.hasSubtitle) tags.push('含烧录字幕');
     if (video.hasLogo) tags.push('含Logo');
     if (exportInfo && exportInfo.platform) tags.push('平台: ' + esc(exportInfo.platform.displayName));
@@ -1227,6 +1541,50 @@ function stopAgentPipeline() {
 document.getElementById('ideaInput').addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generateScript();
 });
+
+// ==================== 视频转绘（Phase 4 切片 5） ====================
+let restyleTimer = null;
+
+async function submitRestyle() {
+    const fileInput = document.getElementById('restyleFile');
+    if (!fileInput.files || !fileInput.files.length) { toast('请先选择视频文件（mp4/mov，2-10 秒）', 'error'); return; }
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    fd.append('style', document.getElementById('restyleStyle').value);
+    const btn = document.getElementById('restyleSubmitBtn');
+    btn.disabled = true;
+    const data = await api('/api/video/restyle', { method: 'POST', body: fd });
+    btn.disabled = false;
+    if (!data.success) { toast(data.message || '转绘提交失败', 'error'); return; }
+    toast('转绘任务已提交，轮询进度中…', 'success');
+    fileInput.value = '';
+    await loadRestyleTasks();
+}
+
+async function loadRestyleTasks() {
+    const data = await api('/api/video/restyle');
+    const area = document.getElementById('restyleList');
+    if (!area) return;
+    if (!data.success) { area.innerHTML = '<div class="status error">' + esc(data.message || '加载失败') + '</div>'; return; }
+    const tasks = data.data || [];
+    let h = '';
+    tasks.forEach(function(t) {
+        h += '<div class="export-item" style="display:block;margin-bottom:8px">';
+        h += '<span class="badge badge-' + esc(t.status) + '">' + esc(t.status) + '</span> ';
+        h += '<span style="font-size:12px;color:#888">#' + t.id + ' · ' + esc(t.stylePrompt || '') + '</span>';
+        if (t.status === 'SUCCEEDED' && t.resultUrl) {
+            h += '<video src="' + esc(t.resultUrl) + '" controls style="width:100%;max-height:240px;margin-top:6px;border-radius:8px"></video>';
+            h += '<div><a class="download-link" href="' + esc(t.resultUrl) + '" download>下载转绘结果</a></div>';
+        }
+        if (t.status === 'FAILED') h += '<div class="failed-text" style="font-size:12px;margin-top:4px">' + esc(t.error || '未知错误') + '</div>';
+        h += '</div>';
+    });
+    area.innerHTML = h || '<div style="font-size:12px;color:#888">暂无转绘任务</div>';
+    // 仅当存在未终态任务时轮询，终态清除（idiom 同编排轮询）
+    const running = tasks.some(function(t) { return t.status === 'RUNNING' || t.status === 'PENDING'; });
+    if (running && !restyleTimer) restyleTimer = setInterval(loadRestyleTasks, 3000);
+    if (!running && restyleTimer) { clearInterval(restyleTimer); restyleTimer = null; }
+}
 </script>
 </body>
 </html>

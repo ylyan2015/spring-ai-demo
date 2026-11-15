@@ -1,6 +1,7 @@
 package com.github.ylyan2015.springaidemo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.ylyan2015.springaidemo.entity.StoryCharacter;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.entity.User;
@@ -8,10 +9,12 @@ import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryShotRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
 import com.github.ylyan2015.springaidemo.video.ImageGenerationProgress;
+import com.github.ylyan2015.springaidemo.video.ShotPromptAssembler;
 import com.github.ylyan2015.springaidemo.video.VisualStyle;
 import com.github.ylyan2015.springaidemo.video.generator.GeneratedImage;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGeneratorFactory;
+import com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityScore;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityService;
 import org.slf4j.Logger;
@@ -51,6 +54,8 @@ public class ImageGenerationService {
     private final StoryShotRepository shotRepository;
     private final UserRepository userRepository;
     private final ImageQualityService qualityService;
+    private final ShotPromptAssembler promptAssembler;
+    private final ReferenceImageResolver referenceResolver;
 
     /** 复用 Spring 自动配置的 ObjectMapper（已注册 JavaTimeModule，可正确序列化 LocalDateTime） */
     private final ObjectMapper objectMapper;
@@ -86,13 +91,17 @@ public class ImageGenerationService {
                                   StoryShotRepository shotRepository,
                                   UserRepository userRepository,
                                   ObjectMapper objectMapper,
-                                  ImageQualityService qualityService) {
+                                  ImageQualityService qualityService,
+                                  ShotPromptAssembler promptAssembler,
+                                  ReferenceImageResolver referenceResolver) {
         this.generatorFactory = generatorFactory;
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.userRepository = userRepository;
         this.objectMapper = objectMapper;
         this.qualityService = qualityService;
+        this.promptAssembler = promptAssembler;
+        this.referenceResolver = referenceResolver;
     }
 
     /**
@@ -128,9 +137,11 @@ public class ImageGenerationService {
         StoryShot shot = shotRepository.findByIdAndScriptId(shotId, scriptId)
                 .orElseThrow(() -> new RuntimeException("镜头不存在: " + shotId));
 
-        VisualStyle visualStyle = VisualStyle.fromName(style);
-        String prompt = composePrompt(shot, visualStyle);
+        VisualStyle visualStyle = VisualStyle.fromName(style != null ? style : script.getStyle());
+        List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
+        String prompt = composePrompt(shot, visualStyle, characters);
         String negativePrompt = visualStyle.getNegativePrompt();
+        List<String> refs = referenceResolver.resolve(characters);
 
         log.info("Generating image for shot {} of script {}: style='{}'",
                 shotId, scriptId, visualStyle.getDisplayName());
@@ -139,13 +150,15 @@ public class ImageGenerationService {
         shotRepository.save(shot);
 
         try {
-            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt);
+            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt, refs);
             GeneratedImage image = result.image();
 
             shot.setImageUrl(image.getImageUrl());
             shot.setImageFileId(image.getFileId());
             shot.setImageStatus("READY");
             shot.setQualityScore(result.score() != null ? result.score().getOverallScore() : null);
+            // 新图替换旧图：旧视频/尾帧同步失效（切片 2 审查 M3）
+            shot.invalidateVideo();
             StoryShot saved = shotRepository.save(shot);
 
             script.setUpdatedAt(LocalDateTime.now());
@@ -324,8 +337,10 @@ public class ImageGenerationService {
         progressCallback.accept(shotStart);
 
         try {
-            String prompt = composePrompt(shot, visualStyle);
-            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt());
+            List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
+            String prompt = composePrompt(shot, visualStyle, characters);
+            List<String> refs = referenceResolver.resolve(characters);
+            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt(), refs);
             GeneratedImage image = result.image();
 
             // 批次已超时取消：丢弃迟到结果，不覆盖 FAILED、不计数（release 复审 m-2）
@@ -338,6 +353,8 @@ public class ImageGenerationService {
             shot.setImageFileId(image.getFileId());
             shot.setImageStatus("READY");
             shot.setQualityScore(result.score() != null ? result.score().getOverallScore() : null);
+            // 新图替换旧图：旧视频/尾帧同步失效（切片 2 审查 M3）
+            shot.invalidateVideo();
             shotRepository.save(shot);
 
             ImageGenerationProgress done = new ImageGenerationProgress();
@@ -415,8 +432,8 @@ public class ImageGenerationService {
      * 重试时将评分反馈并入负面提示词；始终保留得分最高的一张。
      * 评估异常不阻塞生成，保留当前图片。
      */
-    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt) {
-        GeneratedImage current = generateWithRetry(prompt, negativePrompt);
+    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt, List<String> refs) {
+        GeneratedImage current = generateWithRetry(prompt, negativePrompt, refs);
         if (!qualityService.isEnabled()) {
             return new QualityGenResult(current, null);
         }
@@ -452,7 +469,7 @@ public class ImageGenerationService {
                 negative = (negative == null || negative.isBlank()) ? feedback : negative + ", " + feedback;
             }
             try {
-                current = generateWithRetry(prompt, negative);
+                current = generateWithRetry(prompt, negative, refs);
             } catch (Exception e) {
                 log.warn("Quality retry generation failed, keeping best image: {}", e.getMessage());
                 break;
@@ -465,13 +482,17 @@ public class ImageGenerationService {
      * 带重试的图片生成
      * 单张失败时自动重试 retryAttempts 次，重试间隔 retryDelayMs
      */
-    private GeneratedImage generateWithRetry(String prompt, String negativePrompt) {
+    private GeneratedImage generateWithRetry(String prompt, String negativePrompt, List<String> refs) {
         ImageGenerator generator = generatorFactory.getActiveGenerator();
         int maxAttempts = retryAttempts + 1;
         Exception lastError = null;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
+                if (refs != null && !refs.isEmpty() && generator.supportsReferences()) {
+                    return generator.generateWithReferences(prompt, negativePrompt,
+                            parseWidth(defaultSize), parseHeight(defaultSize), refs);
+                }
                 return generator.generate(prompt, negativePrompt,
                         parseWidth(defaultSize), parseHeight(defaultSize));
             } catch (Exception e) {
@@ -493,17 +514,10 @@ public class ImageGenerationService {
     }
 
     /**
-     * 组合最终提示词：风格前缀 + 镜头提示词（或场景描述）
+     * 组合最终提示词：统一委托 ShotPromptAssembler（风格前缀+角色特征表+镜头+景别/运镜）
      */
-    private String composePrompt(StoryShot shot, VisualStyle visualStyle) {
-        String base = shot.getImagePrompt();
-        if (base == null || base.isBlank()) {
-            base = shot.getSceneDescription();
-        }
-        if (base == null || base.isBlank()) {
-            throw new RuntimeException("镜头 " + shot.getShotOrder() + " 没有可用的提示词或场景描述");
-        }
-        return visualStyle.getPromptPrefix() + ", " + base;
+    private String composePrompt(StoryShot shot, VisualStyle visualStyle, List<StoryCharacter> characters) {
+        return promptAssembler.assemble(shot, visualStyle, characters);
     }
 
     /**

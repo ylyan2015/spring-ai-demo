@@ -1019,3 +1019,53 @@ cat .env  # 确认 API Key 非占位符
 ## 作者
 
 ylyan2015
+
+
+## Phase 4 切片 1：角色卡与图像一致性（2026-11-15）
+
+- 角色卡：脚本生成时 LLM 先人设后分镜，自动产出角色卡（名字/英文特征表/性格/声线）；/api/video/characters 支持 CRUD、定妆参考图上传（multipart）、GET /voices 声线列表。
+- 脚本级画风锁：PUT /api/video/scripts/{id}/style；镜头增景别（CLOSE/MEDIUM/LONG）与出场角色关联。
+- 一致性出图：新 wan27 图像生成器（DashScope wan2.7-image，≤9 参考图，URL/base64），image.generator=wan27 切换；参考图回退链：公网 URL→presigned→local base64→纯文本+特征表降级。
+- 配置：image.wan27.model（默认 wan2.7-image）、image.wan27.timeout-seconds（120），复用 DASHSCOPE_API_KEY（空 Key 不可用，干净启动安全）。
+- Agent：编剧专家增 generateCharacters 工具（7 工具）。
+- 冒烟：mvn test -Dtest=Wan27RealSmokeTest -Dwan27=true（默认跳过）。
+
+
+## Phase 4 切片 2：真图生视频与首尾帧连续性（2026-11-15）
+
+- 真 i2v：新 DashScope wan2.7-i2v 视频生成器（异步提交+轮询、首/尾帧 media、产物转存 mp4），video.generator=dashscope-wan 切换；默认 none 保持静图运镜合成（存量导出逐帧不变）。
+- 连续性模式：脚本级 NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME（PUT /api/video/scripts/{id}/continuity）；PREV_LAST_FRAME 以上一镜尾帧链接下一镜首帧顺序生成；GENERATED_LAST_FRAME 用 wan27 按下一镜提示词延伸尾帧（末镜不生成）。
+- 合成升级：真片段+静图混合合成；真片段用 ffprobe 实测时长、无 zoompan；xfade 总时长=Σ时长−(n−1)×0.8；i2v READY 回写 durationSeconds 并抽取尾帧转存。
+- 配置：video.generator（none/dashscope-wan）、video.workers（默认 2）、video.retry-attempts（默认 1）、video.wan.model/base-url/resolution/timeout-seconds/poll-interval-ms；复用 DASHSCOPE_API_KEY（空 Key 不可用）。
+- 首帧 URL 回退：公网 URL 直用→非 local 存储 presigned→local 存储返回 400 并指引切换 oss/minio。
+- Agent：美术专家增 generateShotVideo 工具（8 工具）。
+- 冒烟：mvn test -Dtest=WanI2vRealSmokeTest -Di2v=true（默认跳过）。
+
+
+## Phase 4 切片 3：抽卡多候选与局部重绘（2026-11-15）
+
+- 抽卡候选：每镜图 N=3/视频 N=2 顺序生成（video.candidates.image-count/video-count 可配，成本敏感可降 1），质量评分排序，暂取最高分回写主资产（前端标“待择优”），人工选用为最终决策；一键编排不抽卡（N=1）。
+- 局部重绘：wan2.7-image 框选编辑（bbox_list 绝对像素，相对坐标 0-1 自动换算），重绘产物入候选不直接覆盖主图；不支持 edit 的生成器/坐标越界返回 400。
+- 端点：/api/video/candidates（列表/抽卡生成/选用）、/api/video/images/inpaint；前端候选对比模态 + 重绘框选弹层。
+- Agent：美术专家增 inpaintImage 工具（9 工具），重绘可推荐/执行，选择仍由用户完成。
+- 冒烟：mvn test -Dtest=Wan27CandidateSmokeTest -Dwan27=true（默认跳过）。
+
+
+## Phase 4 切片 4：多角色配音与后期增强（2026-11-15）
+
+- 对白/旁白分离：镜头增对白字段与对白角色关联（脚本生成 LLM 自动产出，前端可编辑）；TTS 按行合成：对白用角色卡声线、旁白沿用 zh-CN-YunxiNeural，镜内拼接、镜间静音对齐；无对白时行为与存量逐字一致。
+- 字幕含对白：字幕文本=对白+旁白（对白在前），中/英/双语与 SRT 导出同步生效。
+- 音效分层混音：预置 4 条免版权音效（wind/rain/footsteps/heartbeat，tools/generate-preset-sfx.ps1 lavfi 合成，启动扫描 data/sfx 自动注册）；LLM 单次批量推荐每镜音效分类，失败/未配置关键词回退；混音分层人声 100%/BGM 15%/SFX 30%（amix normalize=0 防人声减半），adelay 按镜头起始定位。
+- 超分/补帧导出增强：Real-ESRGAN 2× 超分 + RIFE 补帧（帧数翻倍，输出帧率同步翻倍 30→60fps 保时长；抽帧→超分→补帧→重编码保音轨）；工具未配置静默跳过、执行失败 warn 跳过不阻断导出；仅高清导出生效，预览/平台/Agent 导出零变化。
+- 导出新参数：POST /api/video/export/hd 增可选 upscale/interpolate/sfx（缺省全 false）；前端 action-bar 增超分/补帧/音效三勾选，镜头编辑增对白与对白角色。
+- 配置：video.sfx.enabled（默认 false）、sfx.library-path（./data/sfx）、video.realesrgan-path/model（默认 realesrgan-x4plus-anime）、video.rife-path/model（空=跳过）；增强工具下载见 Real-ESRGAN/RIFE ncnn-vulkan release，CPU 耗时较长，Docker 镜像不预装。
+
+
+## Phase 4 切片 5：视频转绘新输出模式（2026-11-15）
+
+- 视频转绘：实拍视频上传（mp4/mov、2-10 秒、≤100MB）→ wan2.7-videoedit 风格转绘（日系动漫/美漫/水彩预设）→ 独立输出模式；一致性由实拍天然锁定，不触碰主 pipeline。
+- 独立任务：RestyleTask 实体（VideoExport.script_id NOT NULL 存量约束不可放宽，转绘无脚本归属）；异步提交+轮询+产物转存，SecurityContext 传播 idiom 同编排；失败仅任务 FAILED 不影响其他功能。
+- 端点：POST /api/video/restyle（multipart file+style）、GET /api/video/restyle/{id}、GET /api/video/restyle（我的任务）；前端转绘面板 3s 轮询（仅未终态时）+结果播放/下载。
+- 配置：video.restyle.model（默认 wan2.7-videoedit）/timeout-seconds（600）/poll-interval-ms（5000），复用 DASHSCOPE_API_KEY（空 Key 不可用）。
+- spike 验收（2026-11-15 实测）：动作/机位保持+画风动漫化达标；计费=输入+输出时长（720P 基线）；视频输入仅公网 URL/oss 临时 URL，不支持 base64→local 存储 FAILED 带 oss/minio 指引；Kling transform 为 2-OPT 备选（需 KLING_API_KEY，本期不实现）。
+- 冒烟：mvn test -Dtest=VideoRestyleRealSmokeTest -Drestyle=true（默认跳过；local 存储验证错误路径）。

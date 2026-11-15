@@ -1547,3 +1547,84 @@ A: 前端「批量三平台」按钮并行调用三次 `POST /api/video/export/p
 
 **Q: 如何开启图片质量自动评估？**
 A: 配置 `image.quality.enabled: true`（可复用 DASHSCOPE_API_KEY，默认走 qwen-vl-max 多模态端点）。生成后自动按清晰度/相关性/美学打分，低于阈值（默认 6.0）自动重试≤2 次并保留最高分；镜头卡片显示质量徽章。未配 API Key 时降级为分辨率规则评估；不想启用时保持默认 false 即可，生成流程完全不受影响。
+
+
+## Phase 4 切片 1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/video/characters?scriptId= | 角色卡列表 |
+| POST | /api/video/characters?scriptId= | 新建角色卡 {name,featureTable,personality,voice} |
+| PUT | /api/video/characters/{id}?scriptId= | 更新角色卡 |
+| DELETE | /api/video/characters/{id}?scriptId= | 删除角色卡 |
+| POST | /api/video/characters/{id}/reference-image?scriptId= | multipart 定妆参考图（image/*） |
+| GET | /api/video/characters/voices | 内置 zh 声线列表 |
+| PUT | /api/video/scripts/{id}/style | 脚本级画风锁 {style} |
+
+镜头 Map 增 characterIds（id 数组）、shotSize；脚本 Map 增 style、characters。
+
+## Phase 4 切片 2 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/video/videos/shot/{scriptId}/{shotId} | 单镜头 i2v 同步生成（返回镜头 Map；none 时 400） |
+| GET | /api/video/videos/script/{scriptId}/stream | 批量生成 SSE（VIDEO_BATCH_START/SHOT_VIDEO_COMPLETE/VIDEO_BATCH_COMPLETE/ERROR） |
+| GET | /api/video/videos/generators | 视频生成器列表（none/dashscope-wan） |
+| PUT | /api/video/videos/generator?type= | 切换视频生成器 |
+| PUT | /api/video/scripts/{id}/continuity | 连续性模式 {mode: NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME} |
+
+镜头 Map 增 videoUrl/videoFileId/videoStatus（NONE/GENERATING/READY/FAILED）/lastFrameUrl；脚本 Map 增 continuityMode。
+配置：video.generator（默认 none）、video.workers（2）、video.retry-attempts（1）、video.wan.model（wan2.7-i2v，可换 wan2.6-i2v 仅首帧）/resolution（720P）/timeout-seconds（600）/poll-interval-ms（5000）。
+FAQ：local 存储无法提供公网首帧 URL，i2v 返回 400 并指引切换 storage 为 oss/minio；成本基线 720P/4-5s/中低运动幅度，重试次数默认 1（按秒计费红线）。
+
+## Phase 4 切片 3 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/video/candidates?scriptId=&shotId= | 候选列表（含质量分/selected） |
+| POST | /api/video/candidates/generate | 抽卡 {scriptId,shotId,type:IMAGE\|VIDEO}，同步返回候选列表（耗时前端 loading） |
+| POST | /api/video/candidates/{id}/select?scriptId= | 人工择优选定，回写主资产（VIDEO 含 probe/末帧） |
+| POST | /api/video/images/inpaint | 框选重绘 {shotId,x,y,w,h,instruction}，坐标 0-1；产物入候选返回 |
+
+配置：video.candidates.image-count（默认 3）、video.candidates.video-count（默认 2）；一键编排不抽卡。
+FAQ：重绘需 image.generator=wan27（supportsEdit），否则 400；坐标越界（x+w>1 等）400；候选成本=N 倍生成，可降 1；主资产暂取最高分仅为 provisional，选用才是最终决策。
+
+## Phase 4 切片 4：多声线配音与后期增强
+
+无新增端点，存量接口扩展：
+
+|方法|路径|变更|
+|---|---|---|
+|POST|/api/video/export/hd|请求体增可选 upscale/interpolate/sfx（布尔，缺省全 false）；仅高清导出生效，预览/平台/批量导出不受影响|
+|PUT|/api/video/scripts/{id}/shots/{shotId}|请求体增 dialogue（对白文本）/dialogueCharacterId（对白角色，null=旁白声线）|
+|GET|/api/video/scripts/{id}|镜头 Map 增 dialogue/dialogueCharacterId；导出结果 video 增 hasSfx/hasEnhance|
+
+curl 示例（超分+音效导出）：
+
+```bash
+curl -X POST http://localhost:8080/api/video/export/hd \
+  -H "Content-Type: application/json" \
+  -d '{"scriptId":1,"resolution":"1080p","aspectRatio":"16:9","subtitle":true,"upscale":true,"sfx":true}'
+```
+
+配置：video.sfx.enabled（默认 false，总开关）、sfx.library-path（./data/sfx，预置生成 tools/generate-preset-sfx.ps1）、video.realesrgan-path（空=跳过超分）/realesrgan-model（默认 realesrgan-x4plus-anime）、video.rife-path（空=跳过补帧）/rife-model（模型目录）。
+FAQ：对白 TTS 声线=角色卡 voice（PUT /api/video/characters/{id} 可改），旁白固定 zh-CN-YunxiNeural；无对白时导出与存量逐字一致；音效推荐 LLM 失败自动关键词回退（雨/风/走/紧张）；增强工具未配置勾选也安全（静默跳过），执行失败仅 warn 不阻断导出；补帧依赖超分抽帧链，仅勾补帧未配超分会跳过；Real-ESRGAN/RIFE 下载见各自 ncnn-vulkan release，CPU 耗时较长（分钟级/镜），Docker 不预装。
+
+## Phase 4 切片 5 端点（视频转绘）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/video/restyle | multipart：file（mp4/mov，2-10s，≤100MB）+ style（可选，空=默认日系动漫）；同步返回任务 RUNNING |
+| GET | /api/video/restyle/{id} | 任务状态（归属校验）：status PENDING/RUNNING/SUCCEEDED/FAILED + resultUrl/error |
+| GET | /api/video/restyle | 我的转绘任务列表（createdAt 倒序） |
+
+curl 示例：
+
+```bash
+curl -X POST http://localhost:8080/api/video/restyle \
+  -F "file=@live.mp4" -F "style=日系动漫风格，赛璐璐着色，保持原有动作与机位"
+curl http://localhost:8080/api/video/restyle/1
+```
+
+配置：video.restyle.model（默认 wan2.7-videoedit）/timeout-seconds（600）/poll-interval-ms（5000）；复用 DASHSCOPE_API_KEY（空 Key 提交报错）。
+FAQ：转绘为独立输出模式（RestyleTask），不混入导出历史；耗时 1-5 分钟，计费=输入+输出时长（720P 基线）；视频输入仅公网 URL/oss 临时 URL（协议不支持 base64），local 存储任务 FAILED 带 oss/minio 切换指引；spike 实测动作/机位保持+动漫化达标；Kling transform 为 2-OPT 备选（需 KLING_API_KEY，本期未实现）；冒烟 -Drestyle=true 默认跳过。

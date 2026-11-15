@@ -18,6 +18,34 @@ public interface ImageGenerator {
     GeneratedImage generate(String prompt, String negativePrompt, int width, int height);
 
     /**
+     * Phase 4 切片 1：参考图模式（角色一致性）。
+     * 默认委托 generate 忽略 refs → 现有实现零改动向后兼容。
+     */
+    default GeneratedImage generateWithReferences(String prompt, String negativePrompt,
+                                                  int width, int height, java.util.List<String> referenceImageUrls) {
+        return generate(prompt, negativePrompt, width, height);
+    }
+
+    /** 是否支持参考图模式（默认 false） */
+    default boolean supportsReferences() {
+        return false;
+    }
+
+    /**
+     * Phase 4 切片 3：框选局部重绘。
+     * rect 为 0-1 相对坐标 [x,y,w,h]，imgW/imgH 为原图像素宽高（换算绝对像素 bbox）。
+     * 默认不支持；不支持的生成器调用抛 UnsupportedOperationException。
+     */
+    default GeneratedImage editWithMask(String instruction, String imageUrl, double[] rect, int imgW, int imgH) {
+        throw new UnsupportedOperationException("当前图像生成器不支持局部重绘: " + getType());
+    }
+
+    /** 是否支持框选局部重绘（默认 false） */
+    default boolean supportsEdit() {
+        return false;
+    }
+
+    /**
      * 生成器类型标识（如 dashscope / local）
      */
     String getType();

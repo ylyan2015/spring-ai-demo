@@ -846,3 +846,53 @@ This project is for learning and demonstration purposes only.
 ## Author
 
 ylyan2015
+
+
+## Phase 4 Slice 1: Character Cards & Image Consistency (2026-11-15)
+
+- Character cards auto-generated with storyboard (name / English feature table / personality / voice); /api/video/characters CRUD + reference-image upload + GET /voices.
+- Script-level style lock: PUT /api/video/scripts/{id}/style; shots gain shot size (CLOSE/MEDIUM/LONG) and character links.
+- New wan27 image generator (DashScope wan2.7-image, up to 9 reference images, URL/base64); switch via image.generator=wan27. Reference fallback chain: public URL -> presigned -> local base64 -> text+feature-table degradation.
+- Config: image.wan27.model (default wan2.7-image), image.wan27.timeout-seconds (120); reuses DASHSCOPE_API_KEY (empty key = unavailable, clean-start safe).
+- Agent: screenwriter gains generateCharacters tool (7 tools).
+- Smoke: mvn test -Dtest=Wan27RealSmokeTest -Dwan27=true (skipped by default).
+
+
+## Phase 4 Slice 2: Real Image-to-Video & Frame Continuity (2026-11-15)
+
+- Real i2v: new DashScope wan2.7-i2v video generator (async submit + polling, first/last frame media, mp4 re-storage); switch via video.generator=dashscope-wan. Default none keeps still-image motion compose (existing exports unchanged frame-by-frame).
+- Continuity modes: script-level NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME (PUT /api/video/scripts/{id}/continuity); PREV_LAST_FRAME chains previous shot's last frame as next first frame (sequential); GENERATED_LAST_FRAME extends a last frame via wan27 from the next shot's prompt (skipped for the final shot).
+- Compose upgrade: mixed real-clip + still-image composition; real clips use ffprobe-measured duration without zoompan; xfade total = sum(durations) - (n-1)*0.8; i2v READY writes back durationSeconds and extracts/re-stores the last frame.
+- Config: video.generator (none/dashscope-wan), video.workers (default 2), video.retry-attempts (default 1), video.wan.model/base-url/resolution/timeout-seconds/poll-interval-ms; reuses DASHSCOPE_API_KEY (empty key = unavailable).
+- First-frame URL fallback: public URL -> presigned for non-local storage -> local storage returns 400 with guidance to switch to oss/minio.
+- Agent: artist gains generateShotVideo tool (8 tools).
+- Smoke: mvn test -Dtest=WanI2vRealSmokeTest -Di2v=true (skipped by default).
+
+
+## Phase 4 Slice 3: Multi-Candidate Draws & Inpainting (2026-11-15)
+
+- Candidate draws: per shot image N=3 / video N=2 generated sequentially (video.candidates.image-count/video-count configurable; lower to 1 for cost), quality-score ranked, best score provisionally written back as main asset (UI flags "pending selection"); human select is the final decision. One-click orchestration never draws (N=1).
+- Inpainting: wan2.7-image bbox editing (bbox_list absolute pixels; relative 0-1 coords auto-converted); inpaint results become candidates, never overwrite the main image. Unsupported generator / out-of-bounds rect returns 400.
+- Endpoints: /api/video/candidates (list / generate / select), /api/video/images/inpaint; frontend candidate comparison modal + inpaint rect dialog.
+- Agent: artist gains inpaintImage tool (9 tools); it may recommend/execute inpainting, selection stays with the user.
+- Smoke: mvn test -Dtest=Wan27CandidateSmokeTest -Dwan27=true (skipped by default).
+
+
+## Phase 4 Slice 4: Multi-Voice Dubbing & Post Enhancement (2026-11-15)
+
+- Dialogue/narration split: shots gain a dialogue field linked to a speaking character (auto-produced by the script LLM, editable in UI); TTS synthesizes per line: dialogue uses the character card voice, narration keeps zh-CN-YunxiNeural; lines concat within a shot, silence-padded concat across shots. Without dialogue, behavior is byte-identical to before.
+- Subtitles include dialogue: cue text = dialogue + narration (dialogue first), effective for zh/en/bilingual burn-in and SRT export.
+- Layered SFX mix: 4 built-in royalty-free tracks (wind/rain/footsteps/heartbeat, synthesized via tools/generate-preset-sfx.ps1 lavfi, auto-registered by scanning data/sfx at startup); one batched LLM call recommends a category per shot with keyword fallback on failure/unconfigured; mix layers voice 100% / BGM 15% / SFX 30% (amix normalize=0 prevents voice halving), adelay positions each track at its shot start.
+- Upscale/interpolate export enhancement: Real-ESRGAN 2x upscale + RIFE interpolation (frame count doubles, output frame rate doubles too 30->60fps to keep duration; extract frames -> upscale -> interpolate -> re-encode keeping audio); unconfigured tools skip silently, failures warn and skip without blocking export; HD export only — preview/platform/Agent exports unchanged.
+- New export params: POST /api/video/export/hd accepts optional upscale/interpolate/sfx (all default false); frontend action bar gains three checkboxes, shot editor gains dialogue + speaking character.
+- Config: video.sfx.enabled (default false), sfx.library-path (./data/sfx), video.realesrgan-path/model (default realesrgan-x4plus-anime), video.rife-path/model (empty = skip); download the enhancers from Real-ESRGAN/RIFE ncnn-vulkan releases; CPU runs are slow, Docker image does not bundle them.
+
+
+## Phase 4 Slice 5: Video Restyle Output Mode (2026-11-15)
+
+- Video restyle: upload live-action footage (mp4/mov, 2-10s, <=100MB) -> wan2.7-videoedit style transfer (anime / American comic / watercolor presets) -> independent output mode; consistency is locked by the real footage, main pipeline untouched.
+- Independent tasks: RestyleTask entity (VideoExport.script_id NOT NULL legacy constraint cannot be relaxed; restyle has no script ownership); async submit + polling + result re-storage, SecurityContext propagation idiom same as orchestration; failures only mark the task FAILED.
+- Endpoints: POST /api/video/restyle (multipart file+style), GET /api/video/restyle/{id}, GET /api/video/restyle (my tasks); frontend restyle panel polls every 3s (only while non-terminal) + result playback/download.
+- Config: video.restyle.model (default wan2.7-videoedit)/timeout-seconds (600)/poll-interval-ms (5000), reuses DASHSCOPE_API_KEY (empty key = unavailable).
+- Spike acceptance (2026-11-15 live test): motion/camera preserved + anime stylization passed; billing = input + output duration (720P baseline); video input accepts public URL / oss temp URL only, no base64 -> local storage FAILED with oss/minio guidance; Kling transform is a 2-OPT alternative (requires KLING_API_KEY, not implemented this phase).
+- Smoke: mvn test -Dtest=VideoRestyleRealSmokeTest -Drestyle=true (skipped by default; local storage verifies the error path).

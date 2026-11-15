@@ -37,6 +37,14 @@ public class StoryScript {
     @Column(name = "status", length = 20)
     private String status = "DRAFT";
 
+    /** Phase 4 切片 1：脚本级整体画风锁（VisualStyle 枚举名），null 沿用逐镜选择 */
+    @Column(name = "style", length = 50)
+    private String style;
+
+    /** Phase 4 切片 2：首尾帧连续性 NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME */
+    @Column(name = "continuity_mode", length = 20)
+    private String continuityMode = "NONE";
+
     /** 创建时间 */
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -74,6 +82,10 @@ public class StoryScript {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getStyle() { return style; }
+    public void setStyle(String style) { this.style = style; }
+    public String getContinuityMode() { return continuityMode; }
+    public void setContinuityMode(String continuityMode) { this.continuityMode = continuityMode; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -95,6 +95,10 @@ public class StoryShot {
     @Column(name = "dialogue_character_id")
     private Long dialogueCharacterId;
 
+    /** Phase 5 Track B：引用镜出处水印（非空=引用镜，受占比护栏与 drawtext 约束） */
+    @Column(name = "insert_attribution", length = 200)
+    private String insertAttribution;
+
     public StoryShot() {}
 
     // ==================== Getters and Setters ====================
@@ -166,4 +170,6 @@ public class StoryShot {
     public void setDialogue(String dialogue) { this.dialogue = dialogue; }
     public Long getDialogueCharacterId() { return dialogueCharacterId; }
     public void setDialogueCharacterId(Long dialogueCharacterId) { this.dialogueCharacterId = dialogueCharacterId; }
+    public String getInsertAttribution() { return insertAttribution; }
+    public void setInsertAttribution(String insertAttribution) { this.insertAttribution = insertAttribution; }
 }

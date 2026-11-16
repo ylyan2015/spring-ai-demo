@@ -132,6 +132,7 @@
     <div class="header">
         <h1>AI 短视频工作室</h1>
         <p>创意想法 → 分镜脚本 → 提示词优化 → 批量生成画面（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出</p>
+        <nav style="margin-top:6px"><a th:href="@{/commentary-studio}" style="color:#4a6cf7;font-size:13px">评论工作台 →</a></nav>
     </div>
     <div class="container">
         <!-- 脚本管理栏 -->
@@ -181,6 +182,8 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
                 <input id="charName" placeholder="角色名" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
                 <input id="charFeatures" placeholder="英文特征表（发型/瞳色/服装/体型）" style="flex:2;background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
+                <input id="charLora" placeholder="LoRA 文件名（如 saki_chan_lora.safetensors，可空）" style="flex:2;background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
+                <input id="charTrigger" placeholder="触发词（如 saki_chan，可空）" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px">
                 <select id="charVoiceSelect" style="background:#0f0f1a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#fff;font-size:13px"></select>
                 <button class="btn btn-sm" onclick="createCharacter()">保存角色</button>
             </div>
@@ -506,12 +509,14 @@ function startEditCharacter(id) {
     editingCharacterId = id;
     document.getElementById('charName').value = c.name || '';
     document.getElementById('charFeatures').value = c.featureTable || '';
+    document.getElementById('charLora').value = c.loraName || '';
+    document.getElementById('charTrigger').value = c.triggerWord || '';
     document.getElementById('charVoiceSelect').value = c.voice || 'zh-CN-XiaoxiaoNeural';
 }
 
 async function createCharacter() {
     if (!currentScript) return;
-    const body = { name: document.getElementById('charName').value, featureTable: document.getElementById('charFeatures').value, voice: document.getElementById('charVoiceSelect').value };
+    const body = { name: document.getElementById('charName').value, featureTable: document.getElementById('charFeatures').value, voice: document.getElementById('charVoiceSelect').value, loraName: document.getElementById('charLora').value, triggerWord: document.getElementById('charTrigger').value };
     const d = editingCharacterId
         ? await put('/api/video/characters/' + editingCharacterId + '?scriptId=' + currentScript.id, body)
         : await post('/api/video/characters?scriptId=' + currentScript.id, body);
@@ -519,6 +524,8 @@ async function createCharacter() {
     editingCharacterId = null;
     document.getElementById('charName').value = '';
     document.getElementById('charFeatures').value = '';
+    document.getElementById('charLora').value = '';
+    document.getElementById('charTrigger').value = '';
     toast('角色卡已保存', 'success');
     await loadCharacters(currentScript.id);
 }

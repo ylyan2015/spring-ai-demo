@@ -37,7 +37,7 @@ class StoryScriptServiceCharactersLinkTest {
         UserRepository userRepo = mock(UserRepository.class);
         VideoScriptService videoScriptService = mock(VideoScriptService.class);
         StoryCharacterRepository charRepo = mock(StoryCharacterRepository.class);
-        StoryScriptService service = new StoryScriptService(scriptRepo, shotRepo, userRepo, videoScriptService, charRepo);
+        StoryScriptService service = new StoryScriptService(scriptRepo, shotRepo, userRepo, videoScriptService, charRepo, null);
 
         User u = new User();
         u.setId(1L);
@@ -79,7 +79,7 @@ class StoryScriptServiceCharactersLinkTest {
         VideoScriptService videoScriptService = mock(VideoScriptService.class);
         StoryCharacterRepository charRepo = mock(StoryCharacterRepository.class);
         StoryScriptService service = new StoryScriptService(scriptRepo, mock(StoryShotRepository.class),
-                userRepo, videoScriptService, charRepo);
+                userRepo, videoScriptService, charRepo, null);
         User u = new User();
         u.setId(1L);
         u.setUsername("alice");

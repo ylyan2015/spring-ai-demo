@@ -1628,3 +1628,44 @@ curl http://localhost:8080/api/video/restyle/1
 
 配置：video.restyle.model（默认 wan2.7-videoedit）/timeout-seconds（600）/poll-interval-ms（5000）；复用 DASHSCOPE_API_KEY（空 Key 提交报错）。
 FAQ：转绘为独立输出模式（RestyleTask），不混入导出历史；耗时 1-5 分钟，计费=输入+输出时长（720P 基线）；视频输入仅公网 URL/oss 临时 URL（协议不支持 base64），local 存储任务 FAILED 带 oss/minio 切换指引；spike 实测动作/机位保持+动漫化达标；Kling transform 为 2-OPT 备选（需 KLING_API_KEY，本期未实现）；冒烟 -Drestyle=true 默认跳过。
+
+## Phase 5 切片 1：本地 ComfyUI i2v
+
+无新增端点，存量接口扩展：
+
+| 方法 | 路径 | 变更 |
+|---|---|---|
+| GET | /api/video/videos/generators | 列表增 comfyui（available 取决于 ComfyUI 启动+工作流配置） |
+| PUT | /api/video/videos/generator?type=comfyui | 切换本地 ComfyUI i2v |
+
+配置：video.comfyui.base-url（默认 http://127.0.0.1:8188）/workflow-path（默认 docs/comfyui/wan22_i2v_5b.template.json，环境变量 COMFYUI_WORKFLOW）/fps（24）/timeout-seconds（1800）/poll-interval-ms（3000）。
+FAQ：模板无关占位符替换，Phase 0 从 ComfyUI 导出校准后覆盖；local 存储首帧直通（同源取字节），无需 oss/minio；local×dashscope-wan 仍照旧指引 oss/minio；帧数 4n+1、720P→1280×704（实测）/480P→832×480；comfyui 路线 video.workers 建议 1；ComfyUI 未启动 available=false、默认 none 零变化；冒烟 -Dcomfyui=true 默认跳过。
+
+## Phase 5 切片 3：本地 ComfyUI SD1.5+LoRA 分镜
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/video/images/generators | 列表增 comfyui（available 取决于 ComfyUI 启动+模板存在） |
+| PUT | /api/video/images/generator?type=comfyui | 切换本地 SD1.5+LoRA 分镜 |
+| POST/PUT | /api/video/characters | body 增 loraName/triggerWord（null 不覆盖、空串清空）；GET 列表同增两键 |
+
+配置：image.comfyui.workflow-plain/lora/canny（env COMFYUI_IMG_*）/controlnet-enabled（默认 false）/timeout-seconds 120/poll-interval-ms 1000；base-url 复用 video.comfyui.base-url。
+FAQ：LoRA 路由仅当角色卡带 loraName 且生成器 supportsLora 生效，否则存量路径逐字不变；触发词仅非空注入（ShotPromptAssembler 唯一装配点）；ControlNet 参考图同源取字节（local 存储闭环）；720 高→704（实测）；SD1.5 裸 VAEDecode；冒烟 -Dtest=ComfyUiImageRealSmokeTest -Dcomfyui=true 默认跳过。
+
+## Phase 5 Track B：评论杂谈自动化（评论工作台 /commentary-studio）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/video/scripts?format=commentary | 仅列评论脚本（format 分离，存量 AI 短剧不混入） |
+| POST | /api/video/scripts/commentary/import | 导入评论 JSON（title/theme/shots[]；shots[].insert.attribution→insertAttribution） |
+| PUT | /api/video/scripts/{id}/format | 设置 format（白名单 null/commentary） |
+| POST | /api/video/assets | multipart 上传入库（file/name/tags/trimStart/trimEnd；视频 ffprobe 实测时长+可选裁剪） |
+| GET | /api/video/assets | 素材列表（当前用户） |
+| DELETE | /api/video/assets/{id} | 删除素材（归属校验） |
+| POST | /api/video/assets/scan | 文件夹批量扫描入库（仅读配置目录；约定 epNN_标签_名称.mp4/png） |
+| POST | /api/video/scripts/{id}/shots/{shotId}/asset | 镜头绑定素材（assetId/asVideo/durationOverride；kind 护栏+IMAGE 失效旧视频） |
+| POST | /api/video/export/hd/async | 异步高清导出（body 同 /export/hd；返 {jobId,status:RUNNING}） |
+| GET | /api/video/export/jobs/{id} | 异步导出任务状态（RUNNING/SUCCESS/FAILED + data/message；归属校验） |
+
+配置：video.commentary.max-insert-ratio（0.2，引用占比护栏）/attribution-font（空，出处水印中文字体）/import-dir（空，扫描目录）。
+FAQ：引用占比=Σ引用镜时长/Σ总时长，超限导出拒绝（无引用镜恒放行，存量 AI 短剧零影响）；合成 TTS 预探测抬升逐镜有效时长防旁白被截，短片段 -stream_loop -1 循环填充；出处水印 drawtext expansion=none 防 %{…} 注入，中文需配 fontfile；异步导出复用转绘 idiom（单线程池+SecurityContext 传播+futures 终态清理），同步 /export/hd 不变；冒烟 -Dtest=VideoComposeAutoFitTest -Dcommentary=true 默认跳过。

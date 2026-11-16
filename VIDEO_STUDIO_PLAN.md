@@ -1089,3 +1089,20 @@ src/test/java/.../                             # 单元测试：SubtitleServiceT
 - 浏览器实测通过：注册/登录（RSA+验证码）、脚本生成角色卡、角色声线编辑（林晚→Xiaoyi）、
   镜头对白+对白角色编辑与卡片展示、超分/补帧/SFX 三开关勾选导出（徽章：含旁白配音/含环境音效/含烧录字幕）、
   转绘面板上传→提交→轮询→FAILED 带 oss/minio 指引且终态停止轮询。
+
+## 六、Phase 5 双轨路线图（2026-11-16 起）
+
+唯一路线图入口：docs/local-generation-feasibility.md §7。两轨资源/文件零冲突可并行：
+- Track A AI 短剧集增强（/video-studio）：A1 排产加固✅（ComfyUI 输出节点解析+metadata 免解码核帧+干净复测基线 timeout1800/workers1）；A2 inpainting / A3 多画风 / A4 RIFE / A5 原创 LoRA / A6 V2V / A7 aliasing 为可选增强（无实施计划，按需另起切片）。
+- Track B 评论杂谈自动化（/commentary-studio，新页面入口，与 Track A 分开）：B0 发片工具✅（tools/auto-commentary-concat.js）→ B1 素材库+独立页+绑定✅ → B2 自动对齐+护栏✅ → B3 批量+异步导出✅。
+
+### Track B 实现落点（commentary-automation 计划 Task 1-6，2026-11-16）
+
+- Task 1 素材库：MediaAsset 实体/Repository/Service/Controller；上传（视频 ffprobe 实测时长+可选裁剪 fail-fast）/ingestPath/list/delete（归属校验）。
+- Task 2 评论独立页：StoryScript.format 分离（listScripts(format) 内存过滤）+ commentary-studio.html（th:inline="none"）+ JSON 导入（importCommentary）+ StoryShot.insertAttribution 列 + updateFormat 白名单。
+- Task 3 镜头素材绑定：bindAsset（kind 护栏：VIDEO→片段回写时长/IMAGE→主视觉失效旧视频）+ 素材库 UI（上传/列表/删除/选择绑定，asVideo 按 kind 自动判定）。
+- Task 4 合成自动对齐：VideoComposeService TTS 预探测 effectiveDurations=max(镜头时长,ceil(probe(音频)))；needsLoop 真片段 -stream_loop -1 + videoInputFilter trim 截断；xfade/audio concat/exactDuration 全用有效时长；probeDurationSecondsCeil。
+- Task 5 出处水印+护栏：ComposeOptions.attributions + attributionFilter（drawtext expansion=none 防注入、可配 fontfile 中文字形）；VideoExportService.insertRatio/checkInsertRatio（>max-insert-ratio 0.2 拒绝）；页面引用占比徽章。
+- Task 6 批量+异步导出：MediaAssetService.scanImportDir（仅读配置目录、epNN_标签_名称 约定解析）；VideoExportService.exportHdAsync/jobStatus/awaitAndGetForTest（单线程池+SecurityContext 传播+futures 终态清理，复用转绘 idiom）；POST /assets/scan、/export/hd/async、GET /export/jobs/{id}；页面扫描入库+后台导出轮询。
+- 配置：video.commentary.max-insert-ratio（0.2）/attribution-font（空）/import-dir（空）。
+- 验证：全量 392 绿（含 Task 1-6 新增）；gated 冒烟 -Dcommentary=true（VideoComposeAutoFitTest 真实 FFmpeg loop）；每 Task CodeReview 审查并修复（Task 5 Major drawtext expansion + Minor 反斜杠两层转义 + Nit 徽章边界）。

@@ -54,7 +54,8 @@ public class StoryCharacterService {
     }
 
     public Map<String, Object> create(Long scriptId, String name, String featureTable,
-                                      String personality, String voice) {
+                                      String personality, String voice,
+                                      String loraName, String triggerWord) {
         StoryScript script = requireScript(scriptId);
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("角色名不能为空");
@@ -65,13 +66,16 @@ public class StoryCharacterService {
         c.setFeatureTable(featureTable);
         c.setPersonality(personality);
         c.setVoice(voice == null || voice.isBlank() ? "zh-CN-XiaoxiaoNeural" : voice);
+        c.setLoraName(loraName);
+        c.setTriggerWord(triggerWord);
         StoryCharacter saved = characterRepository.save(c);
         log.info("Character created: id={}, name={}, script={}", saved.getId(), saved.getName(), scriptId);
         return characterToMap(saved);
     }
 
     public Map<String, Object> update(Long scriptId, Long characterId, String name, String featureTable,
-                                      String personality, String voice) {
+                                      String personality, String voice,
+                                      String loraName, String triggerWord) {
         StoryCharacter c = requireCharacter(scriptId, characterId);
         if (name != null && !name.isBlank()) {
             c.setName(name);
@@ -84,6 +88,12 @@ public class StoryCharacterService {
         }
         if (voice != null && !voice.isBlank()) {
             c.setVoice(voice);
+        }
+        if (loraName != null) {
+            c.setLoraName(loraName.isBlank() ? null : loraName);
+        }
+        if (triggerWord != null) {
+            c.setTriggerWord(triggerWord.isBlank() ? null : triggerWord);
         }
         return characterToMap(characterRepository.save(c));
     }
@@ -126,6 +136,8 @@ public class StoryCharacterService {
         map.put("referenceImageUrl", c.getReferenceImageUrl());
         map.put("referenceImageFileId", c.getReferenceImageFileId());
         map.put("voice", c.getVoice());
+        map.put("loraName", c.getLoraName());
+        map.put("triggerWord", c.getTriggerWord());
         return map;
     }
 

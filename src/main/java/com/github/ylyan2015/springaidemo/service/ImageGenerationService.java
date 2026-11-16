@@ -14,6 +14,8 @@ import com.github.ylyan2015.springaidemo.video.VisualStyle;
 import com.github.ylyan2015.springaidemo.video.generator.GeneratedImage;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGeneratorFactory;
+import com.github.ylyan2015.springaidemo.video.generator.LoraResolver;
+import com.github.ylyan2015.springaidemo.video.generator.LoraSpec;
 import com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityScore;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityService;
@@ -56,6 +58,7 @@ public class ImageGenerationService {
     private final ImageQualityService qualityService;
     private final ShotPromptAssembler promptAssembler;
     private final ReferenceImageResolver referenceResolver;
+    private final LoraResolver loraResolver;
 
     /** 复用 Spring 自动配置的 ObjectMapper（已注册 JavaTimeModule，可正确序列化 LocalDateTime） */
     private final ObjectMapper objectMapper;
@@ -93,7 +96,8 @@ public class ImageGenerationService {
                                   ObjectMapper objectMapper,
                                   ImageQualityService qualityService,
                                   ShotPromptAssembler promptAssembler,
-                                  ReferenceImageResolver referenceResolver) {
+                                  ReferenceImageResolver referenceResolver,
+                                  LoraResolver loraResolver) {
         this.generatorFactory = generatorFactory;
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
@@ -102,6 +106,7 @@ public class ImageGenerationService {
         this.qualityService = qualityService;
         this.promptAssembler = promptAssembler;
         this.referenceResolver = referenceResolver;
+        this.loraResolver = loraResolver;
     }
 
     /**
@@ -142,6 +147,7 @@ public class ImageGenerationService {
         String prompt = composePrompt(shot, visualStyle, characters);
         String negativePrompt = visualStyle.getNegativePrompt();
         List<String> refs = referenceResolver.resolve(characters);
+        LoraSpec lora = loraResolver.resolve(characters);
 
         log.info("Generating image for shot {} of script {}: style='{}'",
                 shotId, scriptId, visualStyle.getDisplayName());
@@ -150,7 +156,7 @@ public class ImageGenerationService {
         shotRepository.save(shot);
 
         try {
-            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt, refs);
+            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt, refs, lora);
             GeneratedImage image = result.image();
 
             shot.setImageUrl(image.getImageUrl());
@@ -340,7 +346,8 @@ public class ImageGenerationService {
             List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
             String prompt = composePrompt(shot, visualStyle, characters);
             List<String> refs = referenceResolver.resolve(characters);
-            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt(), refs);
+            LoraSpec lora = loraResolver.resolve(characters);
+            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt(), refs, lora);
             GeneratedImage image = result.image();
 
             // 批次已超时取消：丢弃迟到结果，不覆盖 FAILED、不计数（release 复审 m-2）
@@ -432,8 +439,8 @@ public class ImageGenerationService {
      * 重试时将评分反馈并入负面提示词；始终保留得分最高的一张。
      * 评估异常不阻塞生成，保留当前图片。
      */
-    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt, List<String> refs) {
-        GeneratedImage current = generateWithRetry(prompt, negativePrompt, refs);
+    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt, List<String> refs, LoraSpec lora) {
+        GeneratedImage current = generateWithRetry(prompt, negativePrompt, refs, lora);
         if (!qualityService.isEnabled()) {
             return new QualityGenResult(current, null);
         }
@@ -469,7 +476,7 @@ public class ImageGenerationService {
                 negative = (negative == null || negative.isBlank()) ? feedback : negative + ", " + feedback;
             }
             try {
-                current = generateWithRetry(prompt, negative, refs);
+                current = generateWithRetry(prompt, negative, refs, lora);
             } catch (Exception e) {
                 log.warn("Quality retry generation failed, keeping best image: {}", e.getMessage());
                 break;
@@ -482,13 +489,19 @@ public class ImageGenerationService {
      * 带重试的图片生成
      * 单张失败时自动重试 retryAttempts 次，重试间隔 retryDelayMs
      */
-    private GeneratedImage generateWithRetry(String prompt, String negativePrompt, List<String> refs) {
+    private GeneratedImage generateWithRetry(String prompt, String negativePrompt, List<String> refs, LoraSpec lora) {
         ImageGenerator generator = generatorFactory.getActiveGenerator();
         int maxAttempts = retryAttempts + 1;
         Exception lastError = null;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
+                // Phase 5 切片 3：LoRA 优先（角色带 LoRA 且生成器支持）；否则存量路径逐字不变
+                if (lora != null && generator.supportsLora()) {
+                    return generator.generateWithLora(prompt, negativePrompt,
+                            parseWidth(defaultSize), parseHeight(defaultSize),
+                            lora.loraName(), lora.controlNetRefUrl());
+                }
                 if (refs != null && !refs.isEmpty() && generator.supportsReferences()) {
                     return generator.generateWithReferences(prompt, negativePrompt,
                             parseWidth(defaultSize), parseHeight(defaultSize), refs);

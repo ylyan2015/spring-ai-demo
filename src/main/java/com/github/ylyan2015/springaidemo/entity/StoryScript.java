@@ -45,6 +45,10 @@ public class StoryScript {
     @Column(name = "continuity_mode", length = 20)
     private String continuityMode = "NONE";
 
+    /** Phase 5 Track B：脚本形态 null=导演工作台，commentary=评论工作台（列表分离） */
+    @Column(name = "format", length = 20)
+    private String format;
+
     /** 创建时间 */
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -86,6 +90,8 @@ public class StoryScript {
     public void setStyle(String style) { this.style = style; }
     public String getContinuityMode() { return continuityMode; }
     public void setContinuityMode(String continuityMode) { this.continuityMode = continuityMode; }
+    public String getFormat() { return format; }
+    public void setFormat(String format) { this.format = format; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -51,7 +51,7 @@ class CandidateGenerationServiceTest {
         when(resolver.resolve(any())).thenReturn(List.of());
         videoGenService = mock(VideoGenerationService.class);
         service = new CandidateGenerationService(factory, videoFactory, scriptRepo, shotRepo, userRepo,
-                candRepo, new ShotPromptAssembler(), resolver, quality, videoGenService);
+                candRepo, new ShotPromptAssembler(), resolver, quality, videoGenService, new LoraResolver(false));
         ReflectionTestUtils.setField(service, "imageCount", 3);
         ReflectionTestUtils.setField(service, "videoCount", 2);
         ReflectionTestUtils.setField(service, "resolution", "720P");

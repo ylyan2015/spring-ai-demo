@@ -2,6 +2,7 @@ package com.github.ylyan2015.springaidemo.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.ylyan2015.springaidemo.storage.StorageService;
+import com.github.ylyan2015.springaidemo.video.generator.ComfyUiVideoGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.DashScopeWanVideoGenerator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -29,5 +30,25 @@ public class VideoGeneratorConfig {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
         return new DashScopeWanVideoGenerator(storageService, new ObjectMapper(), http,
                 baseUrl, apiKey, model, resolution, timeoutSeconds, pollIntervalMs);
+    }
+
+    /**
+     * Phase 5 切片 1：本地 ComfyUI i2v（零成本路线）。
+     * 未启动 ComfyUI/工作流未配置时 isAvailable=false，不阻断干净启动；超时/轮询/fps 可配置。
+     */
+    @Bean
+    public ComfyUiVideoGenerator comfyUiVideoGenerator(
+            StorageService storageService,
+            @Value("${video.comfyui.base-url:http://127.0.0.1:8188}") String baseUrl,
+            @Value("${video.comfyui.workflow-path:docs/comfyui/wan22_i2v_5b.template.json}") String workflowPath,
+            @Value("${server.port:8080}") int serverPort,
+            @Value("${video.comfyui.fps:24}") int fps,
+            @Value("${video.comfyui.timeout-seconds:1800}") int timeoutSeconds,
+            @Value("${video.comfyui.poll-interval-ms:3000}") long pollIntervalMs) {
+        // 本机有系统代理（flclash）：localhost ComfyUI 调用强制 NO_PROXY，防代理劫持
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                .proxy(HttpClient.Builder.NO_PROXY).build();
+        return new ComfyUiVideoGenerator(storageService, new ObjectMapper(), http,
+                baseUrl, workflowPath, serverPort, fps, timeoutSeconds, pollIntervalMs);
     }
 }

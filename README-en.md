@@ -896,3 +896,35 @@ ylyan2015
 - Config: video.restyle.model (default wan2.7-videoedit)/timeout-seconds (600)/poll-interval-ms (5000), reuses DASHSCOPE_API_KEY (empty key = unavailable).
 - Spike acceptance (2026-11-15 live test): motion/camera preserved + anime stylization passed; billing = input + output duration (720P baseline); video input accepts public URL / oss temp URL only, no base64 -> local storage FAILED with oss/minio guidance; Kling transform is a 2-OPT alternative (requires KLING_API_KEY, not implemented this phase).
 - Smoke: mvn test -Dtest=VideoRestyleRealSmokeTest -Drestyle=true (skipped by default; local storage verifies the error path).
+
+
+## Phase 5 Slice 1: Local ComfyUI Image-to-Video (Zero-Cost Route) (2026-11-15)
+
+- Local i2v: new ComfyUiVideoGenerator (type=comfyui) drives a local ComfyUI (Wan2.2 TI2V-5B, Apache 2.0, commercial-use OK): zero API cost, no rate limits, assets never leave the machine; switch via video.generator=comfyui or the frontend dropdown (auto-listed by /generators).
+- Template-agnostic: workflow JSON placeholder substitution ({{FIRST_FRAME}}/{{PROMPT}}/{{FRAMES}}/{{WIDTH}}/{{HEIGHT}}/{{FPS}}/{{SEED}}); reference template docs/comfyui/wan22_i2v_5b.template.json; after Phase 0 setup, export a calibrated workflow from ComfyUI and override (video.comfyui.workflow-path / COMFYUI_WORKFLOW).
+- Local-storage closed loop: resolveMediaUrl gains a local×comfyui relative-path pass-through branch; the generator fetches first-frame bytes same-origin (127.0.0.1:server.port), bypassing the public-URL/oss-minio constraint; local×dashscope-wan behavior unchanged.
+- Protocol: /upload/image -> /prompt -> /history/{id} -> /view; frame count auto-aligned to 4n+1; resolution tiers 720P->1280x704 (machine-measured) / 480P->832x480; template locked to VAEDecodeTiled (plain VAEDecode hangs on this machine) + core CreateVideo/SaveVideo.
+- Config: video.comfyui.base-url (default http://127.0.0.1:8188)/workflow-path/fps (24)/timeout-seconds (1800)/poll-interval-ms (3000); isAvailable=false when ComfyUI is down or the workflow is unconfigured — clean startup unaffected, default none unchanged. workflow-path relative paths resolve against the startup CWD; set an absolute path (COMFYUI_WORKFLOW) for packaged deployments.
+- Smoke: mvn test -Dtest=ComfyUiRealSmokeTest -Dcomfyui=true (skipped by default; requires ComfyUI running with a calibrated workflow). Scheduling: video.workers=1 recommended for the comfyui route (single-GPU serial queue); measured 29f~155s/57f~382s/121f~722s — prefer 1.5-2.5s short cuts.
+
+## Phase 5 Slice 3: Local Image Side SD1.5+LoRA Storyboards (Fully Zero-Cloud) (2026-11-15)
+
+- Local storyboards: image-side ComfyUiImageGenerator (type=comfyui), anything-v5 + character LoRA for identity consistency (measured ~8s/image, 22 steps CFG7 euler/normal); image.generator=comfyui or runtime dropdown switch; characters without LoRA use the plain template, legacy sources unchanged verbatim.
+- Character cards: loraName/triggerWord fields end-to-end (entity/service/controller/frontend dialog input·refill·clear); trigger words injected via the single assembly point ShotPromptAssembler (only when non-empty).
+- LoRA routing: ImageGenerator gains supportsLora/generateWithLora capability flags; LoraResolver picks the first LoRA-bearing character; single dispatch point in generateWithRetry + candidate gacha path routed alike.
+- ControlNet camera lock (gated): image.comfyui.controlnet-enabled defaults false; when enabled the character reference image goes through canny (0.4/0.8, strength 0.8, +~10s/image); three templates docs/comfyui/sd15_storyboard / sd15_lora_storyboard / sd15_lora_canny.template.json.
+- Config: image.comfyui.workflow-plain/lora/canny (env COMFYUI_IMG_*)/timeout-seconds 120/poll-interval-ms 1000; base-url reuses video.comfyui.base-url; 720 height→704 (measured); SD1.5 uses plain VAEDecode (tiled mandatory for Wan only).
+- Smoke: mvn test -Dtest=ComfyUiImageRealSmokeTest -Dcomfyui=true (skipped by default; measured 2/2 green, output 1280x704). Full suite 346 green.
+
+## Phase 5 Track B: Commentary Automation (Commentary Studio) (2026-11-16)
+
+For anime/film commentary & review creation (distinct from the /video-studio AI short-drama auto mode): stitch asset images/video clips + subtitles + narration, with a separate page entry; the two tracks are kept apart.
+
+- Commentary Studio: /commentary-studio (login required); script list separated by format=commentary (legacy AI drama scripts not mixed in); paste/file import of commentary JSON (shots[].insert.attribution -> source attribution).
+- Asset library: upload (video optional trim trimStart/trimEnd, ffprobe-measured duration)/list/delete; folder batch scan ingest (reads only the configured dir video.commentary.import-dir; filename convention epNN_label_name.mp4/png -> tags="epNN,label", invalid names skipped).
+- Shot asset binding: video asset -> bound as clip (writes back measured duration); image asset -> bound as key visual (auto-decided by kind; stale video invalidated to avoid mixing).
+- Auto-align compose: TTS pre-probe per-shot effective duration = max(shot duration, ceil(narration audio measured)), preventing narration being cut by -shortest; real clips shorter than effective duration get -stream_loop -1 loop fill + trim.
+- Attribution watermark + copyright guard: insert shots (insertAttribution non-empty) overlay a bottom-left source watermark (Chinese requires video.commentary.attribution-font); pre-export check insert ratio = sum(insert shot dur)/sum(total dur) > video.commentary.max-insert-ratio (default 0.2) rejects; page ratio badge is a client-side estimate (server authoritative).
+- Async export: POST /api/video/export/hd/async returns jobId immediately, a background single-thread worker composes, GET /api/video/export/jobs/{id} polls RUNNING/SUCCESS/FAILED; sync /export/hd unchanged.
+- Publishing tool: tools/auto-commentary-concat.js (Node) stitches main + insert assets along the script timeline (xfade=0.8) and burns the attribution watermark; main aspect must match the script aspectRatio, drawtext uses an explicit fontfile for Chinese glyphs.
+- Config: video.commentary.max-insert-ratio (0.2)/attribution-font (empty)/import-dir (empty). Smoke: mvn test -Dtest=VideoComposeAutoFitTest -Dcommentary=true (real FFmpeg loop, skipped by default).

@@ -39,7 +39,7 @@ class StoryScriptServiceReviewFixTest {
         scriptRepo = mock(StoryScriptRepository.class);
         shotRepo = mock(StoryShotRepository.class);
         UserRepository userRepo = mock(UserRepository.class);
-        service = new StoryScriptService(scriptRepo, shotRepo, userRepo, mock(VideoScriptService.class), charRepo);
+        service = new StoryScriptService(scriptRepo, shotRepo, userRepo, mock(VideoScriptService.class), charRepo, null);
         User u = new User();
         u.setId(1L);
         u.setUsername("alice");

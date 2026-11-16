@@ -14,7 +14,7 @@ class ShotVideoFieldsMapTest {
 
     @Test
     void shotToMapExposesVideoFields() {
-        StoryScriptService service = new StoryScriptService(null, null, null, null, null);
+        StoryScriptService service = new StoryScriptService(null, null, null, null, null, null);
         StoryShot shot = new StoryShot();
         shot.setId(3L);
         shot.setShotOrder(1);

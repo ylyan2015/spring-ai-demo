@@ -46,6 +46,20 @@ public interface ImageGenerator {
     }
 
     /**
+     * Phase 5 切片 3：角色 LoRA 模式（本地 SD1.5+LoRA 身份一致性）。
+     * controlNetRefUrl 可为 null（不锁机位）；默认不支持，调用抛 UnsupportedOperationException。
+     */
+    default GeneratedImage generateWithLora(String prompt, String negativePrompt, int width, int height,
+                                            String loraName, String controlNetRefUrl) {
+        throw new UnsupportedOperationException("当前图像生成器不支持 LoRA: " + getType());
+    }
+
+    /** 是否支持角色 LoRA 模式（默认 false） */
+    default boolean supportsLora() {
+        return false;
+    }
+
+    /**
      * 生成器类型标识（如 dashscope / local）
      */
     String getType();

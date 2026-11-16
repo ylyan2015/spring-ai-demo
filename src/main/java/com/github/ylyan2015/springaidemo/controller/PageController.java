@@ -48,4 +48,16 @@ public class PageController {
         }
         return "video-studio";
     }
+
+    /**
+     * Phase 5 Track B：评论工作台页面（与导演工作台分离）
+     */
+    @GetMapping("/commentary-studio")
+    public String commentaryStudio() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            return "redirect:/login";
+        }
+        return "commentary-studio";
+    }
 }

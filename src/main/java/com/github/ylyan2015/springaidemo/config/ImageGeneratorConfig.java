@@ -1,6 +1,7 @@
 package com.github.ylyan2015.springaidemo.config;
 
 import com.github.ylyan2015.springaidemo.storage.StorageService;
+import com.github.ylyan2015.springaidemo.video.generator.ComfyUiImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageSizeMapper;
 import com.github.ylyan2015.springaidemo.video.generator.OpenAiCompatibleImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.Wan27ImageGenerator;
@@ -81,5 +82,24 @@ public class ImageGeneratorConfig {
             @Value("${image.wan27.timeout-seconds:120}") int timeoutSeconds) {
         return new Wan27ImageGenerator(storageService, new ObjectMapper(), defaultHttpClient(),
                 baseUrl, apiKey, model, timeoutSeconds);
+    }
+
+    /**
+     * Phase 5 切片 3：本地 ComfyUI SD1.5+LoRA 分镜（base-url 复用 video.comfyui.base-url；NO_PROXY 防系统代理劫持）
+     */
+    @Bean
+    public ComfyUiImageGenerator comfyUiImageGenerator(
+            StorageService storageService,
+            @Value("${video.comfyui.base-url:http://127.0.0.1:8188}") String baseUrl,
+            @Value("${image.comfyui.workflow-plain:docs/comfyui/sd15_storyboard.template.json}") String plainPath,
+            @Value("${image.comfyui.workflow-lora:docs/comfyui/sd15_lora_storyboard.template.json}") String loraPath,
+            @Value("${image.comfyui.workflow-canny:docs/comfyui/sd15_lora_canny.template.json}") String cannyPath,
+            @Value("${server.port:8080}") int serverPort,
+            @Value("${image.comfyui.timeout-seconds:120}") int timeoutSeconds,
+            @Value("${image.comfyui.poll-interval-ms:1000}") long pollIntervalMs) {
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                .proxy(HttpClient.Builder.NO_PROXY).build();
+        return new ComfyUiImageGenerator(storageService, new ObjectMapper(), http, baseUrl,
+                plainPath, loraPath, cannyPath, serverPort, timeoutSeconds, pollIntervalMs);
     }
 }

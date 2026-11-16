@@ -1069,3 +1069,35 @@ ylyan2015
 - 配置：video.restyle.model（默认 wan2.7-videoedit）/timeout-seconds（600）/poll-interval-ms（5000），复用 DASHSCOPE_API_KEY（空 Key 不可用）。
 - spike 验收（2026-11-15 实测）：动作/机位保持+画风动漫化达标；计费=输入+输出时长（720P 基线）；视频输入仅公网 URL/oss 临时 URL，不支持 base64→local 存储 FAILED 带 oss/minio 指引；Kling transform 为 2-OPT 备选（需 KLING_API_KEY，本期不实现）。
 - 冒烟：mvn test -Dtest=VideoRestyleRealSmokeTest -Drestyle=true（默认跳过；local 存储验证错误路径）。
+
+
+## Phase 5 切片 1：本地 ComfyUI 图生视频（零成本路线）（2026-11-15）
+
+- 本地 i2v：新 ComfyUiVideoGenerator（type=comfyui）接本地 ComfyUI（Wan2.2 TI2V-5B，Apache 2.0 可商用），零 API 成本、无限速、素材不外传；video.generator=comfyui 或前端下拉切换（/generators 自动收录）。
+- 模板无关：工作流 JSON 占位符替换（{{FIRST_FRAME}}/{{PROMPT}}/{{FRAMES}}/{{WIDTH}}/{{HEIGHT}}/{{FPS}}/{{SEED}}），参考模板 docs/comfyui/wan22_i2v_5b.template.json；Phase 0 环境搭建后从 ComfyUI 导出校准覆盖（video.comfyui.workflow-path / COMFYUI_WORKFLOW）。
+- 本地存储闭环：resolveMediaUrl 增 local×comfyui 相对路径直通分支，生成器同源（127.0.0.1:server.port）取首帧字节，绕开公网 URL/oss-minio 约束；local×dashscope-wan 存量行为不变。
+- 协议：/upload/image → /prompt → /history/{id} → /view；帧数自动对齐 4n+1；分辨率档 720P→1280×704（本机实测）/ 480P→832×480；模板锁定 VAEDecodeTiled（裸 VAEDecode 本机假死）+ 核心 CreateVideo/SaveVideo。
+- 配置：video.comfyui.base-url（默认 http://127.0.0.1:8188）/workflow-path/fps（24）/timeout-seconds（1800）/poll-interval-ms（3000）；ComfyUI 未启动或工作流未配置时 isAvailable=false，干净启动不受影响，默认 none 零变化。workflow-path 相对路径基于启动 CWD，打包部署设绝对路径（COMFYUI_WORKFLOW）。
+- 冒烟：mvn test -Dtest=ComfyUiRealSmokeTest -Dcomfyui=true（默认跳过；需 ComfyUI 启动且工作流校准）。排产：comfyui 路线 video.workers 建议 1（单卡队列串行）；实测 29f≈155s/57f≈382s/121f≈722s，短切 1.5–2.5s 为主力。
+
+## Phase 5 切片 3：本地图像侧 SD1.5+LoRA 分镜（全链路零云依赖）（2026-11-15）
+
+- 本地分镜：图像侧增 ComfyUiImageGenerator（type=comfyui），anything-v5 + 角色 LoRA 身份一致性（实测 ~8s/张，22 步 CFG7 euler/normal）；image.generator=comfyui 或前端下拉切换；无 LoRA 角色走 plain 模板，存量源行为逐字不变。
+- 角色卡：loraName/triggerWord 两字段全链（entity/service/controller/前端对话框输入·回填·清空）；触发词经唯一装配点 ShotPromptAssembler 注入（仅非空）。
+- LoRA 路由：ImageGenerator 增 supportsLora/generateWithLora 能力旗标；LoraResolver 取首个带 LoRA 角色；generateWithRetry 单 dispatch 点 + 候选抽卡路径同路由。
+- ControlNet 锁机位（gated）：image.comfyui.controlnet-enabled 默认 false；开启后角色定妆参考图经 canny（0.4/0.8、strength 0.8，+~10s/张）；三模板 docs/comfyui/sd15_storyboard / sd15_lora_storyboard / sd15_lora_canny.template.json。
+- 配置：image.comfyui.workflow-plain/lora/canny（env COMFYUI_IMG_*）/timeout-seconds 120/poll-interval-ms 1000；base-url 复用 video.comfyui.base-url；720 高→704（实测）；SD1.5 用裸 VAEDecode（tiled 强制仅 Wan）。
+- 冒烟：mvn test -Dtest=ComfyUiImageRealSmokeTest -Dcomfyui=true（默认跳过；实测 2/2 绿，产物 1280×704）。全量 346 绿。
+
+## Phase 5 Track B：评论杂谈自动化（评论工作台）（2026-11-16）
+
+面向动漫影视杂谈/漫评类创作（区别于 /video-studio 的 AI 短剧集自动模式）：用素材图片/视频切片拼接 + 字幕 + 旁白，独立页面入口，两轨分开。
+
+- 评论工作台：/commentary-studio（需登录），脚本列表按 format=commentary 分离（存量 AI 短剧脚本不混入）；支持粘贴/文件导入评论 JSON（shots[].insert.attribution→出处）。
+- 素材库：上传入库（视频可选裁剪 trimStart/trimEnd，ffprobe 实测时长）/列表/删除；文件夹批量扫描入库（仅读配置目录 video.commentary.import-dir，文件名约定 epNN_标签_名称.mp4/png→tags="epNN,标签"，非法跳过）。
+- 镜头素材绑定：视频素材→绑为片段（回写实测时长），图片素材→绑为主视觉（自动按 kind 判定，旧视频失效防混入）。
+- 合成自动对齐：TTS 预探测逐镜有效时长=max(镜头时长, ceil(旁白音频实测))，防旁白被 -shortest 截断；真片段短于有效时长时 -stream_loop -1 循环填充 + trim 截断。
+- 出处水印 + 版权护栏：引用镜（insertAttribution 非空）左下角叠加出处水印（中文需配置 video.commentary.attribution-font）；导出前置校验引用占比=Σ引用镜时长/Σ总时长 > video.commentary.max-insert-ratio（默认 0.2）拒绝；页面引用占比徽章预算示（服务端权威）。
+- 异步导出：POST /api/video/export/hd/async 提交即返 jobId，后台单线程 worker 合成，GET /api/video/export/jobs/{id} 轮询 RUNNING/SUCCESS/FAILED；同步 /export/hd 不变。
+- 发片工具：tools/auto-commentary-concat.js（Node）按脚本时间轴（xfade=0.8）拼接主体+插入素材并烧录出处水印；主体画幅须与脚本 aspectRatio 一致，drawtext 显式 fontfile 中文字形。
+- 配置：video.commentary.max-insert-ratio（0.2）/attribution-font（空）/import-dir（空）。冒烟：mvn test -Dtest=VideoComposeAutoFitTest -Dcommentary=true（真实 FFmpeg loop，默认跳过）。

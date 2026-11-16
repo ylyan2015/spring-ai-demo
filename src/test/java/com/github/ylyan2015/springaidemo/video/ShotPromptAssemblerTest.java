@@ -59,4 +59,19 @@ class ShotPromptAssemblerTest {
         assertThrows(RuntimeException.class,
                 () -> assembler.assemble(shot(null, null, null), VisualStyle.ANIME, null));
     }
+
+    @Test
+    void triggerWordInjectedAfterCharacterFeatures() {
+        StoryCharacter c = character("saki", "brown hair");
+        c.setTriggerWord("saki_chan");
+        String out = assembler.assemble(shot("base", null, null), VisualStyle.ANIME, List.of(c));
+        assertTrue(out.contains("Character saki: brown hair., saki_chan"), out);
+    }
+
+    @Test
+    void noTriggerWordKeepsLegacyFormat() {
+        String out = assembler.assemble(shot("base", null, null), VisualStyle.ANIME,
+                List.of(character("saki", "brown hair")));
+        assertEquals(VisualStyle.ANIME.getPromptPrefix() + ", Character saki: brown hair., base, medium shot", out);
+    }
 }

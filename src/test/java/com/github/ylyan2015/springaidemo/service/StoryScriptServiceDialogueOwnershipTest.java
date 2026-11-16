@@ -26,7 +26,7 @@ class StoryScriptServiceDialogueOwnershipTest {
         UserRepository userRepo = mock(UserRepository.class);
         StoryCharacterRepository charRepo = mock(StoryCharacterRepository.class);
         service = new StoryScriptService(scriptRepo, shotRepo, userRepo,
-                mock(VideoScriptService.class), charRepo);
+                mock(VideoScriptService.class), charRepo, null);
         User u = new User(); u.setId(1L); u.setUsername("alice");
         when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
         SecurityContextHolder.getContext().setAuthentication(

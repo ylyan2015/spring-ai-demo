@@ -60,7 +60,7 @@ class StoryCharacterServiceTest {
             c.setId(11L);
             return c;
         });
-        Map<String, Object> m = service.create(7L, "林晚", "black hair, red coat", "冷静", null);
+        Map<String, Object> m = service.create(7L, "林晚", "black hair, red coat", "冷静", null, null, null);
         assertEquals("zh-CN-XiaoxiaoNeural", m.get("voice"));
         assertEquals("林晚", m.get("name"));
         verify(charRepo).save(argThat(c -> c.getScript().getId().equals(7L)));
@@ -68,7 +68,7 @@ class StoryCharacterServiceTest {
 
     @Test
     void createRejectsBlankName() {
-        assertThrows(IllegalArgumentException.class, () -> service.create(7L, " ", null, null, null));
+        assertThrows(IllegalArgumentException.class, () -> service.create(7L, " ", null, null, null, null, null));
     }
 
     @Test

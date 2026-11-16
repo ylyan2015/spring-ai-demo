@@ -23,7 +23,7 @@ class StoryScriptServiceMapTest {
         StoryCharacterRepository charRepo = mock(StoryCharacterRepository.class);
         StoryScriptService service = new StoryScriptService(mock(StoryScriptRepository.class),
                 mock(StoryShotRepository.class), mock(UserRepository.class),
-                mock(VideoScriptService.class), charRepo);
+                mock(VideoScriptService.class), charRepo, null);
         StoryScript s = new StoryScript();
         s.setId(7L);
         s.setStyle("ANIME");

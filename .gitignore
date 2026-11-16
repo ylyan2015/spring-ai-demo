@@ -16,3 +16,6 @@ target/
 # Runtime artifacts（H2 数据库文件与本地存储生成文件）
 data/chatdb.*
 uploads/
+
+# E2E 测试夹具（评论扫描入库约定命名素材，可由 ffmpeg 再生，见 tools/e2e-commentary.js）
+data/scan-test/

@@ -47,7 +47,8 @@ public class StoryCharacterController {
         try {
             result.put("success", true);
             result.put("data", storyCharacterService.create(scriptId, request.get("name"),
-                    request.get("featureTable"), request.get("personality"), request.get("voice")));
+                    request.get("featureTable"), request.get("personality"), request.get("voice"),
+                    request.get("loraName"), request.get("triggerWord")));
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
             result.put("success", false);
@@ -64,7 +65,8 @@ public class StoryCharacterController {
         try {
             result.put("success", true);
             result.put("data", storyCharacterService.update(scriptId, id, request.get("name"),
-                    request.get("featureTable"), request.get("personality"), request.get("voice")));
+                    request.get("featureTable"), request.get("personality"), request.get("voice"),
+                    request.get("loraName"), request.get("triggerWord")));
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
             result.put("success", false);

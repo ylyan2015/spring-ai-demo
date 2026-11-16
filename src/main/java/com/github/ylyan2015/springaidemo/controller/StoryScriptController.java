@@ -86,8 +86,22 @@ public class StoryScriptController {
             Map<String, Object> storyboardData = (Map<String, Object>) request.get("storyboard");
             String idea = (String) request.getOrDefault("idea", "");
 
+            // Phase 5 Track B：format 前置校验（审查 Minor#2：避免 saveFromStoryboard 已提交后 updateFormat 再报错致先建后 500）
+            String format = (String) request.get("format");
+            if (format != null && !format.isBlank() && !"commentary".equals(format.trim())) {
+                result.put("success", false);
+                result.put("message", "不支持的脚本形态: " + format);
+                return ResponseEntity.badRequest().body(result);
+            }
+
             Storyboard storyboard = mapToStoryboard(storyboardData);
             StoryScript script = storyScriptService.saveFromStoryboard(null, storyboard, idea);
+
+            // Phase 5 Track B：saveScript honoring format（评论工作台新建可带 format）
+            if (format != null && !format.isBlank()) {
+                storyScriptService.updateFormat(script.getId(), format);
+                script = storyScriptService.getScript(script.getId());
+            }
 
             result.put("success", true);
             result.put("data", scriptToMap(script));
@@ -104,14 +118,32 @@ public class StoryScriptController {
     // ==================== 脚本查询 ====================
 
     /**
+     * Phase 5 Track B：导入评论类机读 JSON
+     */
+    @PostMapping("/commentary/import")
+    public ResponseEntity<Map<String, Object>> importCommentary(@RequestBody Map<String, Object> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            StoryScript script = storyScriptService.importCommentary(request);
+            result.put("success", true);
+            result.put("data", scriptToMap(script));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
      * 获取当前用户的所有脚本列表
      */
     @GetMapping
-    public ResponseEntity<Map<String, Object>> listScripts() {
+    public ResponseEntity<Map<String, Object>> listScripts(@RequestParam(required = false) String format) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         try {
-            List<StoryScript> scripts = storyScriptService.listScripts();
+            List<StoryScript> scripts = storyScriptService.listScripts(format);
             List<Map<String, Object>> items = scripts.stream()
                     .map(this::scriptToListMap)
                     .collect(Collectors.toList());
@@ -423,6 +455,34 @@ public class StoryScriptController {
     // ==================== 数据转换方法 ====================
 
     /**
+     * Phase 5 Track B：镜头绑定素材（body: assetId/asVideo/durationOverride）
+     */
+    @PostMapping("/{id}/shots/{shotId}/asset")
+    public ResponseEntity<Map<String, Object>> bindAsset(@PathVariable Long id,
+                                                         @PathVariable Long shotId,
+                                                         @RequestBody Map<String, Object> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            Long assetId = toLong(request.get("assetId"));
+            if (assetId == null) {
+                result.put("success", false);
+                result.put("message", "assetId 不能为空");
+                return ResponseEntity.badRequest().body(result);
+            }
+            boolean asVideo = Boolean.TRUE.equals(request.get("asVideo"));
+            Integer durationOverride = request.get("durationOverride") instanceof Number n ? n.intValue() : null;
+            StoryShot shot = storyScriptService.bindAsset(id, shotId, assetId, asVideo, durationOverride);
+            result.put("success", true);
+            result.put("data", shotToMap(shot));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
      * 将 StoryScript 实体转换为完整 Map（含镜头详情，委托服务层统一实现）
      */
     private Map<String, Object> scriptToMap(StoryScript script) {
@@ -438,6 +498,7 @@ public class StoryScriptController {
         map.put("title", script.getTitle());
         map.put("theme", script.getTheme());
         map.put("status", script.getStatus());
+        map.put("format", script.getFormat());
         map.put("createdAt", script.getCreatedAt());
         map.put("updatedAt", script.getUpdatedAt());
         map.put("shotCount", script.getShots() != null ? script.getShots().size() : 0);
@@ -481,6 +542,7 @@ public class StoryScriptController {
         if (data.get("dialogueCharacterId") != null) {
             shot.setDialogueCharacterId(toLong(data.get("dialogueCharacterId")));
         }
+        shot.setInsertAttribution((String) data.get("insertAttribution"));
 
         return shot;
     }

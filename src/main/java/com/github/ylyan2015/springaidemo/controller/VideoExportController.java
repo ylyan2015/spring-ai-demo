@@ -48,6 +48,55 @@ public class VideoExportController {
     }
 
     /**
+     * 异步高清导出（Task 6）：提交即返 jobId，后台 worker 合成；GET /export/jobs/{id} 轮询终态。
+     * 请求体同 /export/hd。同步 /export/hd 保持不动。
+     */
+    @PostMapping("/export/hd/async")
+    public ResponseEntity<Map<String, Object>> exportHdAsync(@RequestBody Map<String, Object> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            Long scriptId = toLong(request.get("scriptId"));
+            if (scriptId == null) {
+                result.put("success", false);
+                result.put("message", "scriptId 不能为空");
+                return ResponseEntity.badRequest().body(result);
+            }
+            VideoExportService.PostFlags postFlags = new VideoExportService.PostFlags(
+                    toBoolean(request.get("upscale"), false),
+                    toBoolean(request.get("interpolate"), false),
+                    toBoolean(request.get("sfx"), false));
+            Map<String, Object> data = videoExportService.exportHdAsync(scriptId,
+                    (String) request.get("resolution"), (String) request.get("aspectRatio"),
+                    toLong(request.get("bgmId")), toBoolean(request.get("subtitle"), false),
+                    toBoolean(request.get("withLogo"), false), (String) request.get("subtitleLanguage"),
+                    postFlags);
+            result.put("success", true);
+            result.put("data", data);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("Async HD export submit failed: {}", e.getMessage(), e);
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** 异步导出任务状态查询（Task 6）：RUNNING/SUCCESS/FAILED */
+    @GetMapping("/export/jobs/{id}")
+    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable Long id) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            result.put("success", true);
+            result.put("data", videoExportService.jobStatus(id));
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
      * 获取脚本的导出历史
      */
     @GetMapping("/exports/{scriptId}")

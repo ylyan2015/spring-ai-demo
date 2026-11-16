@@ -15,6 +15,8 @@ import com.github.ylyan2015.springaidemo.video.generator.GeneratedImage;
 import com.github.ylyan2015.springaidemo.video.generator.GeneratedVideo;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGeneratorFactory;
+import com.github.ylyan2015.springaidemo.video.generator.LoraResolver;
+import com.github.ylyan2015.springaidemo.video.generator.LoraSpec;
 import com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver;
 import com.github.ylyan2015.springaidemo.video.generator.VideoGenerationRequest;
 import com.github.ylyan2015.springaidemo.video.generator.VideoGenerator;
@@ -54,6 +56,7 @@ public class CandidateGenerationService {
     private final ReferenceImageResolver referenceResolver;
     private final ImageQualityService qualityService;
     private final VideoGenerationService videoGenerationService;
+    private final LoraResolver loraResolver;
 
     @Value("${video.candidates.image-count:3}")
     private int imageCount;
@@ -73,7 +76,8 @@ public class CandidateGenerationService {
                                       ShotPromptAssembler promptAssembler,
                                       ReferenceImageResolver referenceResolver,
                                       ImageQualityService qualityService,
-                                      VideoGenerationService videoGenerationService) {
+                                      VideoGenerationService videoGenerationService,
+                                      LoraResolver loraResolver) {
         this.imageGeneratorFactory = imageGeneratorFactory;
         this.videoGeneratorFactory = videoGeneratorFactory;
         this.scriptRepository = scriptRepository;
@@ -84,6 +88,7 @@ public class CandidateGenerationService {
         this.referenceResolver = referenceResolver;
         this.qualityService = qualityService;
         this.videoGenerationService = videoGenerationService;
+        this.loraResolver = loraResolver;
     }
 
     /** 图像抽卡：N 张顺序生成 + 评分 + 最高分 provisional 回写 */
@@ -95,6 +100,7 @@ public class CandidateGenerationService {
         List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
         String prompt = promptAssembler.assemble(shot, style, characters);
         List<String> refs = referenceResolver.resolve(characters);
+        LoraSpec lora = loraResolver.resolve(characters);
         ImageGenerator gen = imageGeneratorFactory.getActiveGenerator();
 
         List<ShotCandidate> candidates = new ArrayList<>();
@@ -102,7 +108,10 @@ public class CandidateGenerationService {
         int n = Math.max(1, imageCount);
         for (int i = 0; i < n; i++) {
             try {
-                GeneratedImage img = refs != null && !refs.isEmpty() && gen.supportsReferences()
+                GeneratedImage img = lora != null && gen.supportsLora()
+                        ? gen.generateWithLora(prompt, style.getNegativePrompt(), 1280, 720,
+                                lora.loraName(), lora.controlNetRefUrl())
+                        : refs != null && !refs.isEmpty() && gen.supportsReferences()
                         ? gen.generateWithReferences(prompt, style.getNegativePrompt(), 1280, 720, refs)
                         : gen.generate(prompt, style.getNegativePrompt(), 1280, 720);
                 ShotCandidate c = new ShotCandidate();

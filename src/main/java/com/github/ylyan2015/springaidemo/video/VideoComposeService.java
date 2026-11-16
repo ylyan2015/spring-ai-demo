@@ -55,6 +55,10 @@ public class VideoComposeService {
     @Value("${video.ffprobe-path:ffprobe}")
     private String ffprobePath;
 
+    /** Task 5：出处水印字体文件路径（空=不带 fontfile；中文渲染需配置如 C:/Windows/Fonts/msyh.ttc，B0 教训） */
+    @Value("${video.commentary.attribution-font:}")
+    private String attributionFontPath;
+
     /**
      * 运行 edge-tts 的 Python 解释器命令。Windows 上 PATH 里的裸 python 常被微软商店的
      * "应用执行别名" 桩挡住（退出码 49），此时必须填绝对路径。
@@ -164,21 +168,35 @@ public class VideoComposeService {
                 audioFiles = generateTtsAudio(linesPerShot, durations, workDir);
             }
 
+            // Task 4 合成自动对齐：TTS 预探测——逐镜有效时长 = max(镜头时长, ceil(旁白音频实测时长))，
+            // 防旁白比镜头长被 -shortest 截断；真片段短于有效时长时循环填充（needsLoop），静图本就 -loop 1 无限流
+            List<Integer> effectiveDurations = new ArrayList<>();
+            List<Boolean> needsLoop = new ArrayList<>();
+            for (int i = 0; i < durations.size(); i++) {
+                int eff = durations.get(i);
+                if (audioFiles != null && i < audioFiles.size() && audioFiles.get(i) != null
+                        && Files.exists(audioFiles.get(i))) {
+                    eff = Math.max(eff, probeDurationSecondsCeil(audioFiles.get(i)));
+                }
+                effectiveDurations.add(eff);
+                needsLoop.add(Boolean.TRUE.equals(media.isVideo().get(i)) && durations.get(i) < eff);
+            }
+
             // xfade 转场会吃掉相邻镜头的重叠时长，BGM 淡出与展示时长必须按实际视频时长计算，
             // 否则结尾淡出会被 -shortest 截掉，BGM 以全音量戛然而止
             double exactDuration = media.paths().size() == 1
-                    ? durations.get(0)
-                    : durations.stream().mapToInt(Integer::intValue).sum()
+                    ? effectiveDurations.get(0)
+                    : effectiveDurations.stream().mapToInt(Integer::intValue).sum()
                         - (media.paths().size() - 1) * XFADE_DURATION;
             int totalDuration = (int) Math.round(exactDuration);
 
-            Path videoOnly = composeVideoWithFfmpeg(media.paths(), durations, movements, media.isVideo(),
-                    workDir, options, exactDuration);
+            Path videoOnly = composeVideoWithFfmpeg(media.paths(), effectiveDurations, movements, media.isVideo(),
+                    workDir, options, exactDuration, needsLoop);
 
             Path finalVideo;
             boolean hasNarrationTrack = false;
             if (audioFiles != null && !audioFiles.isEmpty()) {
-                Path mergedAudio = concatAudioWithSilence(audioFiles, durations, workDir);
+                Path mergedAudio = concatAudioWithSilence(audioFiles, effectiveDurations, workDir);
                 finalVideo = mergeVideoAndAudio(videoOnly, mergedAudio, workDir);
                 hasNarrationTrack = true;
             } else {
@@ -368,17 +386,29 @@ public class VideoComposeService {
                 z, x, y, width, height, fps);
     }
 
+    /** 7 参兼容入口：无循环需求（存量混剪用例/旧调用），needsLoop 全 false */
     private Path composeVideoWithFfmpeg(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
                                         List<Boolean> isVideo, Path workDir, ComposeOptions options,
                                         double exactDuration)
             throws Exception {
+        return composeVideoWithFfmpeg(mediaFiles, durations, movements, isVideo, workDir, options, exactDuration,
+                Collections.nCopies(mediaFiles.size(), false));
+    }
+
+    private Path composeVideoWithFfmpeg(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
+                                        List<Boolean> isVideo, Path workDir, ComposeOptions options,
+                                        double exactDuration, List<Boolean> needsLoop)
+            throws Exception {
         Path output = workDir.resolve("output_video.mp4");
 
         if (mediaFiles.size() == 1) {
+            List<String> attrs = options.getAttributions();
+            String attr = attributionFilter(attrs != null && !attrs.isEmpty() ? attrs.get(0) : null,
+                    options.getHeight(), attributionFontPath);
             if (Boolean.TRUE.equals(isVideo.get(0))) {
-                buildSingleVideoClip(mediaFiles.get(0), durations.get(0), output, options);
+                buildSingleVideoClip(mediaFiles.get(0), durations.get(0), output, options, needsLoop.get(0), attr);
             } else {
-                buildSingleImageVideo(mediaFiles.get(0), durations.get(0), movements.get(0), output, options);
+                buildSingleImageVideo(mediaFiles.get(0), durations.get(0), movements.get(0), output, options, attr);
             }
             return output;
         }
@@ -388,8 +418,14 @@ public class VideoComposeService {
         cmd.add("-y");
 
         for (int i = 0; i < mediaFiles.size(); i++) {
-            // 真片段有限流不需要 -loop；静图无限流必须 -loop 1
-            if (!Boolean.TRUE.equals(isVideo.get(i))) {
+            if (Boolean.TRUE.equals(isVideo.get(i))) {
+                // 真片段短于有效时长：-stream_loop -1 循环填充，滤镜段 trim 截断到有效时长
+                if (Boolean.TRUE.equals(needsLoop.get(i))) {
+                    cmd.add("-stream_loop");
+                    cmd.add("-1");
+                }
+            } else {
+                // 静图无限流必须 -loop 1
                 cmd.add("-loop");
                 cmd.add("1");
             }
@@ -399,22 +435,22 @@ public class VideoComposeService {
 
         StringBuilder filter = new StringBuilder();
 
+        List<String> attributions = options.getAttributions();
         for (int i = 0; i < mediaFiles.size(); i++) {
+            String attr = attributionFilter(attributions != null && i < attributions.size()
+                    ? attributions.get(i) : null, options.getHeight(), attributionFontPath);
             if (Boolean.TRUE.equals(isVideo.get(i))) {
-                // 真片段：仅对齐比例/帧率，不加 zoompan（运动来自片段本身）
-                filter.append(String.format(
-                        "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,"
-                                + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
-                        i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
-                        FPS, i));
+                // 真片段：仅对齐比例/帧率，不加 zoompan（运动来自片段本身）；needsLoop 时 trim 截断；出处水印插 setpts 前
+                filter.append(videoInputFilter(i, durations.get(i), Boolean.TRUE.equals(needsLoop.get(i)),
+                        options.getWidth(), options.getHeight(), FPS, attr));
             } else {
-                // 先按目标比例居中裁剪，再按运镜字段加动效（超采样消抖），避免非 16:9 比例下画面变形
+                // 先按目标比例居中裁剪，再按运镜字段加动效（超采样消抖），避免非 16:9 比例下画面变形；出处水印插 setpts 前
                 filter.append(String.format(
-                        "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
+                        "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,%s"
                                 + "setpts=PTS-STARTPTS,format=yuva420p[v%d];",
                         i, options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
                         motionFilter(movements.get(i), durations.get(i) * FPS, FPS,
-                                options.getWidth(), options.getHeight(), zoomAmount, supersampleFactor), i));
+                                options.getWidth(), options.getHeight(), zoomAmount, supersampleFactor), attr, i));
             }
         }
 
@@ -473,14 +509,16 @@ public class VideoComposeService {
         return output;
     }
 
-    private void buildSingleImageVideo(Path image, int duration, String movement, Path output, ComposeOptions options)
+    private void buildSingleImageVideo(Path image, int duration, String movement, Path output, ComposeOptions options,
+                                       String attributionSegment)
             throws Exception {
+        String attr = attributionSegment == null ? "" : attributionSegment;
         String vf = String.format(
-                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,"
+                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s,%s"
                         + "setpts=PTS-STARTPTS,format=yuva420p",
                 options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(),
                 motionFilter(movement, duration * FPS, FPS, options.getWidth(), options.getHeight(),
-                        zoomAmount, supersampleFactor));
+                        zoomAmount, supersampleFactor), attr);
         if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
             vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
                             + ":x=(w-text_w)/2:y=(h-text_h)/2",
@@ -501,38 +539,116 @@ public class VideoComposeService {
 
     // ==================== TTS Audio ====================
 
-    /** 包私有测试 seam：混合媒体合成（真片段+静图），委托真实私有合成方法 */
+    /** 包私有测试 seam：混合媒体合成（真片段+静图），委托真实私有合成方法（无循环需求） */
     Path composeMediaForTest(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
                              List<Boolean> isVideo, Path workDir, ComposeOptions options, double exactDuration)
             throws Exception {
         return composeVideoWithFfmpeg(mediaFiles, durations, movements, isVideo, workDir, options, exactDuration);
     }
 
-    /** 真片段单镜头：对齐比例/帧率，无 zoompan 无 -loop */
-    private void buildSingleVideoClip(Path video, int duration, Path output, ComposeOptions options)
+    /** 包私有测试 seam（Task 4）：带 needsLoop 循环标志的混合媒体合成 */
+    Path composeMediaForTest(List<Path> mediaFiles, List<Integer> durations, List<String> movements,
+                             List<Boolean> isVideo, Path workDir, ComposeOptions options, double exactDuration,
+                             List<Boolean> needsLoop)
             throws Exception {
+        return composeVideoWithFfmpeg(mediaFiles, durations, movements, isVideo, workDir, options, exactDuration,
+                needsLoop);
+    }
+
+    /**
+     * 真片段输入滤镜段（Task 4 包私有 static seam）：对齐比例/帧率，不加 zoompan（运动来自片段本身）。
+     * needsLoop=true（片段短于有效时长，输入已 -stream_loop -1）时插 trim=duration 截断到有效时长，防无限流饿死下游。
+     */
+    static String videoInputFilter(int idx, int effectiveSec, boolean needsLoop, int w, int h, int fps) {
+        return videoInputFilter(idx, effectiveSec, needsLoop, w, h, fps, "");
+    }
+
+    /** 真片段输入滤镜段（Task 5）：attributionSegment 非空时在 setpts 前插出处水印 drawtext */
+    static String videoInputFilter(int idx, int effectiveSec, boolean needsLoop, int w, int h, int fps,
+                                   String attributionSegment) {
+        String trim = needsLoop ? String.format("trim=duration=%d,", effectiveSec) : "";
+        String attr = attributionSegment == null ? "" : attributionSegment;
+        return String.format("[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,"
+                        + "%s%ssetpts=PTS-STARTPTS,format=yuva420p[v%d];",
+                idx, w, h, w, h, fps, trim, attr, idx);
+    }
+
+    /**
+     * 逐镜出处水印滤镜段（Task 5 包私有 static seam）：左下角半透明黑底白字小字。
+     * 空/null 返回 ""（无插入镜不叠加）；fontFile 非空时落 fontfile（B0 教训：中文无 fontfile 静默不渲染）。
+     * 返回段以逗号结尾，便于直接插在 setpts 前。
+     */
+    static String attributionFilter(String text, int h) {
+        return attributionFilter(text, h, null);
+    }
+
+    static String attributionFilter(String text, int h, String fontFile) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        // 审查 Minor#2：滤镜图级+选项级两层解析各消耗一层→运行时 1 个反斜杠落 4 个；冒号转义；单引号换弯引号防断链
+        String safe = text.replace("\\", "\\\\\\\\").replace(":", "\\:").replace("'", "\u2019");
+        String font = (fontFile != null && !fontFile.isBlank())
+                ? ":fontfile='" + fontFile.replace("\\", "/").replace(":", "\\:") + "'" : "";
+        // 审查 Major#1：expansion=none 禁用 %{…} 文本展开（用户文案含 %{bogus} 会致整次导出失败/注入）
+        return String.format("drawtext=text='%s'%s:expansion=none:fontsize=%d:fontcolor=white@0.9"
+                        + ":box=1:boxcolor=black@0.5:boxborderw=6:x=20:y=h-text_h-20,",
+                safe, font, Math.max(14, h / 28));
+    }
+
+    /** 真片段单镜头：对齐比例/帧率，无 zoompan；needsLoop 时 -stream_loop -1 循环填充 + trim 截断 */
+    private void buildSingleVideoClip(Path video, int duration, Path output, ComposeOptions options,
+                                      boolean needsLoop, String attributionSegment)
+            throws Exception {
+        String trim = needsLoop ? String.format("trim=duration=%d,", duration) : "";
+        String attr = attributionSegment == null ? "" : attributionSegment;
         String vf = String.format(
-                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,format=yuv420p",
-                options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(), FPS);
+                "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,%s%sformat=yuv420p",
+                options.getWidth(), options.getHeight(), options.getWidth(), options.getHeight(), FPS, trim, attr);
         if (options.getWatermark() != null && !options.getWatermark().isBlank()) {
             vf += String.format(",drawtext=text='%s':fontsize=%d:fontcolor=white@0.35"
                             + ":x=(w-text_w)/2:y=(h-text_h)/2",
                     options.getWatermark(), Math.max(16, options.getHeight() / 14));
         }
-        executeCommand(List.of(
-                ffmpegPath, "-y",
-                "-i", video.toAbsolutePath().toString(),
-                "-vf", vf,
-                "-t", String.valueOf(duration),
-                "-c:v", "libx264", "-profile:v", "high", "-crf", String.valueOf(options.getCrf()),
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                output.toAbsolutePath().toString()
-        ), video.getParent(), "ffmpeg single video clip");
+        List<String> cmd = new ArrayList<>();
+        cmd.add(ffmpegPath);
+        cmd.add("-y");
+        if (needsLoop) {
+            cmd.add("-stream_loop");
+            cmd.add("-1");
+        }
+        cmd.add("-i");
+        cmd.add(video.toAbsolutePath().toString());
+        cmd.add("-vf");
+        cmd.add(vf);
+        cmd.add("-t");
+        cmd.add(String.valueOf(duration));
+        cmd.add("-c:v");
+        cmd.add("libx264");
+        cmd.add("-profile:v");
+        cmd.add("high");
+        cmd.add("-crf");
+        cmd.add(String.valueOf(options.getCrf()));
+        cmd.add("-pix_fmt");
+        cmd.add("yuv420p");
+        cmd.add("-movflags");
+        cmd.add("+faststart");
+        cmd.add(output.toAbsolutePath().toString());
+        executeCommand(cmd, video.getParent(), "ffmpeg single video clip");
     }
 
-    /** ffprobe 实测时长（秒，取整；失败抛异常）；输出落盘+先 waitFor，对齐 executeCommand 超时 idiom */
+    /** ffprobe 实测时长（秒，四舍五入取整；失败抛异常） */
     public int probeDurationSeconds(Path video) {
+        return (int) Math.round(probeDurationExact(video));
+    }
+
+    /** ffprobe 实测时长（秒，向上取整；Task 4 TTS 预探测用，防旁白尾部被截） */
+    public int probeDurationSecondsCeil(Path video) {
+        return (int) Math.ceil(probeDurationExact(video));
+    }
+
+    /** ffprobe 实测时长（秒，精确 double）；输出落盘+先 waitFor，对齐 executeCommand 超时 idiom */
+    private double probeDurationExact(Path video) {
         Path outFile = null;
         Process p = null;
         try {
@@ -550,7 +666,7 @@ public class VideoComposeService {
             if (p.exitValue() != 0) {
                 throw new RuntimeException("ffprobe failed: " + out);
             }
-            return (int) Math.round(Double.parseDouble(out));
+            return Double.parseDouble(out);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -1098,6 +1214,7 @@ public class VideoComposeService {
         private List<SfxSpec> sfxTracks;
         private boolean upscale;
         private boolean interpolate;
+        private List<String> attributions;
 
         public ComposeOptions width(int width) { this.width = width; return this; }
         public ComposeOptions height(int height) { this.height = height; return this; }
@@ -1109,6 +1226,7 @@ public class VideoComposeService {
         public ComposeOptions sfxTracks(List<SfxSpec> sfxTracks) { this.sfxTracks = sfxTracks; return this; }
         public ComposeOptions upscale(boolean upscale) { this.upscale = upscale; return this; }
         public ComposeOptions interpolate(boolean interpolate) { this.interpolate = interpolate; return this; }
+        public ComposeOptions attributions(List<String> attributions) { this.attributions = attributions; return this; }
 
         public int getWidth() { return width; }
         public int getHeight() { return height; }
@@ -1120,6 +1238,7 @@ public class VideoComposeService {
         public List<SfxSpec> getSfxTracks() { return sfxTracks; }
         public boolean isUpscale() { return upscale; }
         public boolean isInterpolate() { return interpolate; }
+        public List<String> getAttributions() { return attributions; }
     }
 
     // ==================== Utilities ====================

@@ -34,6 +34,10 @@ public class ShotPromptAssembler {
                     sb.append(", Character ").append(c.getName()).append(": ")
                             .append(c.getFeatureTable()).append('.');
                 }
+                // Phase 5 切片 3：LoRA 触发词注入（仅非空；无触发词输出逐字不变）
+                if (c.getTriggerWord() != null && !c.getTriggerWord().isBlank()) {
+                    sb.append(", ").append(c.getTriggerWord());
+                }
             }
         }
         sb.append(", ").append(base);

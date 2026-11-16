@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><title>评论工作台</title>
+<style>body{font-family:system-ui;margin:16px}section{border:1px solid #ccc;padding:12px;margin:8px 0}
+.shot-card{border:1px solid #ddd;padding:8px;margin:8px 0}label{display:block;margin:4px 0}
+textarea,input[type=text]{width:95%}.quote-badge{background:#c0392b;color:#fff;padding:0 6px;border-radius:4px}</style>
+</head>
+<body>
+<header><h1>评论工作台 · 漫评自动化</h1><nav><a th:href="@{/video-studio}">导演工作台</a></nav></header>
+<section id="scriptPanel"><h2>评论脚本</h2>
+  <input id="newTitle" placeholder="标题"><button onclick="createEmpty()">新建</button>
+  <textarea id="importJson" rows="6" placeholder="粘贴评论 JSON（kurumi-commentary-domestic.json schema）"></textarea>
+  <input type="file" id="importFile" accept=".json,application/json">
+  <button onclick="importCommentaryJson()">导入 JSON</button>
+  <ul id="commentaryScriptList"></ul>
+</section>
+<section id="editorPanel" hidden><h2 id="editorTitle"></h2>
+  <div id="quoteRatioBadge" style="font-size:13px;margin:4px 0"></div>
+  <button onclick="toggleAssetPanel()">素材库</button>
+  <div id="shotList"></div>
+  <button onclick="addShot()">添加镜头</button>
+  <h3>导出</h3>
+  <select id="cAspect"><option value="9:16">9:16 抖音/小红书</option><option value="16:9">16:9 B站</option></select>
+  <label><input type="checkbox" id="cSubtitle" checked> 字幕</label>
+  <label><input type="checkbox" id="cSfx" checked> SFX</label>
+  <label><input type="checkbox" id="cUpscale"> 超分</label>
+  <label><input type="checkbox" id="cInterpolate"> 补帧</label>
+  <button id="cExportBtn" onclick="exportCommentary()">导出高清</button>
+  <button id="cAsyncBtn" onclick="exportCommentaryAsync()">后台导出</button>
+  <span id="cExportStatus"></span>
+  <ul id="cExportHistory"></ul>
+</section>
+<section id="assetPanel" hidden><h2>素材库</h2>
+  <div>
+    <input type="file" id="assetFile" accept="video/*,image/*">
+    <input id="assetName" placeholder="名称">
+    <input id="assetTags" placeholder="标签（如 ep04,名场面）">
+    <input id="assetTrimStart" type="number" step="0.1" placeholder="裁剪起s" style="width:90px">
+    <input id="assetTrimEnd" type="number" step="0.1" placeholder="裁剪止s" style="width:90px">
+    <button onclick="uploadAsset()">上传入库</button>
+    <button onclick="scanAssets()">扫描入库</button>
+    <span id="assetStatus"></span>
+  </div>
+  <ul id="assetList"></ul>
+</section>
+<div id="assetPickerModal" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.5);padding:40px">
+  <div style="background:#fff;max-width:600px;margin:auto;padding:16px;border-radius:8px">
+    <h3>选择素材绑定到镜头 <span id="pickerShotId"></span></h3>
+    <p style="font-size:12px;color:#666">视频素材→绑定为片段，图片素材→绑定为主视觉（按素材类型自动判定）</p>
+    <ul id="pickerList" style="max-height:300px;overflow-y:auto"></ul>
+    <button onclick="closeAssetPicker()">关闭</button>
+  </div>
+</div>
+<script th:inline="none">
+const $ = id => document.getElementById(id);
+// 审查 Major#1：统一失败反馈——裸调用 api/JSON.parse 的拒绝均可观测（导入非法 JSON/后端 400/会话过期不再静默）
+window.addEventListener('unhandledrejection', e => { alert('操作失败: ' + ((e.reason && e.reason.message) || e.reason)); });
+let currentScript = null;
+function esc(t) { return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+async function api(url, opt) {
+  const r = await fetch(url, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.success === false) throw new Error(j.message || ('HTTP ' + r.status));
+  return j;
+}
+const post = (u, b) => api(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
+const put = (u, b) => api(u, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
+async function loadCommentaryScripts() {
+  const j = await api('/api/video/scripts?format=commentary');
+  $('commentaryScriptList').innerHTML = j.data.map(s =>
+    '<li><button onclick="openScript(' + s.id + ')">' + esc(s.title) + '</button> ' + (s.shotCount || 0) + ' 镜</li>').join('');
+}
+async function openScript(id) {
+  const j = await api('/api/video/scripts/' + id);
+  currentScript = j.data;
+  $('editorPanel').hidden = false;
+  $('editorTitle').textContent = currentScript.title;
+  renderShots(); loadExportHistory();
+}
+function renderShots() {
+  $('shotList').innerHTML = currentScript.shots.map(s =>
+    '<div class="shot-card"><b>镜 ' + s.shotOrder + '</b> ' + esc(s.shotSize) + ' '
+    + (s.insertAttribution ? '<span class="quote-badge">引用</span>' : '')
+    + '<label>解说<textarea id="nar-' + s.id + '" rows="3">' + esc(s.narration) + '</textarea></label>'
+    + '<label>时长s<input id="dur-' + s.id + '" type="number" min="1" value="' + s.durationSeconds + '"></label>'
+    + '<label>出处水印<input id="attr-' + s.id + '" value="' + esc(s.insertAttribution) + '" placeholder="非空=引用镜，如 来源：第X话"></label>'
+    + '<label>主视觉提示词<textarea id="prompt-' + s.id + '" rows="2">' + esc(s.imagePrompt) + '</textarea></label>'
+    + (s.imageUrl ? '<img src="' + esc(s.imageUrl) + '" style="max-width:240px">' : '')
+    + (s.videoUrl ? '<video src="' + esc(s.videoUrl) + '" controls style="max-width:240px"></video>' : '')
+    + '<button onclick="saveShot(' + s.id + ')">保存解说</button>'
+    + '<button onclick="savePrompt(' + s.id + ')">保存提示词</button>'
+    + '<button onclick="genImage(' + s.id + ')">生成主视觉</button>'
+    + '<button onclick="openAssetPicker(' + s.id + ')">绑定素材</button>'
+    + '<button onclick="removeShot(' + s.id + ')">删除</button></div>').join('');
+  updateQuoteRatio();
+}
+function updateQuoteRatio() {
+  // Task 5：引用占比客户端预算示（服务端护栏权威，上限 20%）；超限红色提示
+  const shots = (currentScript && currentScript.shots) || [];
+  let total = 0, insert = 0;
+  shots.forEach(s => { const d = +s.durationSeconds || 5; total += d; if (s.insertAttribution && s.insertAttribution.trim()) insert += d; });
+  const pct = total ? Math.round(insert * 100 / total) : 0;
+  // 审查 Nit#3：判定用未舍入值对齐服务端严格 >（显示用舍入），避免 20.4% 显示 20% 绿色误判
+  const over = total > 0 && insert * 100 > 20 * total;
+  const el = $('quoteRatioBadge');
+  el.textContent = '引用占比 ' + pct + '%（上限20%）' + (over ? ' · 超限，导出将被拒绝' : '');
+  el.style.color = over ? '#c0392b' : '#27ae60';
+}
+async function saveShot(id) {
+  await put('/api/video/scripts/' + currentScript.id + '/shots/' + id, {
+    narration: $('nar-' + id).value, durationSeconds: +$('dur-' + id).value,
+    insertAttribution: $('attr-' + id).value });
+  await openScript(currentScript.id);
+}
+async function savePrompt(id) {
+  await put('/api/video/scripts/' + currentScript.id + '/shots/' + id, { imagePrompt: $('prompt-' + id).value });
+  await openScript(currentScript.id);
+}
+async function genImage(id) {
+  await post('/api/video/images/shot/' + currentScript.id + '/' + id);
+  alert('主视觉生成已提交，稍后自动刷新');
+  setTimeout(() => openScript(currentScript.id), 5000);
+}
+async function addShot() {
+  await post('/api/video/scripts/' + currentScript.id + '/shots', { durationSeconds: 5, narration: '' });
+  await openScript(currentScript.id);
+}
+async function removeShot(id) {
+  await api('/api/video/scripts/' + currentScript.id + '/shots/' + id, { method: 'DELETE' });
+  await openScript(currentScript.id);
+}
+async function createEmpty() {
+  const j = await post('/api/video/scripts/commentary/import',
+    { title: $('newTitle').value || '未命名漫评', theme: '', shots: [{ durationSeconds: 5, narration: '' }] });
+  await loadCommentaryScripts(); openScript(j.data.id);
+}
+async function importCommentaryJson() {
+  let text = $('importJson').value.trim();
+  const f = $('importFile').files[0];
+  if (f) text = await f.text();
+  if (!text) { alert('粘贴 JSON 或选择文件'); return; }
+  const j = await post('/api/video/scripts/commentary/import', JSON.parse(text));
+  await loadCommentaryScripts(); openScript(j.data.id);
+}
+async function exportCommentary() {
+  $('cExportBtn').disabled = true; $('cExportStatus').textContent = '导出中…';
+  try {
+    await post('/api/video/export/hd', { scriptId: currentScript.id, aspectRatio: $('cAspect').value,
+      subtitle: $('cSubtitle').checked, subtitleLanguage: 'zh', withLogo: true,
+      upscale: $('cUpscale').checked, interpolate: $('cInterpolate').checked, sfx: $('cSfx').checked });
+    $('cExportStatus').textContent = '导出完成'; loadExportHistory();
+  } catch (e) { $('cExportStatus').textContent = '导出失败: ' + e.message; }
+  finally { $('cExportBtn').disabled = false; }
+}
+async function scanAssets() {
+  // Task 6：扫描配置目录批量入库（仅读服务端 video.commentary.import-dir）
+  $('assetStatus').textContent = '扫描中…';
+  const j = await post('/api/video/assets/scan', {});
+  $('assetStatus').textContent = '扫描入库 ' + (j.data || []).length + ' 个';
+  loadAssets();
+}
+async function exportCommentaryAsync() {
+  // Task 6：后台导出——提交得 jobId → 每 3s 轮询 jobs 直到终态
+  $('cAsyncBtn').disabled = true; $('cExportStatus').textContent = '后台导出提交中…';
+  try {
+    const j = await post('/api/video/export/hd/async', { scriptId: currentScript.id, aspectRatio: $('cAspect').value,
+      subtitle: $('cSubtitle').checked, subtitleLanguage: 'zh', withLogo: true,
+      upscale: $('cUpscale').checked, interpolate: $('cInterpolate').checked, sfx: $('cSfx').checked });
+    pollJob(j.data.jobId);
+  } catch (e) { $('cExportStatus').textContent = '提交失败: ' + e.message; $('cAsyncBtn').disabled = false; }
+}
+function pollJob(jobId) {
+  const timer = setInterval(async () => {
+    try {
+      const j = await api('/api/video/export/jobs/' + jobId);
+      const st = j.data.status;
+      $('cExportStatus').textContent = '后台导出: ' + st;
+      if (st === 'SUCCESS' || st === 'FAILED') {
+        clearInterval(timer); $('cAsyncBtn').disabled = false;
+        if (st === 'FAILED') $('cExportStatus').textContent = '后台导出失败: ' + (j.data.message || '');
+        loadExportHistory();
+      }
+    } catch (e) { clearInterval(timer); $('cAsyncBtn').disabled = false; $('cExportStatus').textContent = '轮询失败: ' + e.message; }
+  }, 3000);
+}
+async function loadExportHistory() {
+  const j = await api('/api/video/exports/' + currentScript.id);
+  $('cExportHistory').innerHTML = (j.data || []).map(x =>
+    '<li>' + esc(x.status) + (x.videoUrl ? ' <a href="' + esc(x.videoUrl) + '" target="_blank">下载</a>' : '') + '</li>').join('');
+}
+loadCommentaryScripts();
+// ==================== 素材库（Task 3） ====================
+let pickerShotId = null;
+function toggleAssetPanel() {
+  const p = $('assetPanel');
+  p.hidden = !p.hidden;
+  if (!p.hidden) loadAssets();
+}
+async function loadAssets() {
+  const j = await api('/api/video/assets');
+  $('assetList').innerHTML = (j.data || []).map(a =>
+    '<li><b>' + esc(a.name) + '</b> [' + esc(a.kind) + (a.durationSeconds != null ? ' ' + a.durationSeconds + 's' : '') + '] '
+    + esc(a.tags || '') + ' <button onclick="deleteAsset(' + a.id + ')">删除</button></li>').join('');
+}
+async function uploadAsset() {
+  const f = $('assetFile').files[0];
+  if (!f) { alert('选择文件'); return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('name', $('assetName').value);
+  fd.append('tags', $('assetTags').value);
+  if ($('assetTrimStart').value) fd.append('trimStart', $('assetTrimStart').value);
+  if ($('assetTrimEnd').value) fd.append('trimEnd', $('assetTrimEnd').value);
+  $('assetStatus').textContent = '上传中…';
+  const r = await fetch('/api/video/assets', { method: 'POST', body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.success === false) { $('assetStatus').textContent = '上传失败: ' + (j.message || r.status); return; }
+  $('assetStatus').textContent = '已入库';
+  loadAssets();
+}
+async function deleteAsset(id) {
+  await api('/api/video/assets/' + id, { method: 'DELETE' });
+  loadAssets();
+}
+async function openAssetPicker(shotId) {
+  pickerShotId = shotId;
+  $('pickerShotId').textContent = shotId;
+  const j = await api('/api/video/assets');
+  $('pickerList').innerHTML = (j.data || []).map(a =>
+    '<li><button onclick="bindAsset(' + a.id + ',\'' + esc(a.kind) + '\')">' + esc(a.name) + '</button> [' + esc(a.kind)
+    + (a.durationSeconds != null ? ' ' + a.durationSeconds + 's' : '') + ']</li>').join('');
+  $('assetPickerModal').hidden = false;
+}
+function closeAssetPicker() { $('assetPickerModal').hidden = true; }
+async function bindAsset(assetId, kind) {
+  // 审查 Major#2：asVideo 由素材 kind 自动判定，与后端 kind 护栏一致
+  await post('/api/video/scripts/' + currentScript.id + '/shots/' + pickerShotId + '/asset',
+    { assetId: assetId, asVideo: kind === 'VIDEO' });
+  closeAssetPicker();
+  openScript(currentScript.id);
+}
+</script>
+</body>
+</html>

@@ -80,7 +80,7 @@ rag:
 
 # 图像生成配置（模块 C：AI 图像生成系统）
 image:
-  generator: dashscope               # 图像生成源：dashscope（默认）/ local / zhipu / siliconflow / openai / ark；前端下拉可运行时切换
+  generator: dashscope               # 图像生成源：dashscope（默认）/ local / zhipu / siliconflow / openai / ark / comfyui；前端下拉可运行时切换
   # OpenAI 兼容 images/generations 协议提供者（一个通用实现覆盖四家）：
   # Key 经环境变量注入，空 Key 时该提供者在前端显示不可用；
   # fixed-sizes 为受支持尺寸枚举（按宽高比就近映射），留空 = 任意尺寸透传；
@@ -114,6 +114,13 @@ image:
     timeout: 120                       # 本地生成超时（秒）
     style-prefix: ""                   # 风格前缀覆盖（留空时按模型名自动套用内置预设：SD1.5/SDXL/FLUX）
     extra-negative-prompt: ""          # 负面提示词覆盖（留空时按模型名自动套用内置预设）
+  comfyui:                             # Phase 5 切片 3：本地 ComfyUI SD1.5+LoRA 分镜（实测 ~8s/张，手册 §6）
+    workflow-plain: ${COMFYUI_IMG_PLAIN:docs/comfyui/sd15_storyboard.template.json}
+    workflow-lora: ${COMFYUI_IMG_LORA:docs/comfyui/sd15_lora_storyboard.template.json}
+    workflow-canny: ${COMFYUI_IMG_CANNY:docs/comfyui/sd15_lora_canny.template.json}
+    controlnet-enabled: false          # 开启后角色定妆参考图经 canny 锁机位（+~10s/张，手册 §4）
+    timeout-seconds: 120               # 单张实测 7-9s；120s 余量含模型加载
+    poll-interval-ms: 1000
   generation:
     parallelism: 3                     # 并行生成数（避免云端 API 限流）
     retry-attempts: 1                 # 失败重试次数
@@ -138,7 +145,7 @@ agent:
 video:
   # Phase 4 切片 2：图生视频生成源 none（默认，静图运镜回退）/ dashscope-wan；kling/seedance 预留未实现
   generator: ${VIDEO_GENERATOR:none}
-  workers: 2                          # i2v 并行工作线程数（云端限流+成本控）
+  workers: 2                          # i2v 并行工作线程数（云端限流+成本控）；comfyui 本地路线建议 1（单卡无并行收益；workers=2 第二单队列等待 +≈226s/49f）
   retry-attempts: 1                   # i2v 失败重试次数（按秒计费，成本红线）
   candidates:                         # Phase 4 切片 3：抽卡候选数（成本敏感可降 1；一键编排不抽卡）
     image-count: 3
@@ -149,6 +156,12 @@ video:
     resolution: 720P                  # 成本基线：720P/5s/中低运动幅度
     timeout-seconds: 600
     poll-interval-ms: 5000
+  comfyui:                            # Phase 5 切片 1：本地 ComfyUI i2v（零成本路线，docs/local-generation-feasibility.md）
+    base-url: ${COMFYUI_BASE_URL:http://127.0.0.1:8188}
+    workflow-path: ${COMFYUI_WORKFLOW:docs/comfyui/wan22_i2v_5b.template.json}  # 占位符模板；Phase 0 从 ComfyUI 导出校准后覆盖
+    fps: 24                           # Wan2.2 5B 原生 24fps；帧数自动对齐 4n+1
+    timeout-seconds: 1800             # 干净复测基线（2026-11-16）：49f≈226s/29f≈124s/边际5.1s帧；余量≥8×（A1 复核保持）
+    poll-interval-ms: 3000
   # FFmpeg / ffprobe 可执行文件位置。默认裸名走系统 PATH（release 审查 M10：可移植）；
   # 不在 PATH 时用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定绝对路径。
   # xfade 转场需要 FFmpeg ≥ 4.3，EVCapture 等软件自带的旧版（≈4.2）不含 xfade，不可用。
@@ -165,6 +178,10 @@ video:
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN / Noto Sans CJK SC）
+  commentary:                        # Phase 5 Track B：评论杂谈自动化（评论工作台 /commentary-studio）
+    max-insert-ratio: 0.2            # 引用占比上限（引用镜时长/总时长；超限拒绝导出，版权护栏）
+    attribution-font: ""             # 出处水印字体文件（空=不带 fontfile；中文渲染需配置如 C:/Windows/Fonts/msyh.ttc，B0 教训）
+    import-dir: ""                   # Task 6：批量入库扫描目录（空=禁用；仅读配置目录防遍历；文件名约定 epNN_标签_名称.mp4/png）
   # Phase 4 切片 4：导出后期增强（默认全关；工具未配置/执行失败时自动跳过不阻断导出）
   sfx:
     enabled: false                   # 音效推荐混音总开关（开启后导出勾选“音效”才生效；库见 sfx.library-path）

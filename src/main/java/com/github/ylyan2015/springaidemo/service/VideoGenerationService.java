@@ -382,8 +382,9 @@ public class VideoGenerationService {
     // ==================== URL 回退链 ====================
 
     /**
-     * 首帧/末帧 URL 回退链：http 直用 → 非 local presigned/公网 → local 抛 oss/minio 指引异常
-     * （i2v 协议要求公网 URL；本地存储无公网地址时干净失败并指引）。public 供切片 3 消费。
+     * 首帧/末帧 URL 回退链：http 直用 → 非 local presigned/公网 → local×comfyui 相对路径直通
+     * （ComfyUiVideoGenerator 同源取字节，本地存储闭环）→ local 抛 oss/minio 指引异常
+     * （云端 i2v 协议要求公网 URL；本地存储无公网地址时干净失败并指引）。public 供切片 3 消费。
      */
     public String resolveMediaUrl(String url, String fileId) {
         if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
@@ -394,6 +395,10 @@ public class VideoGenerationService {
         }
         if (!"local".equals(storageType)) {
             return storageService.getAccessUrl(fileId);
+        }
+        VideoGenerator active = videoGeneratorFactory.getActiveGenerator();
+        if (active != null && "comfyui".equals(active.getType())) {
+            return storageService.getAccessUrl(fileId); // 相对路径，ComfyUiVideoGenerator 同源取字节
         }
         throw new RuntimeException("本地存储无法提供公网首帧 URL：请切换 storage 为 oss/minio，"
                 + "或确认协议支持 base64（video.wan.base64-enabled）");

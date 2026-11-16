@@ -28,7 +28,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/", "/login", "/video-studio", "/css/**", "/js/**", "/test-timezone.html",
+                    "/", "/login", "/video-studio", "/commentary-studio", "/css/**", "/js/**", "/test-timezone.html",
                     "/api/auth/**",
                     // /error 必须放行：未放行时任何未处理异常的错误转发会被鉴权层
                     // 掩码为匿名 403 空响应，掩盖真实故障（UI 验证闭环审查修复）

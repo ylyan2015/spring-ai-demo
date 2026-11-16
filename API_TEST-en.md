@@ -1592,3 +1592,44 @@ curl http://localhost:8080/api/video/restyle/1
 
 Config: video.restyle.model (default wan2.7-videoedit)/timeout-seconds (600)/poll-interval-ms (5000); reuses DASHSCOPE_API_KEY (empty key = submit error).
 FAQ: restyle is an independent output mode (RestyleTask), never mixed into export history; takes 1-5 minutes, billing = input + output duration (720P baseline); video input accepts public URL / oss temp URL only (protocol has no base64), local storage tasks FAILED with oss/minio switch guidance; spike live test passed motion/camera preservation + anime stylization; Kling transform is a 2-OPT alternative (requires KLING_API_KEY, not implemented); smoke -Drestyle=true skipped by default.
+
+## Phase 5 Slice 1: Local ComfyUI i2v
+
+No new endpoints; existing APIs extended:
+
+| Method | Path | Change |
+|---|---|---|
+| GET | /api/video/videos/generators | list gains comfyui (available depends on ComfyUI running + workflow configured) |
+| PUT | /api/video/videos/generator?type=comfyui | switch to local ComfyUI i2v |
+
+Config: video.comfyui.base-url (default http://127.0.0.1:8188)/workflow-path (default docs/comfyui/wan22_i2v_5b.template.json, env COMFYUI_WORKFLOW)/fps (24)/timeout-seconds (1800)/poll-interval-ms (3000).
+FAQ: template-agnostic placeholder substitution — export a calibrated workflow from ComfyUI after Phase 0 and override; local storage first-frame pass-through (same-origin byte fetch), no oss/minio needed; local×dashscope-wan still guides oss/minio as before; frames 4n+1, 720P->1280x704 (measured) / 480P->832x480; video.workers=1 recommended for the comfyui route; ComfyUI down => available=false, default none unchanged; smoke -Dcomfyui=true skipped by default.
+
+## Phase 5 Slice 3: Local ComfyUI SD1.5+LoRA Storyboards
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | /api/video/images/generators | list gains comfyui (available depends on ComfyUI running + templates present) |
+| PUT | /api/video/images/generator?type=comfyui | switch to local SD1.5+LoRA storyboards |
+| POST/PUT | /api/video/characters | body gains loraName/triggerWord (null keeps old, empty string clears); GET list gains both keys |
+
+Config: image.comfyui.workflow-plain/lora/canny (env COMFYUI_IMG_*)/controlnet-enabled (default false)/timeout-seconds 120/poll-interval-ms 1000; base-url reuses video.comfyui.base-url.
+FAQ: LoRA routing only when a character card carries loraName AND the generator supportsLora, otherwise legacy path verbatim; trigger words injected only when non-empty (single assembly point ShotPromptAssembler); ControlNet reference image fetched same-origin (local storage loop); 720 height->704 (measured); SD1.5 plain VAEDecode; smoke -Dtest=ComfyUiImageRealSmokeTest -Dcomfyui=true skipped by default.
+
+## Phase 5 Track B: Commentary Automation (Commentary Studio /commentary-studio)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | /api/video/scripts?format=commentary | list commentary scripts only (format separation; legacy AI drama not mixed in) |
+| POST | /api/video/scripts/commentary/import | import commentary JSON (title/theme/shots[]; shots[].insert.attribution -> insertAttribution) |
+| PUT | /api/video/scripts/{id}/format | set format (whitelist null/commentary) |
+| POST | /api/video/assets | multipart upload ingest (file/name/tags/trimStart/trimEnd; video ffprobe duration + optional trim) |
+| GET | /api/video/assets | asset list (current user) |
+| DELETE | /api/video/assets/{id} | delete asset (ownership check) |
+| POST | /api/video/assets/scan | folder batch scan ingest (reads configured dir only; convention epNN_label_name.mp4/png) |
+| POST | /api/video/scripts/{id}/shots/{shotId}/asset | bind asset to shot (assetId/asVideo/durationOverride; kind guard + IMAGE invalidates stale video) |
+| POST | /api/video/export/hd/async | async HD export (body same as /export/hd; returns {jobId,status:RUNNING}) |
+| GET | /api/video/export/jobs/{id} | async export job status (RUNNING/SUCCESS/FAILED + data/message; ownership check) |
+
+Config: video.commentary.max-insert-ratio (0.2, insert-ratio guard)/attribution-font (empty, attribution watermark Chinese font)/import-dir (empty, scan dir).
+FAQ: insert ratio = sum(insert shot dur)/sum(total dur), over-limit export rejected (no insert shots always passes, zero impact on legacy AI drama); compose TTS pre-probe raises per-shot effective duration to avoid narration truncation, short clips get -stream_loop -1 loop fill; attribution drawtext expansion=none prevents %{...} injection, Chinese needs fontfile; async export reuses the restyle idiom (single-thread pool + SecurityContext propagation + futures terminal eviction), sync /export/hd unchanged; smoke -Dtest=VideoComposeAutoFitTest -Dcommentary=true skipped by default.

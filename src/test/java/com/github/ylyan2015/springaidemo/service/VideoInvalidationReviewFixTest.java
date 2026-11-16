@@ -43,7 +43,7 @@ class VideoInvalidationReviewFixTest {
         shotRepo = mock(StoryShotRepository.class);
         UserRepository userRepo = mock(UserRepository.class);
         scriptService = new StoryScriptService(scriptRepo, shotRepo, userRepo,
-                mock(VideoScriptService.class), mock(StoryCharacterRepository.class));
+                mock(VideoScriptService.class), mock(StoryCharacterRepository.class), null);
         User u = new User();
         u.setId(1L);
         u.setUsername("alice");
@@ -120,7 +120,8 @@ class VideoInvalidationReviewFixTest {
                 new com.github.ylyan2015.springaidemo.video.ShotPromptAssembler(),
                 new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
                         mock(StoryCharacterRepository.class),
-                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)));
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
+                new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false));
 
         StoryShot updated = imageService.generateForShot(7L, 3L, null);
 

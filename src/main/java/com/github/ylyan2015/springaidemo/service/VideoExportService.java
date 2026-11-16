@@ -15,8 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -24,6 +27,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -48,6 +57,30 @@ public class VideoExportService {
     /** Phase 4 切片 4：音效推荐总开关（默认关，开启且请求勾选 sfx 才推荐混音） */
     @Value("${video.sfx.enabled:false}")
     private boolean sfxEnabled;
+
+    /** Task 5：评论引用占比上限（引用镜时长/总时长；超限拒绝导出，版权护栏） */
+    @Value("${video.commentary.max-insert-ratio:0.2}")
+    private double maxInsertRatio;
+
+    /** Task 6：异步导出专用单线程池（分钟级长任务，与请求线程隔离；idiom 同转绘） */
+    private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "export-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** 异步导出 Future 表（jobId → 结果 map）；awaitAndGetForTest 等待终态 */
+    private final Map<Long, CompletableFuture<Map<String, Object>>> futures = new ConcurrentHashMap<>();
+
+    /** 异步导出任务归属（jobId → userId）；jobStatus 归属校验 */
+    private final Map<Long, Long> jobOwners = new ConcurrentHashMap<>();
+
+    private final AtomicLong jobSeq = new AtomicLong(0);
+
+    @PreDestroy
+    public void shutdown() {
+        exportExecutor.shutdown();
+    }
 
     private final StoryScriptRepository scriptRepository;
     private final StoryShotRepository shotRepository;
@@ -132,6 +165,92 @@ public class VideoExportService {
         String res = normalizeResolution(resolution);
         return doExport(scriptId, userId, res, normalizeAspect(aspectRatio), bgmId, subtitle, withLogo, false,
                 subtitleLanguage, postFlags == null ? PostFlags.NONE : postFlags);
+    }
+
+    /**
+     * 异步高清导出（Task 6）：提交即返 jobId/RUNNING，worker 线程执行 exportHdWithPost。
+     * 复用转绘 idiom：SecurityContext 提交捕获/worker set/finally clear、单线程池、futures 终态清理。
+     * 同步 /export/hd 保持不动。
+     */
+    public Map<String, Object> exportHdAsync(Long scriptId, String resolution, String aspectRatio, Long bgmId,
+                                             boolean subtitle, boolean withLogo, String subtitleLanguage,
+                                             PostFlags postFlags) {
+        Long userId = getCurrentUserId();
+        long jobId = jobSeq.incrementAndGet();
+        PostFlags flags = postFlags == null ? PostFlags.NONE : postFlags;
+        SecurityContext ctx = SecurityContextHolder.getContext();
+        CompletableFuture<Map<String, Object>> future = CompletableFuture.supplyAsync(() -> {
+            SecurityContextHolder.setContext(ctx);
+            try {
+                Map<String, Object> data = exportHdWithPost(scriptId, resolution, aspectRatio, bgmId,
+                        subtitle, withLogo, subtitleLanguage, flags);
+                Map<String, Object> ok = new LinkedHashMap<>(data);
+                ok.put("status", "SUCCESS");
+                return ok;
+            } catch (Exception e) {
+                log.error("Async export job {} failed: {}", jobId, e.getMessage(), e);
+                Map<String, Object> fail = new LinkedHashMap<>();
+                fail.put("status", "FAILED");
+                fail.put("message", e.getMessage());
+                return fail;
+            } finally {
+                SecurityContextHolder.clearContext();
+            }
+        }, exportExecutor);
+        // 清理已终态历史条目防内存无限增长（idiom 同转绘）；不用 whenComplete 立即移除避免 seam 查不到
+        futures.entrySet().removeIf(e -> e.getValue().isDone());
+        jobOwners.keySet().retainAll(futures.keySet());
+        futures.put(jobId, future);
+        jobOwners.put(jobId, userId);
+        log.info("Async export job {} submitted (user {}, script {})", jobId, userId, scriptId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("jobId", jobId);
+        result.put("status", "RUNNING");
+        return result;
+    }
+
+    /** 异步导出任务状态查询（归属校验）：RUNNING/SUCCESS/FAILED + 结果/错误 */
+    public Map<String, Object> jobStatus(long jobId) {
+        Long userId = getCurrentUserId();
+        Long owner = jobOwners.get(jobId);
+        if (owner == null || !owner.equals(userId)) {
+            throw new IllegalArgumentException("导出任务不存在或无权访问: " + jobId);
+        }
+        CompletableFuture<Map<String, Object>> future = futures.get(jobId);
+        if (future == null) {
+            throw new IllegalArgumentException("无此导出任务的异步记录: " + jobId);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("jobId", jobId);
+        if (!future.isDone()) {
+            result.put("status", "RUNNING");
+            return result;
+        }
+        try {
+            Map<String, Object> data = future.get();
+            result.put("status", data.getOrDefault("status", "SUCCESS"));
+            if (data.containsKey("message")) {
+                result.put("message", data.get("message"));
+            }
+            result.put("data", data);
+        } catch (Exception e) {
+            result.put("status", "FAILED");
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /** 包私有测试/冒烟 seam：等待异步导出终态并返回结果 map（不依赖登录态） */
+    Map<String, Object> awaitAndGetForTest(long jobId) {
+        CompletableFuture<Map<String, Object>> future = futures.get(jobId);
+        if (future == null) {
+            throw new IllegalArgumentException("无此导出任务的异步记录: " + jobId);
+        }
+        try {
+            return future.get(10, TimeUnit.MINUTES);
+        } catch (Exception e) {
+            throw new RuntimeException("等待导出任务终态失败: " + e.getMessage(), e);
+        }
     }
 
     // ==================== 平台导出（模块 I） ====================
@@ -364,12 +483,14 @@ public class VideoExportService {
         if (shots.isEmpty()) {
             throw new RuntimeException("脚本没有镜头，无法导出");
         }
+        // Task 5：引用占比护栏（合成前前置校验，无插入镜 ratio=0 恒放行，存量 AI 短剧零影响）
+        checkInsertRatio(shots, maxInsertRatio);
         List<String> notReady = shots.stream()
-                .filter(s -> !"READY".equals(s.getImageStatus()) || s.getImageUrl() == null || s.getImageUrl().isBlank())
+                .filter(s -> !isShotMediaReady(s))
                 .map(s -> "镜头 " + s.getShotOrder())
                 .toList();
         if (!notReady.isEmpty()) {
-            throw new RuntimeException("以下镜头尚未生成图片: " + String.join("、", notReady));
+            throw new RuntimeException("以下镜头尚未就绪（需生成图片或绑定视频素材）: " + String.join("、", notReady));
         }
 
         // BGM 校验与文件定位（合成前完成，避免 FFmpeg 跑完才发现 BGM 不可用）
@@ -439,6 +560,8 @@ public class VideoExportService {
         }
 
         int[] size = resolveDimensions(resolution, aspectRatio);
+        // Task 5：逐镜出处水印（与 shots 平行；insertAttribution 非空镜叠加出处，空镜不叠加）
+        List<String> attributions = shots.stream().map(StoryShot::getInsertAttribution).toList();
         VideoComposeService.ComposeOptions options = new VideoComposeService.ComposeOptions()
                 .width(size[0])
                 .height(size[1])
@@ -448,7 +571,8 @@ public class VideoExportService {
                 .logoPath(logoFile)
                 .sfxTracks(sfxSpecs)
                 .upscale(postFlags.upscale())
-                .interpolate(postFlags.interpolate());
+                .interpolate(postFlags.interpolate())
+                .attributions(attributions);
         if (preview) {
             options.watermark(PREVIEW_WATERMARK);
         }
@@ -498,7 +622,42 @@ public class VideoExportService {
         m.put("videoUrl", shot.getVideoUrl());
         m.put("dialogue", shot.getDialogue());
         m.put("dialogueCharacterId", shot.getDialogueCharacterId());
+        m.put("insertAttribution", shot.getInsertAttribution());
         return m;
+    }
+
+    /**
+     * 镜头媒体就绪判定（t7 集成修正）：镜像 compose downloadShotsMedia 视频优先——
+     * videoUrl 非空须 videoStatus=READY；否则须 imageUrl 非空且 imageStatus=READY。
+     * Track B 评论视频绑定镜头仅有 videoUrl（无 imageUrl）须放行；存量 AI 短剧（图就绪）行为不变。
+     */
+    static boolean isShotMediaReady(StoryShot s) {
+        if (s.getVideoUrl() != null && !s.getVideoUrl().isBlank()) {
+            return "READY".equals(s.getVideoStatus());
+        }
+        return s.getImageUrl() != null && !s.getImageUrl().isBlank() && "READY".equals(s.getImageStatus());
+    }
+
+    /** Task 5 引用占比：Σdur(insertAttribution 非空)/Σdur(all)；空列表/总时长 0 返回 0 */
+    static double insertRatio(List<StoryShot> shots) {
+        int total = 0, insert = 0;
+        for (StoryShot s : shots) {
+            int d = s.getDurationSeconds() == null ? 5 : s.getDurationSeconds();
+            total += d;
+            if (s.getInsertAttribution() != null && !s.getInsertAttribution().isBlank()) {
+                insert += d;
+            }
+        }
+        return total == 0 ? 0.0 : (double) insert / total;
+    }
+
+    /** Task 5 引用占比护栏：超上限抛 IllegalArgumentException（无插入镜 ratio=0 恒放行） */
+    static void checkInsertRatio(List<StoryShot> shots, double max) {
+        double ratio = insertRatio(shots);
+        if (ratio > max) {
+            throw new IllegalArgumentException(String.format(
+                    "引用占比超限：%.0f%% > 上限 %.0f%%，请减少引用素材或增加原创镜头", ratio * 100, max * 100));
+        }
     }
 
     /** 导出记录公共字段（saveExportRecord 参数收敛，避免 16+ 参数方法签名） */

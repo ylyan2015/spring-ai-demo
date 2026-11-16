@@ -1,10 +1,12 @@
 package com.github.ylyan2015.springaidemo.service;
 
 import com.github.ylyan2015.springaidemo.entity.StoryCharacter;
+import com.github.ylyan2015.springaidemo.entity.MediaAsset;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.entity.User;
 import com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository;
+import com.github.ylyan2015.springaidemo.repository.MediaAssetRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryShotRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
@@ -37,17 +39,20 @@ public class StoryScriptService {
     private final UserRepository userRepository;
     private final VideoScriptService videoScriptService;
     private final StoryCharacterRepository characterRepository;
+    private final MediaAssetRepository mediaAssetRepository;
 
     public StoryScriptService(StoryScriptRepository scriptRepository,
                               StoryShotRepository shotRepository,
                               UserRepository userRepository,
                               VideoScriptService videoScriptService,
-                              StoryCharacterRepository characterRepository) {
+                              StoryCharacterRepository characterRepository,
+                              MediaAssetRepository mediaAssetRepository) {
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.userRepository = userRepository;
         this.videoScriptService = videoScriptService;
         this.characterRepository = characterRepository;
+        this.mediaAssetRepository = mediaAssetRepository;
     }
 
     // ==================== 脚本生成与保存 ====================
@@ -154,11 +159,84 @@ public class StoryScriptService {
     // ==================== 脚本查询 ====================
 
     /**
-     * 获取当前用户的所有脚本列表
+     * 获取当前用户的所有脚本列表（导演工作台：默认排除评论脚本）
      */
     public List<StoryScript> listScripts() {
+        return listScripts(null);
+    }
+
+    /**
+     * Phase 5 Track B：format="commentary" 仅评论；null/其他 排除评论（导演页零改动即分离）
+     */
+    public List<StoryScript> listScripts(String format) {
         Long userId = getCurrentUserId();
-        return scriptRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+        List<StoryScript> all = scriptRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+        if ("commentary".equals(format)) {
+            return all.stream().filter(s -> "commentary".equals(s.getFormat())).collect(Collectors.toList());
+        }
+        return all.stream().filter(s -> !"commentary".equals(s.getFormat())).collect(Collectors.toList());
+    }
+
+    /**
+     * Phase 5 Track B：导入评论类机读 JSON（kurumi-commentary-domestic.json schema）
+     */
+    @Transactional
+    public StoryScript importCommentary(Map<String, Object> json) {
+        StoryScript script = new StoryScript();
+        script.setUserId(getCurrentUserId());
+        script.setFormat("commentary");
+        script.setTitle(str(json.get("title"), "未命名漫评"));
+        script.setTheme(str(json.get("theme"), ""));
+        script.setStyle(str(json.get("style"), null));
+        script.setStatus("DRAFT");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> shots = (List<Map<String, Object>>) json.get("shots");
+        if (shots == null || shots.isEmpty()) {
+            throw new IllegalArgumentException("shots 不能为空");
+        }
+        int order = 1;
+        for (Map<String, Object> s : shots) {
+            StoryShot shot = new StoryShot();
+            shot.setShotOrder(order++);
+            shot.setDurationSeconds(intVal(s.get("durationSeconds"), 5));
+            shot.setNarration(str(s.get("narration"), null));
+            shot.setSceneDescription(str(s.get("sceneDescription"), null));
+            shot.setImagePrompt(str(s.get("imagePrompt"), null));
+            shot.setShotSize(normalizeShotSize(str(s.get("shotSize"), null)));
+            shot.setCameraMovement(str(s.get("cameraMovement"), "固定"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> ins = (Map<String, Object>) s.get("insert");
+            if (ins != null) {
+                shot.setInsertAttribution(str(ins.get("attribution"), "评论引用"));
+            }
+            shot.setImageStatus("PENDING");
+            script.addShot(shot);
+        }
+        return scriptRepository.save(script);
+    }
+
+    /**
+     * Phase 5 Track B：脚本形态更新（导演↔评论）
+     */
+    @Transactional
+    public StoryScript updateFormat(Long scriptId, String format) {
+        // 审查 Minor#2：format 契约 null|commentary，白名单校验（对齐 updateStyle/updateContinuity idiom，防大小写静默错分与超长列违约）
+        String f = format == null || format.isBlank() ? null : format.trim();
+        if (f != null && !"commentary".equals(f)) {
+            throw new IllegalArgumentException("不支持的脚本形态: " + format);
+        }
+        StoryScript script = getScript(scriptId);
+        script.setFormat(f);
+        script.setUpdatedAt(LocalDateTime.now());
+        return scriptRepository.save(script);
+    }
+
+    private static String str(Object v, String def) {
+        return v instanceof String s && !s.isBlank() ? s : def;
+    }
+
+    private static int intVal(Object v, int def) {
+        return v instanceof Number n ? n.intValue() : def;
     }
 
     /**
@@ -283,6 +361,49 @@ public class StoryScriptService {
     // ==================== 镜头管理 ====================
 
     /**
+     * Phase 5 Track B：镜头绑定素材（归属双校验：script 属当前用户 + asset 属当前用户）
+     * asVideo → videoUrl/videoFileId/videoStatus=READY 且 durationSeconds=override||asset.duration；
+     * 否则 imageUrl/imageFileId/imageStatus=READY（不写 video 字段）
+     */
+    @Transactional
+    public StoryShot bindAsset(Long scriptId, Long shotId, Long assetId, boolean asVideo, Integer durationOverride) {
+        StoryScript script = getScript(scriptId);
+        StoryShot shot = shotRepository.findByIdAndScriptId(shotId, scriptId)
+                .orElseThrow(() -> new RuntimeException("镜头不存在: " + shotId));
+        Long userId = getCurrentUserId();
+        MediaAsset asset = mediaAssetRepository.findById(assetId)
+                .orElseThrow(() -> new IllegalArgumentException("素材不存在: " + assetId));
+        if (!asset.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权绑定该素材: " + assetId);
+        }
+        // 审查 Major#2：kind 护栏 fail-fast（IMAGE 绑为视频会 durationSeconds=null 致 scriptToMap NPE 变砖；VIDEO 绑为图污染 i2v 管线）
+        if (asVideo && !"VIDEO".equals(asset.getKind())) {
+            throw new IllegalArgumentException("仅视频素材可绑定为视频片段: " + assetId);
+        }
+        if (!asVideo && !"IMAGE".equals(asset.getKind())) {
+            throw new IllegalArgumentException("仅图片素材可绑定为主视觉图: " + assetId);
+        }
+        if (asVideo) {
+            shot.setVideoUrl(asset.getUrl());
+            shot.setVideoFileId(asset.getFileId());
+            shot.setVideoStatus("READY");
+            shot.setDurationSeconds(durationOverride != null ? durationOverride : asset.getDurationSeconds());
+        } else {
+            // 审查 Major#1：图变更失效旧视频/尾帧（对齐 updateShot idiom，防导出静默混入与新图不符的旧片段）
+            if (!java.util.Objects.equals(asset.getUrl(), shot.getImageUrl())
+                    || !java.util.Objects.equals(asset.getFileId(), shot.getImageFileId())) {
+                shot.invalidateVideo();
+            }
+            shot.setImageUrl(asset.getUrl());
+            shot.setImageFileId(asset.getFileId());
+            shot.setImageStatus("READY");
+        }
+        script.setUpdatedAt(LocalDateTime.now());
+        scriptRepository.save(script);
+        return shotRepository.save(shot);
+    }
+
+    /**
      * 更新单个镜头的内容
      */
     @Transactional
@@ -355,6 +476,9 @@ public class StoryScriptService {
         }
         if (updates.containsKey("dialogue")) {
             shot.setDialogue((String) updates.get("dialogue"));
+        }
+        if (updates.containsKey("insertAttribution")) {
+            shot.setInsertAttribution((String) updates.get("insertAttribution"));
         }
         if (updates.containsKey("dialogueCharacterId")) {
             Object v = updates.get("dialogueCharacterId");
@@ -518,6 +642,7 @@ public class StoryScriptService {
         map.put("idea", script.getIdea());
         map.put("status", script.getStatus());
         map.put("style", script.getStyle());
+        map.put("format", script.getFormat());
         map.put("continuityMode", script.getContinuityMode() != null ? script.getContinuityMode() : "NONE");
         map.put("characters", characterRepository.findByScriptIdOrderByIdAsc(script.getId()).stream()
                 .map(StoryCharacterService::characterToMap).collect(Collectors.toList()));
@@ -564,6 +689,7 @@ public class StoryScriptService {
         map.put("lastFrameUrl", shot.getLastFrameUrl());
         map.put("dialogue", shot.getDialogue());
         map.put("dialogueCharacterId", shot.getDialogueCharacterId());
+        map.put("insertAttribution", shot.getInsertAttribution());
         return map;
     }
 

@@ -12,6 +12,7 @@ import com.github.ylyan2015.springaidemo.video.ShotPromptAssembler;
 import com.github.ylyan2015.springaidemo.video.generator.GeneratedImage;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGenerator;
 import com.github.ylyan2015.springaidemo.video.generator.ImageGeneratorFactory;
+import com.github.ylyan2015.springaidemo.video.generator.LoraResolver;
 import com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver;
 import com.github.ylyan2015.springaidemo.video.quality.ImageQualityService;
 import org.junit.jupiter.api.AfterEach;
@@ -45,7 +46,7 @@ class ImageGenerationServiceCharacterRefsTest {
         when(quality.isEnabled()).thenReturn(false);
         resolver = mock(ReferenceImageResolver.class);
         service = new ImageGenerationService(factory, scriptRepo, shotRepo, userRepo,
-                new ObjectMapper(), quality, new ShotPromptAssembler(), resolver);
+                new ObjectMapper(), quality, new ShotPromptAssembler(), resolver, new LoraResolver(false));
 
         User u = new User();
         u.setId(1L);

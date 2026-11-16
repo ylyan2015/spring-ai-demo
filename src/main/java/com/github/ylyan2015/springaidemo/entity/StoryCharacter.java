@@ -42,6 +42,14 @@ public class StoryCharacter {
     @Column(length = 100)
     private String voice = "zh-CN-XiaoxiaoNeural";
 
+    /** 角色 LoRA 文件名（Phase 5 切片 3：本地 SD1.5+LoRA 身份一致性） */
+    @Column(length = 200)
+    private String loraName;
+
+    /** LoRA 触发词（注入 prompt，如 saki_chan） */
+    @Column(length = 100)
+    private String triggerWord;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -76,6 +84,10 @@ public class StoryCharacter {
     public void setReferenceImageUrl(String referenceImageUrl) { this.referenceImageUrl = referenceImageUrl; }
     public String getVoice() { return voice; }
     public void setVoice(String voice) { this.voice = voice; }
+    public String getLoraName() { return loraName; }
+    public void setLoraName(String loraName) { this.loraName = loraName; }
+    public String getTriggerWord() { return triggerWord; }
+    public void setTriggerWord(String triggerWord) { this.triggerWord = triggerWord; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

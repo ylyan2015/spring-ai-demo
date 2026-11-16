@@ -61,7 +61,8 @@ class ImageGenerationServiceQualityTest {
                 new com.github.ylyan2015.springaidemo.video.ShotPromptAssembler(),
                 new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
                         mock(com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository.class),
-                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)));
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
+                new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false));
 
         // 登录上下文（三参构造才是已认证状态）
         SecurityContextHolder.getContext().setAuthentication(

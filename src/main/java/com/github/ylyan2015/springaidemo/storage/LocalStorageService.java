@@ -22,6 +22,9 @@ public class LocalStorageService implements StorageService {
 
     private static final Logger log = LoggerFactory.getLogger(LocalStorageService.class);
 
+    /** 最终成片归置目录（相对 basePath）：视频/封面直出，与中间产物日期目录分离 */
+    private static final String FINAL_DIR = "final";
+
     private final StorageProperties.Local config;
     private final Path basePath;
 
@@ -60,6 +63,42 @@ public class LocalStorageService implements StorageService {
         } catch (IOException e) {
             throw new StorageException("本地文件上传失败: " + fileName, e);
         }
+    }
+
+    @Override
+    public String uploadFinal(InputStream inputStream, String title, String category,
+                              String extension, String contentType) {
+        try {
+            Path targetDir = basePath.resolve(FINAL_DIR);
+            Files.createDirectories(targetDir);
+
+            String safeTitle = sanitizeFileName(title);
+            String base = safeTitle.isEmpty()
+                    ? (category == null ? "final" : category.trim())
+                    : safeTitle + "-" + (category == null ? "" : category.trim());
+            String ext = extension == null ? "" : extension;
+            Path targetFile = targetDir.resolve(base + ext);
+            // 重名追加时间戳后缀保留历史版本，不覆盖
+            if (Files.exists(targetFile)) {
+                targetFile = targetDir.resolve(base + "-" + System.currentTimeMillis() + ext);
+            }
+
+            Files.copy(inputStream, targetFile);
+            long fileSize = Files.size(targetFile);
+            log.info("✓ 成片已归档: {}, 大小: {} bytes", targetFile, fileSize);
+            return FINAL_DIR + "/" + targetFile.getFileName().toString();
+        } catch (IOException e) {
+            throw new StorageException("成片归档失败: " + title, e);
+        }
+    }
+
+    /** 成片标题清洗：去非法文件名字符与路径穿越（..），超长截断 80 字符 */
+    static String sanitizeFileName(String title) {
+        if (title == null) {
+            return "";
+        }
+        String cleaned = title.replaceAll("[\\\\/:*?\"<>|]", "").replace("..", "").trim();
+        return cleaned.length() > 80 ? cleaned.substring(0, 80) : cleaned;
     }
 
     @Override

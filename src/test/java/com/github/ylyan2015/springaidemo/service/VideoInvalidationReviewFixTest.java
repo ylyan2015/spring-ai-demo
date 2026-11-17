@@ -121,7 +121,8 @@ class VideoInvalidationReviewFixTest {
                 new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
                         mock(StoryCharacterRepository.class),
                         mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
-                new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false));
+                new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false),
+                mock(com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer.class));
 
         StoryShot updated = imageService.generateForShot(7L, 3L, null);
 

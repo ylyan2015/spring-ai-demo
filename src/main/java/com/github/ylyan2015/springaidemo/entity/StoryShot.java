@@ -99,6 +99,10 @@ public class StoryShot {
     @Column(name = "insert_attribution", length = 200)
     private String insertAttribution;
 
+    /** Phase 5 Track A：尾卡镜（true=跳过生图，纯色底+FFmpeg 压字本地渲染） */
+    @Column(name = "end_card")
+    private Boolean endCard;
+
     public StoryShot() {}
 
     // ==================== Getters and Setters ====================
@@ -172,4 +176,7 @@ public class StoryShot {
     public void setDialogueCharacterId(Long dialogueCharacterId) { this.dialogueCharacterId = dialogueCharacterId; }
     public String getInsertAttribution() { return insertAttribution; }
     public void setInsertAttribution(String insertAttribution) { this.insertAttribution = insertAttribution; }
+
+    public Boolean getEndCard() { return endCard; }
+    public void setEndCard(Boolean endCard) { this.endCard = endCard; }
 }

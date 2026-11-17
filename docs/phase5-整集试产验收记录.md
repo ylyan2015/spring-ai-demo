@@ -1,16 +1,4 @@
-git commit -m "feat(phase5): 本地 ComfyUI 生成链路与评论杂谈自动化工作台" -m "Track A（AI 短剧集·本地零云依赖）:
-- ComfyUI Wan2.2 i2v 与 SD1.5+LoRA 分镜生成器、注册与模板；角色卡 loraName/triggerWord 全链；local 存储首帧直通
-- 排产加固：输出节点解析 + metadata 免解码核帧；干净复测基线与整集试产验收
-
-Track B（评论杂谈·独立工作台 /commentary-studio）:
-- format 分离 + 解说 JSON 导入；素材库（上传/裁剪/文件夹扫描入库）；镜头素材绑定（视频片段/图片主视觉）
-- 合成自动对齐：TTS 预探测抬升有效时长 + 短片段循环填充；出处水印 + 引用占比≤20% 版权护栏
-- 异步高清导出 + jobs 轮询；导出媒体就绪判定兼容仅绑视频镜头（镜像合成视频优先）
-
-工具与文档:
-- 发片拼接/整集试产/ComfyUI 基准/评论 e2e 脚本；四双语文档、实施计划与验收记录同步
-
-验证：全量 397 绿；gated 冒烟 comfyui/commentary；API e2e 与浏览器 UI 全流程 PASS"# Phase 5 #1 整集试产验收记录（2026-11-15）
+# Phase 5 #1 整集试产验收记录（2026-11-15）
 
 > 驱动：`tools/e2e-local-episode.js`（node，raw http 长任务防 undici 300s 超时）
 > 实例：`mvn spring-boot:run --auth.captcha.debug-text=true --video.workers=1`（8080，验收后已停止）
@@ -136,6 +124,175 @@ Track B（评论杂谈·独立工作台 /commentary-studio）:
 
 **结论：浏览器全流程零缺陷**，无需修复（C1 模板截断/M1 错误掩码两类陷阱在本页均不存在）。导出面板状态文本保留最后一次任务结果（超限测试的 FAILED 文案）属预期行为。
 
+---
+
+# Phase 5 Track B 真实脚本端到端实测（FX《战士久留美》·2026-11-16）
+
+> 输入：`docs/story/FX/kurumi-commentary-domestic.json`（评论类 · 10 镜 92s · 5 处引用 insert · 主 9:16/B站 16:9）
+> 驱动：`tools/e2e-fx-kurumi.js`（probe/full 两模式，RSA-OAEP 认证 + cookie 会话）
+> 实例：`java -jar target/spring-ai-demo-2.0.0.jar --video.ffmpeg-path=… --video.ffprobe-path=… --video.python-command=…(edge-tts) --video.commentary.attribution-font=C:/Windows/Fonts/msyh.ttc --video.commentary.import-dir=data/scan-test --auth.captcha.debug-text=true`（8080，验收后停止）；账号 fx_kurumi_98185；scriptId=292
+> jar 陈旧已 `mvn -DskipTests clean package` 重建；生图后端 zhipu cogview-3-flash（~8.7s/张）
+
+## 结果：PASS（真实 FX 脚本跑通到 B站 16:9 成片）
+
+| 检查 | 结果 |
+|---|---|
+| 导入 FX JSON | ✅ 10 镜 format=commentary；5 镜自动挂 insertAttribution（第1/3/4话 · 评论引用） |
+| 引用占比护栏实测（导入即导出） | ✅ 拒绝「引用占比超限：49% > 上限 20%，请减少引用素材或增加原创镜头」（status=500） |
+| fallback（脚本 §1.4 素材缺失→原创画面顶替） | ✅ 清除 5 镜水印后引用归零（0/92），过护栏 |
+| 10 镜原创画面真实生成 | ✅ 全部 imageStatus READY（zhipu，逐镜同步端点） |
+| 异步导出 16:9 720p + jobs 轮询 | ✅ RUNNING→SUCCESS（约 50s，10 次轮询） |
+| 成片核验（ffprobe） | ✅ 1280×720 / 90.8s / 2724帧@30fps / aac 音轨（旁白 TTS+BGM）/ 5.4MB |
+| 抽帧目视 | ✅ 2s 钩子卡+字幕「一部开场就铺满风险警示…今天聊《FX战士久留美》。」+右下「AI生成」标识；45s 白银数据卡+对应旁白字幕 |
+
+成片：`uploads/2026/11/16/dde849c6-d0e6-49f6-9d0b-f17e3bddb137_video_1794810648698.mp4`（90.8s，16:9）
+
+## 关键发现：护栏口径 vs 脚本设计（真实脚本才暴露）
+
+- 护栏 `insertRatio` 以「带 insertAttribution 镜的**整段时长**」计引用（in-app compose 模型：绑定片段的镜整段即引用）→ FX 5 镜整段 45s/92s = **48.9%**。
+- 脚本 `insertPolicy.ratio=15.2%` 是「插入片段实际 2-3s 占各镜前段、其余原创」口径，对应 §4.1 **外部拼接工具** `auto-commentary-concat.js`，非 in-app 整镜模型。
+- **判定：非程序 bug**，是两套引用模型的口径差异。FX 长插入镜（8-10s）在 in-app 20% 上限下必然超限；合规出片走脚本自身 fallback（原创画面顶替、评论句式不变，本次实证）或外部拼接工具（有真实截图时）。
+- **建议（未改代码，留产品决策）**：若需 in-app 支持「短插入+长原创」混合镜，可让护栏按 `insert.seconds` 而非整镜时长计占比（需确认 + TDD 先红后绿）。
+
+## 观察（不阻断）
+
+- 末镜「纯黑文字尾卡」被 cogview 渲染为相机器材图——AI 生图对纯排版文字卡 prompt 的还原度波动，属内容侧（换文字渲染更强的 ark/dashscope 或后期文字卡叠加），非流程缺陷。
+- 合成时长 90.8s ≈ 名义 92s − 9×0.8 xfade + TTS 有效时长抬升（Task 4 自动对齐生效，旁白长于名义镜头时抬升填充）。
+
 ## 状态
 
 暂存不提交；验证实例已停止；四双语文档 + VIDEO_STUDIO_PLAN 已同步 Phase 5 Track B 节。
+
+---
+
+# Phase 5 Track A 真实脚本端到端实测（GTA6《十三年等待》·本地零云·2026-11-16）
+
+用 FX 同批的真实脚本 `docs/story/gta6/gta6-13-years-script.json`（16:9 横版母版，9 镜 75s，1 角色「阿哲」）驱动 **Track A（AI 短剧集·本地零云依赖）** 整条链路：ComfyUI SD1.5 分镜 → ComfyUI Wan2.2 i2v → edge-tts → FFmpeg 导出，图像/视频生成全程零云。
+
+## 结果 PASS
+
+| 环节 | 端点 | 实测 |
+|---|---|---|
+| 建脚本 | `POST /api/video/scripts`（storyboard 结构，shotOrder→order、voice→suggestedVoice） | scriptId=323，9 镜，Σ名义 75s |
+| 角色卡 | `GET /characters` + `PUT /{id}/style` CINEMATIC_REALISM | 阿哲(feature=Y)；style success |
+| 切零云源 | `PUT /images/generator?type=comfyui` + `/videos/generator?type=comfyui` | 均 success |
+| 分镜图 | `POST /images/shot/{sid}/{shid}` ×9 | **9/9 READY**，ComfyUI SD1.5 ~8s/张（12→77s） |
+| 图生视频 | `POST /videos/shot/{sid}/{shid}`（shot1 5s/121f、shot7 6s/145f） | **2/2 READY**，源 mp4 1.19MB/3.1MB（含运动） |
+| 高清导出 | `POST /export/hd` 16:9 720p 字幕+BGM calm+TTS | SUCCESS，url 落地 |
+| 成片核验 | ffprobe | **1280×720 h264 30fps / 71.5s / 2145 帧 / aac / 7.25MB** |
+| 抽帧目视 | 2s/20s/49s/68s | 旁白+对白字幕逐镜烧录正确；i2v 镜有运动 |
+
+成片：`uploads/2026/11/16/cad8e0c4-…_video_1794814256352.mp4`（scriptId=323 保留供前端查看）。
+
+## GPU 预算与耗时
+
+- i2v 帧数随时长线性增长（`computeFrames = min(15,dur)×24` 取 4n+1）；母版全量原生时长 i2v ≈ 1800 帧 ≈ **2+ 小时**，不现实。
+- 本次刻意只对 2 个短镜（shot1 钩子 5s、shot7 霓虹 6s）跑 i2v，其余 7 镜静图运镜合成——实测 shot1 ~13min、shot7 ~16min（含模型冷加载，慢于干净基线 5.1s/帧），全流程 total≈2001s(~33min)。
+- 结论：Track A 全量长镜 i2v 需按预算裁剪运动镜数，或降镜时长。
+
+## 观察（内容/合规侧，非流程缺陷）
+
+- **画风偏动漫**：prompt 与 style 均为「电影写实/photorealistic」，但本机 SD1.5 base checkpoint 为动漫向（anything-v5 系），出图渲染为动漫风。若要 GTA6 的写实电影感，需换写实 checkpoint（如 RealVis/Juggernaut 类），属模型选型而非链路问题。
+- **抽象/负向 prompt 还原波动**：shot9「纯黑无图像尾卡」被渲染为动漫人物（与 FX 末镜同现象）；AI 生图对「无文字/纯底」类 prompt 易幻化内容。
+- **Track A 无自动「AI 生成」可视角标**：compose 水印仅在 `insertAttribution` 非空时叠加（Track B 评论专用，本脚本全空），`withLogo` 为品牌 logo 图片（`video.watermark.logo-path` 未配置→跳过）。故成片无 AI 标识属当前实现预期；若面向 B站/抖音需强制「AI 生成」披露角标，是一个待补的合规特性（需确认 + TDD）。
+- **时长 71.5s vs 名义 68.6s**（75 − 8×0.8 xfade）：TTS 旁白有效时长抬升（Task 4 自动对齐），与 FX 实测同现象，非缺陷。
+
+## 状态
+
+Track A GTA6 零云链路实证 PASS；驱动 `tools/e2e-gta6-track-a.js` 与本节记录暂存不提交；验证实例已停止。
+
+# Phase 5 Track A 真实脚本端到端实测（BLG 夺冠双脚本·本地零云·2026-11-16）
+
+> 驱动：`tools/e2e-blg-track-a.js <scriptFile> <i2vOrders>`（参数化，复用 GTA6 idiom，BGM 按 JSON `bgmCategory` 自动选取）。
+> 输入：`docs/story/BLG/blg-faker-mountain-script.json`（9 镜 74s，epic）、`docs/story/BLG/blg-23-years-script.json`（11 镜 94s，calm）。
+> 环境：ComfyUI 8188 存活、jar 14:25 版（无源码改动）、`--auth.captcha.debug-text=true --video.workers=1`。
+
+## 结果
+
+| 项 | 脚本二《那座山，翻过去了》(scriptId=354) | 脚本一《二十三年，把「玩」玩成正经事》(scriptId=355) |
+|---|---|---|
+| storyboard 导入 | PASS 9/9 镜 74s | PASS 11/11 镜 94s |
+| 画风/角色 | CINEMATIC_REALISM 成功；角色「无名选手」feature=Y | 同左 |
+| SD1.5 分镜 | 9/9 READY（~8s/张，75s 完成） | 11/11 READY（91s 完成） |
+| Wan2.2 i2v | shot1(6s/145f) @1005s、shot6(8s/193f) @2415s | shot1(7s/169f) @1270s、shot10(9s/217f) @2959s |
+| HD 导出 | PASS 1280×720 h264/aac，total 2478s(~41min) | PASS 1280×720，total 3038s(~51min) |
+| 成片 | `uploads/2026/11/16/cade484f-…_video_1794819083268.mp4`（95.6s） | `uploads/2026/11/16/a73d2da9-…_video_1794822529870.mp4`（130.0s） |
+| 抽帧目视 | 字幕逐镜正确（含「十三场不败」「1834 天」长句完整烧录）；shot1 雪山 i2v 电影感好；shot5/7 动漫风 | shot10 夺冠蒙太奇 i2v 情绪到位（举臂+水晶枢纽爆）；shot8 雅加达画面与旁白契合 |
+
+## 观察（内容侧，非流程缺陷）
+
+- **TTS 时长抬升显著**：脚本二 95.6s vs 名义 67.6s（+41%）、脚本一 130.0s vs 86.0s（+51%）——BLG 旁白密度远高于 GTA6（多镜 40+ 字），每镜被拉长到念完为止。发布前建议精简旁白或按抬升后时长重排分镜表（GTA6 仅 +4%）。
+- **尾卡幻化复现**：两份脚本的「黑底尾卡」均被 SD1.5 渲染为灰色抽象物（同 GTA6 shot9/FX 末镜）——尾卡应改走纯色/文字压图而非生图 prompt。
+- **screenCaptions 不落地**：JSON 中「屏幕字后期压」字段 Track A 管线不消费（仅烧录旁白/对白字幕），压字需发布环节补。
+- 画风偏动漫、无 AI 角标两项同 GTA6 观察，不再重复。
+
+## 状态
+
+Track A BLG 双脚本零云链路实证 PASS（2/2 成片）；驱动 `tools/e2e-blg-track-a.js` 暂存不提交；验证实例（pid 18584）已停止。
+
+---
+
+# Phase 5 Track A 修复复测（旁白精简 + 尾卡本地渲染·2026-11-16/17）
+
+> 用户看完 BLG 两片后指出两问题：①旁白太密致成片 +41%/+51%；②尾卡镜（S9/S11）SD1.5 幻化。本轮修复后重跑。
+
+## 修复 1：尾卡镜跳过生图（源码改动，TDD 先红后绿）
+
+- 评估结论：原链路**不支持**跳过生图——`ImageGenerationService.generateForShot` 无条件走 provider，导出校验要求每镜有媒体。采用最小侵入方案：生图阶段旁路，compose/字幕/导出零改动。
+- 实现：`StoryShot`/`Shot` 新增 `endCard` Boolean（ddl-auto=update 自动建列）；组装链路全点贯穿（controller mapToStoryboard、StoryScriptService saveFromStoryboard×2/toStoryboard/shotToMap）；`Boolean.TRUE.equals(endCard)` 时走新 `EndCardImageRenderer`（FFmpeg lavfi 纯色底 + drawtext 居中压字，fontfile=msyh.ttc、expansion=none，转义对齐 attributionFilter idiom），产物 PNG 入库按普通静图 READY；旁白仍正常 TTS+烧字幕。
+- 测试：新增 `EndCardImageRendererTest`（含真实 FFmpeg 渲染像素级核验：1280×720、黑角、中心亮带验中文落墨）、`ImageGenerationServiceEndCardTest`（4 用例）、`StoryScriptEndCardMapTest`（3 用例）；既有 5 个测试构造点补第 10 参。**全量回归 407/407 绿**，jar 重建 21:39。
+- JSON：脚本二 S9、脚本一 S11 加 `"endCard": true`；驱动 storyboard 映射透传 endCard。
+
+## 修复 2：旁白精简到 2.5 字/秒×名义时长
+
+- 两份 JSON 逐镜重写 narration，全部 ≤ round(2.5×dur)（脚本二 11–27 字/镜，脚本一 14–25 字/镜）；事实数字（比分/日期/1834 天等）让位给 screenCaptions/字幕卡，情绪落点保留；尾卡镜旁白即 endCardText 主句（兼作压字文本与 TTS）。校验脚本逐镜复核 OK。
+
+## 复测结果（重跑两片，均 PASS）
+
+| 项 | 脚本二《那座山》(scriptId=418) | 脚本一《二十三年》(scriptId=419) |
+|---|---|---|
+| 尾卡镜 | S9 `endcard_*.png` @93s（与 SD 镜同秒完成，零 GPU） | S11 `endcard_*.png` @92s |
+| i2v | shot1(6s) @1257s、shot6(8s/193f) @2826s | shot1(7s) @1370s、shot10(9s/217f) @3218s |
+| 成片时长 | **67.58s vs 名义 67.6s（偏差 0%，原 +41%）** | **85.97s vs 名义 86.0s（偏差 0%，原 +51%）** |
+| 尾卡抽帧 | 纯黑底白字「那座山，我们翻过去了。」无幻化 | 纯黑底白字「他们用二十三年，把「玩」玩成了正经事。」无幻化 |
+| 成片 | `uploads/2026/11/16/a250096e-…_video_1794842710624.mp4` | `uploads/2026/11/17/354b2d1a-…_video_1794846407554.mp4` |
+
+## 过程发现（运维侧）
+
+- **8s 镜 i2v（193 帧）实测 ~25min，顶到 `video.comfyui.timeout-seconds=1800` 红线**：首跑 shot6 超时 FAIL。复测以 `--video.comfyui.timeout-seconds=2700` 启动后通过；9s 镜（217 帧）@~31min 同余量不足。**2026-11-17 用户拍板：yml 默认值已上调 1800→2700**，后续无需再带启动参数。
+- **长阻塞期间服务端 session 过期致导出报「用户未登录」**：驱动加 keepAlive（2min 带 cookie 轮询 /api/video/bgm）后消除。
+- 中文旁白密度经验值再证：**2.5 字/秒 cap 下 TTS 抬升≈0**，可作 Track A 分镜表字数预算标准。
+
+## 状态
+
+两问题均修复并实片复验 PASS；源码/测试/JSON/驱动改动暂存不提交；验证实例已停止。
+
+---
+
+# Phase 5 成片归档（uploads/final/）验收（2026-11-17）
+
+> 用户诉求：uploads 日期目录文件太多，最终成品视频/封面单独规划文件夹，按「成片名称-图片/视频」命名。
+> 口径（AskUserQuestion 已定）：①仅成片视频+封面进 `final/`，中间产物留日期目录；②重名追加时间戳后缀防覆盖；③存量迁移=复制归集、不删原件。
+
+## 实现
+
+- **StorageService.uploadFinal（default 方法）**：新建 `uploadFinal(is, title, category, extension, contentType)`，default 降级为普通 `upload`（oss/minio/fastdfs 零影响）；LocalStorageService 覆写为 `uploads/final/<清洗后标题>-<类别>.<ext>`，重名自动追加 `-时间戳`。文件名清洗去 `\ / : * ? " < > |` 与 `..`、超 80 字符截断（防穿越 + Windows 合法）。
+- **标题贯穿**：`StoryScript.getTitle()` → `doExport` 设 `ComposeOptions.finalTitle`（仅 HD，preview 传 null）→ `storeVideo` 路由 uploadFinal；`generateCover` 捕获脚本标题 → `renderVideoCover` 三参重载走 uploadFinal。无标题一律回落 legacy `video_*/video_cover_*` 日期目录路径，存量零回归。
+- **访问无需改配置**：`/images/**` 映射 uploads 根，`/images/final/xxx.mp4` 自动可访问；download/delete 防穿越校验对子目录仍通过。
+
+## TDD（先红后绿，12 绿）
+
+- `LocalStorageServiceFinalTest` 7：友好命名/非法字符清洗/路径穿越/空标题/重名时间戳/80 截断/interface default 降级。
+- `VideoComposeServiceStoreFinalTest` 3：有 finalTitle→uploadFinal、无→legacy、空白→legacy。
+- `VideoExportFinalTitleWiringTest` 2：doExport 传 script 标题；generateCover 传标题。
+- 踩坑：Java 正则字符类匹配字面反斜杠须写 4 个反斜杠（`[\\\\/…]`），首版漏掉导致含 `\` 标题写入失败。
+
+## 验证
+
+- **全量回归**：`mvn clean package` **419/419 绿**（9 skipped），jar 重建。
+- **真实导出（无 GPU）**：`tools/verify-final-archive.js`——既有 PNG 绑镜标 READY → export/hd → `uploads/final/验收-成片归档-视频.mp4` + `-封面.jpg` 落地 PASS；重跑实测重名后缀 `…-视频-1794869987543.mp4` PASS。
+- **存量归集**：H2 离线导出 SUCCESS 记录（`target/dump-finals.sql`）→ `node tools/migrate-finals-to-archive.js` 实跑归档 **19 视频 + 3 封面**（另 2 条已在 final/ 跳过），日期目录原件全部保留；`uploads/final/` 现存 22 个友好命名成片。
+
+## 状态
+
+成片归档功能 PASS；源码/测试改动与两个 tools 脚本暂存不提交；验证实例已停止。

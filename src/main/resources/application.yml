@@ -160,7 +160,7 @@ video:
     base-url: ${COMFYUI_BASE_URL:http://127.0.0.1:8188}
     workflow-path: ${COMFYUI_WORKFLOW:docs/comfyui/wan22_i2v_5b.template.json}  # 占位符模板；Phase 0 从 ComfyUI 导出校准后覆盖
     fps: 24                           # Wan2.2 5B 原生 24fps；帧数自动对齐 4n+1
-    timeout-seconds: 1800             # 干净复测基线（2026-11-16）：49f≈226s/29f≈124s/边际5.1s帧；余量≥8×（A1 复核保持）
+    timeout-seconds: 2700             # 上调自 1800（2026-11-17 用户拍板）：实测 8s 镜 193f ~25min、9s 镜 217f ~31min 顶红线；基线 49f≈226s/边际5.1s帧
     poll-interval-ms: 3000
   # FFmpeg / ffprobe 可执行文件位置。默认裸名走系统 PATH（release 审查 M10：可移植）；
   # 不在 PATH 时用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定绝对路径。
@@ -182,6 +182,9 @@ video:
     max-insert-ratio: 0.2            # 引用占比上限（引用镜时长/总时长；超限拒绝导出，版权护栏）
     attribution-font: ""             # 出处水印字体文件（空=不带 fontfile；中文渲染需配置如 C:/Windows/Fonts/msyh.ttc，B0 教训）
     import-dir: ""                   # Task 6：批量入库扫描目录（空=禁用；仅读配置目录防遍历；文件名约定 epNN_标签_名称.mp4/png）
+  endcard:                           # Phase 5 Track A：尾卡镜（endCard=true 跳过生图，纯色底+FFmpeg 压字本地渲染）
+    font: C:/Windows/Fonts/msyh.ttc  # 压字字体（中文必须 fontfile，B0 教训；Linux/Docker 换 Noto Sans CJK）
+    color: black                     # 底色（lavfi color 表达式）
   # Phase 4 切片 4：导出后期增强（默认全关；工具未配置/执行失败时自动跳过不阻断导出）
   sfx:
     enabled: false                   # 音效推荐混音总开关（开启后导出勾选“音效”才生效；库见 sfx.library-path）

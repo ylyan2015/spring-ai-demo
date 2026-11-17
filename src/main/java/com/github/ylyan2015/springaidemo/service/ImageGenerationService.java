@@ -59,6 +59,7 @@ public class ImageGenerationService {
     private final ShotPromptAssembler promptAssembler;
     private final ReferenceImageResolver referenceResolver;
     private final LoraResolver loraResolver;
+    private final com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer endCardRenderer;
 
     /** 复用 Spring 自动配置的 ObjectMapper（已注册 JavaTimeModule，可正确序列化 LocalDateTime） */
     private final ObjectMapper objectMapper;
@@ -97,7 +98,8 @@ public class ImageGenerationService {
                                   ImageQualityService qualityService,
                                   ShotPromptAssembler promptAssembler,
                                   ReferenceImageResolver referenceResolver,
-                                  LoraResolver loraResolver) {
+                                  LoraResolver loraResolver,
+                                  com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer endCardRenderer) {
         this.generatorFactory = generatorFactory;
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
@@ -107,6 +109,7 @@ public class ImageGenerationService {
         this.promptAssembler = promptAssembler;
         this.referenceResolver = referenceResolver;
         this.loraResolver = loraResolver;
+        this.endCardRenderer = endCardRenderer;
     }
 
     /**
@@ -141,6 +144,11 @@ public class ImageGenerationService {
                 .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
         StoryShot shot = shotRepository.findByIdAndScriptId(shotId, scriptId)
                 .orElseThrow(() -> new RuntimeException("镜头不存在: " + shotId));
+
+        // Phase 5 Track A：尾卡镜旁路生图 provider，纯色底+FFmpeg 压字本地渲染（零 GPU/零云）
+        if (Boolean.TRUE.equals(shot.getEndCard())) {
+            return renderEndCard(shot, script);
+        }
 
         VisualStyle visualStyle = VisualStyle.fromName(style != null ? style : script.getStyle());
         List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
@@ -182,6 +190,48 @@ public class ImageGenerationService {
     }
 
     // ==================== 批量生成（SSE 进度推送） ====================
+
+    /**
+     * 尾卡镜本地渲染：压字文本取 narration（空则退 sceneDescription），产物按静图镜头入库，
+     * 后续运镜/导出链路零改动；不进质量评估（纯色卡无评估意义）
+     */
+    private StoryShot renderEndCard(StoryShot shot, StoryScript script) {
+        log.info("Rendering end card for shot {} of script {}", shot.getId(), script.getId());
+        shot.setImageStatus("GENERATING");
+        shotRepository.save(shot);
+        try {
+            String text = shot.getNarration() != null && !shot.getNarration().isBlank()
+                    ? shot.getNarration() : shot.getSceneDescription();
+            int[] size = endCardSize();
+            GeneratedImage image = endCardRenderer.render(text, size[0], size[1]);
+
+            shot.setImageUrl(image.getImageUrl());
+            shot.setImageFileId(image.getFileId());
+            shot.setImageStatus("READY");
+            shot.setQualityScore(null);
+            shot.invalidateVideo();
+            StoryShot saved = shotRepository.save(shot);
+
+            script.setUpdatedAt(LocalDateTime.now());
+            scriptRepository.save(script);
+            return saved;
+        } catch (Exception e) {
+            log.error("End card render failed for shot {}: {}", shot.getId(), e.getMessage());
+            shot.setImageStatus("FAILED");
+            shotRepository.save(shot);
+            throw new RuntimeException("尾卡渲染失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 尾卡尺寸：解析 image.generation.default-size（非法/缺失退 1280x720） */
+    private int[] endCardSize() {
+        try {
+            String[] parts = defaultSize.toLowerCase().split("x");
+            return new int[]{Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim())};
+        } catch (Exception e) {
+            return new int[]{1280, 720};
+        }
+    }
 
     /**
      * 为脚本所有镜头并行生成图片，通过 SSE 推送实时进度

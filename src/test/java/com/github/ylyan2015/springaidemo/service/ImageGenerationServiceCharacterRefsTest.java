@@ -46,7 +46,8 @@ class ImageGenerationServiceCharacterRefsTest {
         when(quality.isEnabled()).thenReturn(false);
         resolver = mock(ReferenceImageResolver.class);
         service = new ImageGenerationService(factory, scriptRepo, shotRepo, userRepo,
-                new ObjectMapper(), quality, new ShotPromptAssembler(), resolver, new LoraResolver(false));
+                new ObjectMapper(), quality, new ShotPromptAssembler(), resolver, new LoraResolver(false),
+                mock(com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer.class));
 
         User u = new User();
         u.setId(1L);

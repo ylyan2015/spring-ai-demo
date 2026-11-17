@@ -305,7 +305,7 @@ public class VideoExportService {
      */
     public Map<String, Object> generateCover(Long scriptId, Long exportId, Double timeOffset) {
         Long userId = getCurrentUserId();
-        requireOwnedScript(scriptId, userId);
+        StoryScript coverScript = requireOwnedScript(scriptId, userId);
 
         VideoExport record;
         if (exportId != null) {
@@ -326,7 +326,7 @@ public class VideoExportService {
 
         String coverUrl;
         try {
-            coverUrl = videoComposeService.renderVideoCover(record.getVideoUrl(), t);
+            coverUrl = videoComposeService.renderVideoCover(record.getVideoUrl(), t, coverScript.getTitle());
         } catch (Exception e) {
             log.error("Cover generation failed for export {}: {}", record.getId(), e.getMessage(), e);
             throw new RuntimeException("封面生成失败: " + e.getMessage());
@@ -572,7 +572,9 @@ public class VideoExportService {
                 .sfxTracks(sfxSpecs)
                 .upscale(postFlags.upscale())
                 .interpolate(postFlags.interpolate())
-                .attributions(attributions);
+                .attributions(attributions)
+                // 成片归档友好命名（仅高清正式版，预览水印版不落 final/）
+                .finalTitle(preview ? null : script.getTitle());
         if (preview) {
             options.watermark(PREVIEW_WATERMARK);
         }

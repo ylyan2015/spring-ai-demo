@@ -103,6 +103,7 @@ public class StoryScriptService {
                 shot.setImagePrompt(shotDto.getImagePrompt());
                 shot.setShotSize(normalizeShotSize(shotDto.getShotSize()));
                 shot.setDialogue(shotDto.getDialogue());
+                shot.setEndCard(shotDto.getEndCard());
                 shot.setImageStatus("PENDING");
                 script.addShot(shot);
             }
@@ -146,6 +147,7 @@ public class StoryScriptService {
                 shot.setImagePrompt(shotDto.getImagePrompt());
                 shot.setShotSize(normalizeShotSize(shotDto.getShotSize()));
                 shot.setDialogue(shotDto.getDialogue());
+                shot.setEndCard(shotDto.getEndCard());
                 shot.setImageStatus("PENDING");
                 script.addShot(shot);
             }
@@ -284,6 +286,7 @@ public class StoryScriptService {
             dto.setDialogue(entity.getDialogue());
             dto.setDialogueCharacterName(entity.getDialogueCharacterId() == null
                     ? null : idToName.get(entity.getDialogueCharacterId()));
+            dto.setEndCard(entity.getEndCard());
             return dto;
         }).collect(Collectors.toList());
 
@@ -690,6 +693,7 @@ public class StoryScriptService {
         map.put("dialogue", shot.getDialogue());
         map.put("dialogueCharacterId", shot.getDialogueCharacterId());
         map.put("insertAttribution", shot.getInsertAttribution());
+        map.put("endCard", shot.getEndCard());
         return map;
     }
 

@@ -19,6 +19,26 @@ public interface StorageService {
     String upload(InputStream inputStream, String fileName, String contentType);
 
     /**
+     * 上传最终成片（视频/封面），存入独立归置目录并友好命名 {@code 成片标题-类别.扩展名}。
+     * 默认降级为普通 upload（历史成片仍落日期目录，功能不受影响）；
+     * LocalStorageService 覆写为 uploads/final/，重名追加时间戳后缀防覆盖。
+     *
+     * @param inputStream  文件输入流
+     * @param title        成片标题（脚本名；非法字符由实现清洗）
+     * @param category     类别后缀（如「视频」「封面」）
+     * @param extension    含点扩展名（如 .mp4 / .jpg）
+     * @param contentType  文件类型
+     * @return 文件标识
+     */
+    default String uploadFinal(InputStream inputStream, String title, String category,
+                               String extension, String contentType) {
+        String safeTitle = title == null ? "" : title.trim();
+        String cat = category == null ? "" : category.trim();
+        String base = safeTitle.isEmpty() ? cat : (cat.isEmpty() ? safeTitle : safeTitle + "-" + cat);
+        return upload(inputStream, base + (extension == null ? "" : extension), contentType);
+    }
+
+    /**
      * 下载文件
      *
      * @param fileId 文件标识

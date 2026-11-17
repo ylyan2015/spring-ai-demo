@@ -16,6 +16,8 @@ public class Shot {
     private String dialogue;
     /** Phase 4 切片 4：对白角色名（持久化时 name→id 关联） */
     private String dialogueCharacterName;
+    /** Phase 5 Track A：尾卡镜（true=跳过生图，纯色底+FFmpeg 压字） */
+    private Boolean endCard;
 
     public Shot() {}
 
@@ -48,4 +50,7 @@ public class Shot {
 
     public String getDialogueCharacterName() { return dialogueCharacterName; }
     public void setDialogueCharacterName(String dialogueCharacterName) { this.dialogueCharacterName = dialogueCharacterName; }
+
+    public Boolean getEndCard() { return endCard; }
+    public void setEndCard(Boolean endCard) { this.endCard = endCard; }
 }

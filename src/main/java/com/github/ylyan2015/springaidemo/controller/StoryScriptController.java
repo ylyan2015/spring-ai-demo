@@ -592,6 +592,7 @@ public class StoryScriptController {
                         shot.setShotSize((String) s.get("shotSize"));
                         shot.setDialogue((String) s.get("dialogue"));
                         shot.setDialogueCharacterName((String) s.get("dialogueCharacterName"));
+                        if (s.get("endCard") instanceof Boolean ec) shot.setEndCard(ec);
                         return shot;
                     })
                     .collect(Collectors.toList());

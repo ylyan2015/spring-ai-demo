@@ -260,7 +260,7 @@ public class VideoComposeService {
                 }
             }
 
-            StoreResult stored = storeVideo(finalVideo);
+            StoreResult stored = storeVideo(finalVideo, options);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("videoUrl", stored.url());
@@ -1018,6 +1018,13 @@ public class VideoComposeService {
      * @return 封面图访问地址
      */
     public String renderVideoCover(String videoUrl, double timeOffsetSeconds) throws Exception {
+        return renderVideoCover(videoUrl, timeOffsetSeconds, null);
+    }
+
+    /**
+     * 封面生成 + 可选成片归档：title 非空时走 uploadFinal 存入 final/（标题-封面.jpg）。
+     */
+    public String renderVideoCover(String videoUrl, double timeOffsetSeconds, String title) throws Exception {
         Path workDir = Files.createTempDirectory("video-cover-");
         try {
             Path video = workDir.resolve("source.mp4");
@@ -1032,10 +1039,14 @@ public class VideoComposeService {
                     cover.toAbsolutePath().toString()
             ), workDir, "ffmpeg video cover");
 
-            String fileName = "video_cover_" + System.currentTimeMillis() + ".jpg";
             String fileId;
             try (var is = Files.newInputStream(cover)) {
-                fileId = storageService.upload(is, fileName, "image/jpeg");
+                if (title != null && !title.isBlank()) {
+                    fileId = storageService.uploadFinal(is, title, "封面", ".jpg", "image/jpeg");
+                } else {
+                    String fileName = "video_cover_" + System.currentTimeMillis() + ".jpg";
+                    fileId = storageService.upload(is, fileName, "image/jpeg");
+                }
             }
             String coverUrl = storageService.getAccessUrl(fileId);
             log.info("Video cover rendered at {}s: {}", String.format("%.1f", timeOffsetSeconds), coverUrl);
@@ -1048,12 +1059,23 @@ public class VideoComposeService {
     // ==================== Storage ====================
 
     /** 存储结果：访问地址 + 文件大小 */
-    private record StoreResult(String url, long fileSizeBytes) {}
+    record StoreResult(String url, long fileSizeBytes) {}
 
-    private StoreResult storeVideo(Path videoFile) throws IOException {
-        String fileName = "video_" + System.currentTimeMillis() + ".mp4";
+    /** 包私有测试 seam：直调 storeVideo 验证 finalTitle 路由 */
+    StoreResult storeVideoForTest(Path videoFile, ComposeOptions options) throws IOException {
+        return storeVideo(videoFile, options);
+    }
+
+    private StoreResult storeVideo(Path videoFile, ComposeOptions options) throws IOException {
+        String title = options == null ? null : options.getFinalTitle();
         try (InputStream is = Files.newInputStream(videoFile)) {
-            String fileId = storageService.upload(is, fileName, "video/mp4");
+            String fileId;
+            if (title != null && !title.isBlank()) {
+                // 成片归档：final/友好命名（标题-视频.mp4），重名追加时间戳
+                fileId = storageService.uploadFinal(is, title, "视频", ".mp4", "video/mp4");
+            } else {
+                fileId = storageService.upload(is, "video_" + System.currentTimeMillis() + ".mp4", "video/mp4");
+            }
             String url = storageService.getAccessUrl(fileId);
             long size = Files.size(videoFile);
             log.info("Video stored: fileId={}, url={}, size={} bytes", fileId, url, size);
@@ -1215,6 +1237,7 @@ public class VideoComposeService {
         private boolean upscale;
         private boolean interpolate;
         private List<String> attributions;
+        private String finalTitle;
 
         public ComposeOptions width(int width) { this.width = width; return this; }
         public ComposeOptions height(int height) { this.height = height; return this; }
@@ -1227,6 +1250,7 @@ public class VideoComposeService {
         public ComposeOptions upscale(boolean upscale) { this.upscale = upscale; return this; }
         public ComposeOptions interpolate(boolean interpolate) { this.interpolate = interpolate; return this; }
         public ComposeOptions attributions(List<String> attributions) { this.attributions = attributions; return this; }
+        public ComposeOptions finalTitle(String finalTitle) { this.finalTitle = finalTitle; return this; }
 
         public int getWidth() { return width; }
         public int getHeight() { return height; }
@@ -1239,6 +1263,7 @@ public class VideoComposeService {
         public boolean isUpscale() { return upscale; }
         public boolean isInterpolate() { return interpolate; }
         public List<String> getAttributions() { return attributions; }
+        public String getFinalTitle() { return finalTitle; }
     }
 
     // ==================== Utilities ====================

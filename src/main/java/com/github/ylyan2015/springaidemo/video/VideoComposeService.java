@@ -185,7 +185,7 @@ public class VideoComposeService {
                 audioFiles = generateTtsAudio(linesPerShot, durations, workDir);
             }
 
-            // Task 4 合成自动对齐：TTS 预探测——逐镜有效时长 = max(镜头时长, ceil(旁白音频实测时长))，
+            // Task 4 合成自动对齐：TTS 预探测——逐镜有效时长取 max(镜头时长, 旁白实测 + 转场余量)，
             // 防旁白比镜头长被 -shortest 截断；真片段短于有效时长时循环填充（needsLoop），静图本就 -loop 1 无限流
             List<Integer> effectiveDurations = new ArrayList<>();
             List<Boolean> needsLoop = new ArrayList<>();
@@ -193,7 +193,8 @@ public class VideoComposeService {
                 int eff = durations.get(i);
                 if (audioFiles != null && i < audioFiles.size() && audioFiles.get(i) != null
                         && Files.exists(audioFiles.get(i))) {
-                    eff = Math.max(eff, probeDurationSecondsCeil(audioFiles.get(i)));
+                    eff = effectiveDurationFor(eff, probeDurationExact(audioFiles.get(i)),
+                            i < durations.size() - 1);
                 }
                 effectiveDurations.add(eff);
                 needsLoop.add(Boolean.TRUE.equals(media.isVideo().get(i)) && durations.get(i) < eff);
@@ -700,11 +701,6 @@ public class VideoComposeService {
         return (int) Math.round(probeDurationExact(video));
     }
 
-    /** ffprobe 实测时长（秒，向上取整；Task 4 TTS 预探测用，防旁白尾部被截） */
-    public int probeDurationSecondsCeil(Path video) {
-        return (int) Math.ceil(probeDurationExact(video));
-    }
-
     /** ffprobe 实测时长（秒，精确 double）；输出落盘+先 waitFor，对齐 executeCommand 超时 idiom */
     private double probeDurationExact(Path video) {
         Path outFile = null;
@@ -868,6 +864,16 @@ public class VideoComposeService {
         cmd.add("--write-media");
         cmd.add(mp3File.toAbsolutePath().toString());
         return cmd;
+    }
+
+    /**
+     * 逐镜有效时长（包私有测试 seam）：音轨床被 xfade 压缩后，「有效时长 ≥ ceil(旁白)」不再等价于
+     * 「床长 ≥ 旁白」，旁白贴着名义时长仍会溢出床尾把后续口播整体推后。故后一镜存在转场时，
+     * 至少抬到 ceil(旁白 + xfade)；末镜床等于全长，不需余量。名义时长本身已容得下床长时不拉长画面。
+     */
+    static int effectiveDurationFor(int baseSeconds, double narrationSeconds, boolean hasFollowingTransition) {
+        double needed = narrationSeconds + (hasFollowingTransition ? XFADE_DURATION : 0);
+        return Math.max(baseSeconds, (int) Math.ceil(needed));
     }
 
     /**

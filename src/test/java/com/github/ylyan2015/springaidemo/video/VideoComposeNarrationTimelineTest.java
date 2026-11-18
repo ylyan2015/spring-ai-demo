@@ -71,4 +71,54 @@ class VideoComposeNarrationTimelineTest {
         // 音轨床必须短于 Σ有效，否则画面 80s 而口播 93s（旧缺陷）
         assertTrue(bedTotal < sum);
     }
+
+    // ==================== TTS 抬升须留转场余量 ====================
+    // 床被压缩后，「有效时长 ≥ ceil(旁白)」不再等于「床 ≥ 旁白」：
+    // 旁白贴着名义时长时仍会溢出床尾，把后续所有镜的口播推后一个零头。
+
+    @Test
+    void narrationFittingComfortablyKeepsNominalDuration() {
+        assertEquals(7, VideoComposeService.effectiveDurationFor(7, 3.50, true));
+    }
+
+    @Test
+    void narrationNearlyFillingShotGainsXfadeHeadroom() {
+        // #738 镜 4：名义 5s、旁白 4.44s → 有效 6s 才让 5.2s 的床装得下语音
+        assertEquals(6, VideoComposeService.effectiveDurationFor(5, 4.44, true));
+    }
+
+    @Test
+    void narrationExactlyFillingBedIsNotBumped() {
+        // 床 5−0.8=4.2s，旁白 4.2s 恰好放下 → 不该无谓拉长画面
+        assertEquals(5, VideoComposeService.effectiveDurationFor(5, 4.2, true));
+    }
+
+    @Test
+    void lastShotNeedsNoHeadroomBecauseItsBedIsFullLength() {
+        assertEquals(5, VideoComposeService.effectiveDurationFor(5, 4.44, false));
+    }
+
+    @Test
+    void longNarrationExtendsShotPastNominal() {
+        assertEquals(11, VideoComposeService.effectiveDurationFor(4, 9.6, true));
+    }
+
+    @Test
+    void everyShotBedFitsItsOwnNarration() {
+        // #738 实测名义与旁白：逐镜床长必须 ≥ 该镜旁白，否则口播逐镜串位到下一条字幕
+        int[] nominal = {4, 5, 4, 5, 7, 6, 7, 5, 5, 5, 6, 6, 6, 8, 5, 4, 4};
+        double[] tts = {2.23, 2.59, 2.62, 4.44, 3.50, 2.64, 3.53, 2.95, 2.50, 2.28,
+                2.35, 4.03, 2.52, 4.32, 2.18, 2.90, 2.74};
+        List<Integer> effective = new java.util.ArrayList<>();
+        for (int i = 0; i < nominal.length; i++) {
+            effective.add(VideoComposeService.effectiveDurationFor(nominal[i], tts[i], i < nominal.length - 1));
+        }
+        List<Double> bed = VideoComposeService.audioBedDurations(effective, XF);
+
+        assertEquals(6, (int) effective.get(3), "镜 4 应被抬到 6s");
+        for (int i = 0; i < bed.size(); i++) {
+            assertTrue(bed.get(i) + 1e-9 >= tts[i],
+                    String.format("镜 %d 床 %.2fs < 旁白 %.2fs", i + 1, bed.get(i), tts[i]));
+        }
+    }
 }

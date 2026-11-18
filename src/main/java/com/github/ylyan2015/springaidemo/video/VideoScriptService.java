@@ -43,10 +43,30 @@ public class VideoScriptService {
     }
 
     /**
+     * 生成-评价-生成精修轮数（0=关闭）。@Value 只在 Spring 上下文生效，单测直接 new 时保持 0，
+     * 存量测试零扰动；运行期默认由 application.yml 注入 2。
+     */
+    @org.springframework.beans.factory.annotation.Value("${video.script.refine-rounds:2}")
+    private int refineRounds;
+
+    /**
      * Generate a structured storyboard with template guidance and the user's asset catalog (Task 13, spec §5.2)
      *
      * @param assetCatalog 素材清单文本（每行「[人物]/[场景] 名：标签」），null/空白时零注入
      */
+    /**
+     * 四人评审团（单 prompt 串联）：只质疑不改写，质疑维度必须对照既有硬约束（钩子/画面感/密度），
+     * 否则评审会发明新偏好把首轮稿带偏；条数上限防意见通胀。
+     */
+    private static final String CRITIC_SYSTEM = """
+            你是短视频评审团，从四个专业视角审视分镜脚本，只质疑、不改写：
+            - 导演：镜头语法与留存节奏——首镜 3 秒钩子是否真抛出冲突/悬念；景别与运镜是否服务叙事；转折是否落在 15-20 秒内；末镜是否留扣子
+            - 编剧：因果链与台词——冲突是否升级、信息反转是否成立；对白是否推进剧情；旁白是否与画面重复啰嗦
+            - 画师：imagePrompt 可画性——英文公式要素是否齐（主体/动作/≥2 环境物件/光影）；跨镜风格是否一致；有无纯色背景/抽象形容词违规；角色特征表能否锁定身份
+            - 乐师：声画时长——台词密度（时长≥字数/5.5+0.6 秒）；旁白情绪曲线与 BGM 落点是否匹配
+            输出规则：每行一条「[视角] 镜N：问题 → 具体改法」；最多 10 条，按对留存的影响排序；没有问题的视角不发言；不要重写脚本，不要总结客套。
+            """;
+
     public Storyboard generateScript(String creativeIdea, String templateGuidance, String assetCatalog) {
         BeanOutputConverter<Storyboard> converter = new BeanOutputConverter<>(Storyboard.class);
 
@@ -111,7 +131,7 @@ public class VideoScriptService {
                 %s
                 """, creativeIdea, converter.getFormat());
 
-        ChatClient chatClient = modelService.getChatClient();
+        ChatClient chatClient = modelService.getScriptChatClient();
 
         log.info("Generating storyboard for idea: {}", creativeIdea);
         String response = chatClient.prompt()
@@ -126,8 +146,11 @@ public class VideoScriptService {
         log.info("Storyboard generated: title='{}', {} shots",
                 storyboard.getTitle(),
                 storyboard.getShots() != null ? storyboard.getShots().size() : 0);
-
-        // P0-2 台词密度自动校验：只 warn 不阻断（LLM 输出不可强控，compose 的 TTS 预探测抬升是兜底）
+        
+        // 生成-评价-生成：默认 2 轮精修，任一环节失败降级保留当前最优稿（绝不拖垮生成）
+        storyboard = refineStoryboard(chatClient, systemPrompt, converter, storyboard);
+        
+        // P0-2 台词密度自动校验（对最终稿）：只 warn 不阻断（LLM 输出不可强控，compose 的 TTS 预探测抬升是兜底）
         List<String> densityIssues = densityViolations(storyboard.getShots());
         if (!densityIssues.isEmpty()) {
             log.warn("台词密度校验发现 {} 处超密（合成时 TTS 预探测会抬升时长兜底）: {}",
@@ -136,6 +159,70 @@ public class VideoScriptService {
 
         return storyboard;
     }
+
+    /**
+     * 生成-评价-生成精修循环：每轮「评审团质疑 → 原硬约束下重修」。降级红线：评审调用失败、
+     * 意见空白、重修产物不可解析——任一发生即止损返回当前最优稿，精修永远不拖垮生成。
+     */
+    private Storyboard refineStoryboard(ChatClient chatClient, String systemPrompt,
+                                        BeanOutputConverter<Storyboard> converter, Storyboard draft) {
+        Storyboard current = draft;
+        for (int round = 1; round <= refineRounds; round++) {
+            String critique;
+            try {
+                critique = chatClient.prompt()
+                        .system(CRITIC_SYSTEM)
+                        .user("待评审的分镜脚本 JSON：\n" + toJson(current))
+                        .call()
+                        .content();
+            } catch (Exception e) {
+                log.warn("精修第 {} 轮评审调用失败，降级保留当前稿: {}", round, e.getMessage());
+                return current;
+            }
+            if (critique == null || critique.isBlank()) {
+                log.info("精修第 {} 轮评审返回空意见，停止精修", round);
+                return current;
+            }
+            log.debug("精修第 {} 轮评审意见:\n{}", round, critique);
+            try {
+                String revised = chatClient.prompt()
+                        .system(systemPrompt)
+                        .user(String.format("""
+                                以下是你此前生成的分镜脚本与专业评审团的修改意见。
+                                请在保持全部硬约束（钩子叙事/画面感禁令/台词密度/角色一致性）的前提下按意见修改，输出完整的改进版脚本。
+
+                                当前脚本 JSON：
+                                %s
+
+                                评审意见：
+                                %s
+
+                                %s
+                                """, toJson(current), critique, converter.getFormat()))
+                        .call()
+                        .content();
+                current = converter.convert(revised);
+                log.info("Refine round {} done: title='{}'", round, current.getTitle());
+                log.debug("精修第 {} 轮产出:\n{}", round, toJson(current));
+            } catch (Exception e) {
+                log.warn("精修第 {} 轮重修失败（含格式不可解析），降级保留上一稿: {}", round, e.getMessage());
+                return current;
+            }
+        }
+        return current;
+    }
+
+    /** 评审/重修入参序列化：失败不抛（提示词退化 toString，精修可用性优先于美观） */
+    private static String toJson(Storyboard storyboard) {
+        try {
+            return JSON.writeValueAsString(storyboard);
+        } catch (Exception e) {
+            return String.valueOf(storyboard);
+        }
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** 旁白实测语速基准（YunyangNeural +15% ≈ 5.5 字/秒，2026-11-17 实测）与镜头呼吸余量（秒） */
     static final double CHARS_PER_SECOND = 5.5;

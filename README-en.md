@@ -1131,3 +1131,12 @@ P0 short-video platform adaptation (Douyin / Kuaishou / WeChat Channels vertical
 - Vertical composition prompts: at 9:16 the prompt assembly point (ShotPromptAssembler) injects centered subject / vertical framing; multi-character shots (>= 2 characters) are forced into a single-character close-up (single character close-up, only one person in frame, replacing the original shot size to avoid SD1.5 multi-person face collapse); single-character / empty shots keep their original shot size.
 - Export aspect fallback: preview / HD / async export requests without aspectRatio automatically inherit the script aspect (explicit request wins; both null keeps legacy 16:9); a 9:16 script exports 720x1280 by default.
 - Tests: ShotPromptAssemblerPortraitTest / ImageGenerationPortraitSizeTest / StoryScriptServiceAspectTest / VideoExportAspectFallbackTest (26 cases, four mutations each independently red-verified); full gate 602 green.
+
+### Script Self-Refinement: Generate-Evaluate-Generate (2026-11-18)
+
+After the first-draft storyboard, two rounds of "four-expert critic panel (director / screenwriter / artist / musician chained in one prompt, question-only) -> rewrite under the original hard constraints" iteratively improve hooks, dialogue density, imagePrompt quality and audio-visual timing.
+- Config `video.script.refine-rounds` (default 2, 0 = off); each round adds 2 LLM calls, total latency and tokens roughly 3-5x of direct output.
+- Dedicated script model `video.script.model` (default `deepseek-v4-pro`, deepseek profile only; blank = follow global chat model, deepseek-flash saves cost; thinking mode is on by default on the V4 line), per-call read timeout `video.script.read-timeout-seconds` defaults to 300s.
+- Graceful degradation: any critique/rewrite call failure or unparseable output keeps the current best draft; refinement never breaks generation.
+- Field note: 2 refine rounds measured ~13 min end to end; many HTTP clients time out at 300s idle (server still completes and persists). Use longer client timeouts; async endpoint may follow.
+- Tests: VideoScriptServiceRefineTest / ModelServiceScriptClientTest (11 cases, 7 mutations each independently red-verified); full gate 619 green.

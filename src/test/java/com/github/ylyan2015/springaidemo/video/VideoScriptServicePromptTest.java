@@ -32,7 +32,7 @@ class VideoScriptServicePromptTest {
         ChatClient client = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec spec = mock(ChatClient.ChatClientRequestSpec.class);
         ChatClient.CallResponseSpec callSpec = mock(ChatClient.CallResponseSpec.class);
-        when(ms.getChatClient()).thenReturn(client);
+        when(ms.getScriptChatClient()).thenReturn(client);
         when(client.prompt()).thenReturn(spec);
         when(spec.system(anyString())).thenReturn(spec);
         when(spec.user(anyString())).thenReturn(spec);

@@ -9,5 +9,6 @@ spring:
       api-key: ${DEEPSEEK_API_KEY:}
       chat:
         options:
+          # 官方现行两档：deepseek-flash（V4.1-Flash，快/便宜）/ deepseek-v4-pro（旗舰高精度）；
+          # 两者思考模式均默认开启（无需额外参数）。脚本生成分档覆盖见 video.script.model
           model: deepseek-flash
-          # 其他可选模型: deepseek-coder, deepseek-reasoner

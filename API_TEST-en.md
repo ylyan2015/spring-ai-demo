@@ -1714,3 +1714,10 @@ Behavior enhancements on existing endpoints (response shapes unchanged):
 
 - Image generation (single shot POST /api/video/images/shot/{scriptId}/{shotId}, batch SSE GET /api/video/images/script/{scriptId}/stream, candidates POST /api/video/candidates/generate): with script aspectRatio=9:16 the size automatically switches to 720x1280 (overriding image.generation.default-size) and prompts gain centered subject / vertical framing; multi-character shots (>= 2 characters) are forced into a single-character close-up replacing the original shot size; end cards render locally at the same size. Other aspects behave unchanged.
 - Export (POST /api/video/export/preview, /export/hd, /export/hd/async, platform export): requests without aspectRatio (null/blank) fall back to the script aspect; explicit values win; both null keeps legacy 16:9. A 9:16 script at 720p outputs 720x1280 by default, and the export record's aspectRatio/width/height are persisted accordingly.
+
+### Script Self-Refinement (2026-11-18)
+
+- POST /api/video/scripts/generate: the first draft goes through 2 rounds of "critic panel (director/screenwriter/artist/musician) critique -> rewrite under original hard constraints" before persisting; set `video.script.refine-rounds=0` to disable.
+- Script-step model comes from `video.script.model` (default deepseek-v4-pro, thinking mode on by default; deepseek profile only); per-call read timeout 300s.
+- Measured ~13 min with 2 refine rounds; HTTP clients with 300s idle timeout disconnect first while the server still completes and persists (disconnect != failure).
+- Degradation: any critique/rewrite failure or unparseable output keeps the current best draft without surfacing an error.

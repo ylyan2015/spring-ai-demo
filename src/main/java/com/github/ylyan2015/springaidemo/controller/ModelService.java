@@ -58,8 +58,8 @@ public class ModelService {
         
         availableModels.put("deepseek", new ModelConfig(
             "deepseek",
-            "DeepSeek V3",
-            "在线专家模式，更强的推理能力",
+            "DeepSeek V4",
+            "在线旗舰模式，思考模式默认开启",
             "online"
         ));
         
@@ -153,27 +153,60 @@ public class ModelService {
             return createOpenAICompatibleClient("DeepSeek", 
                 environment.getProperty("spring.ai.deepseek.base-url", "https://api.deepseek.com"),
                 environment.getProperty("spring.ai.deepseek.api-key", "未设置"),
-                environment.getProperty("spring.ai.deepseek.chat.options.model", "deepseek-chat"));
+                environment.getProperty("spring.ai.deepseek.chat.options.model", "deepseek-chat"),
+                Integer.parseInt(environment.getProperty("spring.ai.deepseek.read-timeout-seconds", "120")));
         } else if ("openai".equals(modelKey)) {
             return createOpenAICompatibleClient("OpenAI",
                 environment.getProperty("spring.ai.openai.base-url", "https://api.openai.com"),
                 environment.getProperty("spring.ai.openai.api-key", "未设置"),
-                environment.getProperty("spring.ai.openai.chat.options.model", "gpt-4o-mini"));
+                environment.getProperty("spring.ai.openai.chat.options.model", "gpt-4o-mini"),
+                120);
         } else {
             throw new IllegalArgumentException("不支持的模型类型: " + modelKey);
         }
+    }
+
+    /**
+     * 脚本生成专用模型覆盖（video.script.model）：仅 deepseek profile 生效；空/离线返 null 回落当前模型。
+     * 精修循环使脚本链路 LLM 调用 ×5，旗舰模型（deepseek-v4-pro，思考模式默认开启）单独钉在生成步骤，
+     * 普通对话不受牵连；包私有 seam 供单测直接验证判定矩阵。
+     */
+    String resolveScriptModel() {
+        if (!"deepseek".equals(getCurrentModel())) {
+            return null;
+        }
+        String m = environment.getProperty("video.script.model", "").trim();
+        return m.isEmpty() ? null : m;
+    }
+
+    /**
+     * 分镜脚本生成用 ChatClient：有模型覆盖时构建独立缓存客户端（思考模式响应慢，读超时放宽到
+     * video.script.read-timeout-seconds，默认 300s）；无覆盖时与 getChatClient 同一实例（存量行为逐字不变）
+     */
+    public ChatClient getScriptChatClient() {
+        String scriptModel = resolveScriptModel();
+        if (scriptModel == null) {
+            return getChatClient();
+        }
+        return chatClientCache.computeIfAbsent("deepseek:" + scriptModel, k ->
+                createOpenAICompatibleClient("DeepSeek(脚本精修 " + scriptModel + ")",
+                        environment.getProperty("spring.ai.deepseek.base-url", "https://api.deepseek.com"),
+                        environment.getProperty("spring.ai.deepseek.api-key", "未设置"),
+                        scriptModel,
+                        Integer.parseInt(environment.getProperty("video.script.read-timeout-seconds", "300"))));
     }
     
     /**
      * 创建 OpenAI 兼容 API 的 ChatClient
      */
-    private ChatClient createOpenAICompatibleClient(String provider, String baseUrl, String apiKey, String model) {
+    private ChatClient createOpenAICompatibleClient(String provider, String baseUrl, String apiKey, String model,
+                                                    int readTimeoutSeconds) {
         try {
             // 手工构建的 OpenAiApi 不受 yml rest-template 超时约束，显式注入超时防永久挂起（release 审查 Minor#8）
             org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                     new org.springframework.http.client.SimpleClientHttpRequestFactory();
             factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
-            factory.setReadTimeout(java.time.Duration.ofSeconds(120));
+            factory.setReadTimeout(java.time.Duration.ofSeconds(readTimeoutSeconds));
             // 使用 Spring AI 的 OpenAiApi Builder 构建
             org.springframework.ai.openai.api.OpenAiApi openAiApi = org.springframework.ai.openai.api.OpenAiApi.builder()
                 .baseUrl(baseUrl)
@@ -198,6 +231,7 @@ public class ModelService {
             System.out.println("  Base URL: " + baseUrl);
             System.out.println("  API Key: " + (apiKey != null && !apiKey.isBlank() ? "******（已配置）" : "未设置"));
             System.out.println("  Model: " + model);
+            System.out.println("  Read Timeout: " + readTimeoutSeconds + "s");
             System.out.println("========================================");
             
             return client;

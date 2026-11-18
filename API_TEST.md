@@ -1750,3 +1750,10 @@ FAQ：台词算术——镜头时长 ≥ 字数/字每秒 + 0.6s，改语速后�
 
 - 生图（单镜 POST /api/video/images/shot/{scriptId}/{shotId}、批量 SSE GET /api/video/images/script/{scriptId}/stream、抽卡 POST /api/video/candidates/generate）：脚本 aspectRatio=9:16 时尺寸自动切 720x1280（无视 image.generation.default-size），提示词注入 centered subject / vertical framing；多人镜（≥2 角色）强制单人特写替代原景别；尾卡本地渲染同尺寸。其余画幅行为不变。
 - 导出（POST /api/video/export/preview、/export/hd、/export/hd/async、平台导出）：请求未传 aspectRatio（null/空）时 fallback 脚本画幅；显式传值优先；双 null 保持存量 16:9。9:16 脚本 720p 默认出 720x1280，导出记录 aspectRatio/width/height 同步落库。
+
+### 脚本自我精修（2026-11-18）
+
+- POST /api/video/scripts/generate：首轮稿默认经 2 轮「四人评审团（导演/编剧/画师/乐师）质疑 → 原硬约束重修」后落库；`video.script.refine-rounds=0` 关闭。
+- 脚本步骤模型由 `video.script.model` 指定（默认 deepseek-v4-pro，思考模式默认开启；仅 deepseek profile 生效），单调用读超时 300s。
+- 实测 2 轮精修全程 ≈13 分钟；HTTP 客户端 300s 空闲超时会先断连但服务端照常完成落库（断连 ≠ 生成失败）。
+- 降级：评审/重修任一失败或产物不可解析 → 保留当前最优稿，接口不报错。

@@ -31,6 +31,9 @@ public class VideoComposeService {
     /** xfade 转场时长（秒）：字幕时间轴等模块需引用此常量保持与合成时长严格对齐 */
     public static final double XFADE_DURATION = 0.8;
 
+    /** 音轨床单段下限：极短镜头扣完转场余量后不得为 0/负，否则 ffmpeg whole_dur/d= 报错 */
+    static final double MIN_AUDIO_BED_SECONDS = 0.25;
+
     private final StorageService storageService;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -210,7 +213,10 @@ public class VideoComposeService {
             Path finalVideo;
             boolean hasNarrationTrack = false;
             if (audioFiles != null && !audioFiles.isEmpty()) {
-                Path mergedAudio = concatAudioWithSilence(audioFiles, effectiveDurations, workDir);
+                // 音轨床必须跟画面一样被 xfade 压缩：按整段有效时长拼接时音轨总长 = Σ有效，
+                // 而画面只有 Σ有效−(n−1)·xfade，口播会逐镜滞后画面并在末镜被 -shortest 截掉
+                Path mergedAudio = concatAudioWithSilence(audioFiles,
+                        audioBedDurations(effectiveDurations, XFADE_DURATION), workDir);
                 finalVideo = mergeVideoAndAudio(videoOnly, mergedAudio, workDir);
                 hasNarrationTrack = true;
             } else {
@@ -864,7 +870,25 @@ public class VideoComposeService {
         return cmd;
     }
 
-    private Path concatAudioWithSilence(List<Path> audioFiles, List<Integer> durations, Path workDir)
+    /**
+     * 旁白音轨床时长（包私有测试 seam）：视频时间轴被 xfade 压缩掉 (n−1)·xfade，
+     * 音轨要落在同一轴上，故除末镜外每段床长扣一次转场重叠；末镜后面没有转场，保留全长。
+     * 返回值总和与 compose 的 exactDuration 同式，保证口播逐镜起点对齐画面。
+     */
+    static List<Double> audioBedDurations(List<Integer> effectiveDurations, double xfadeDuration) {
+        List<Double> bed = new ArrayList<>();
+        int n = effectiveDurations.size();
+        for (int i = 0; i < n; i++) {
+            double seg = effectiveDurations.get(i);
+            if (i < n - 1) {
+                seg -= xfadeDuration;
+            }
+            bed.add(Math.max(MIN_AUDIO_BED_SECONDS, seg));
+        }
+        return bed;
+    }
+
+    private Path concatAudioWithSilence(List<Path> audioFiles, List<Double> durations, Path workDir)
             throws Exception {
         Path output = workDir.resolve("full_audio.mp3");
 
@@ -877,19 +901,19 @@ public class VideoComposeService {
 
         for (int i = 0; i < audioFiles.size(); i++) {
             Path audioFile = audioFiles.get(i);
-            int duration = durations.get(i);
+            double duration = durations.get(i);
 
             if (audioFile != null && Files.exists(audioFile)) {
                 cmd.add("-i");
                 cmd.add(audioFile.toAbsolutePath().toString());
                 filter.append(String.format(
-                        "[%d:a]apad=whole_dur=%d[a%d];", i, duration, i));
+                        "[%d:a]apad=whole_dur=%.2f[a%d];", i, duration, i));
                 concatInputs.append(String.format("[a%d]", i));
             } else {
                 cmd.add("-f");
                 cmd.add("lavfi");
                 cmd.add("-i");
-                cmd.add(String.format("anullsrc=r=24000:cl=mono:d=%d", duration));
+                cmd.add(String.format("anullsrc=r=24000:cl=mono:d=%.2f", duration));
                 int silentIdx = i;
                 concatInputs.append(String.format("[%d:a]", silentIdx));
             }

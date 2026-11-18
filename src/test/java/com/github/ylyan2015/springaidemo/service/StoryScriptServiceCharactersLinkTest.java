@@ -59,7 +59,8 @@ class StoryScriptServiceCharactersLinkTest {
         shot.setCharacterNames(List.of("林晚", "不存在"));
         shot.setShotSize("close");
         sb.setShots(List.of(shot));
-        when(videoScriptService.generateScript("idea", null)).thenReturn(sb);
+        // Task 13：StoryScriptService 现在调三参重载（第三参 = 素材清单，本用例的仓库为 null 即无清单）
+        when(videoScriptService.generateScript("idea", null, null)).thenReturn(sb);
         when(charRepo.save(any())).thenAnswer(inv -> {
             StoryCharacter c = inv.getArgument(0);
             c.setId(11L);
@@ -92,7 +93,7 @@ class StoryScriptServiceCharactersLinkTest {
         shot.setSceneDescription("s");
         shot.setImagePrompt("p");
         sb.setShots(List.of(shot));
-        when(videoScriptService.generateScript("idea", null)).thenReturn(sb);
+        when(videoScriptService.generateScript("idea", null, null)).thenReturn(sb);
         when(scriptRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         StoryScript saved = service.generateAndSaveScript("idea");
         assertEquals("MEDIUM", saved.getShots().get(0).getShotSize());

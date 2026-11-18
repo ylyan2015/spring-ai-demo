@@ -31,11 +31,12 @@ public class MediaAssetController {
                                                       @RequestParam(required = false) String name,
                                                       @RequestParam(required = false) String tags,
                                                       @RequestParam(required = false) Double trimStart,
-                                                      @RequestParam(required = false) Double trimEnd) {
+                                                      @RequestParam(required = false) Double trimEnd,
+                                                      @RequestParam(required = false) String category) {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             result.put("success", true);
-            result.put("data", mediaAssetService.upload(file, name, tags, trimStart, trimEnd));
+            result.put("data", mediaAssetService.upload(file, name, tags, trimStart, trimEnd, category));
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Asset upload failed: {}", e.getMessage());
@@ -61,12 +62,28 @@ public class MediaAssetController {
         }
     }
 
-    @GetMapping
-    public ResponseEntity<Map<String, Object>> list() {
+    /** S1 Task 2：参考素材扫描（仅读配置目录 video.assets.reference-import-dir；char_/scene_ 约定） */
+    @PostMapping("/scan-reference")
+    public ResponseEntity<Map<String, Object>> scanReference() {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             result.put("success", true);
-            result.put("data", mediaAssetService.list());
+            result.put("data", mediaAssetService.scanReferenceDir());
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            log.error("Reference asset scan failed: {}", e.getMessage());
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> list(@RequestParam(required = false) String category) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            result.put("success", true);
+            result.put("data", mediaAssetService.list(category));
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
             result.put("success", false);

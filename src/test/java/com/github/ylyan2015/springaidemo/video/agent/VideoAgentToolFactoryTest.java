@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -237,12 +238,29 @@ class VideoAgentToolFactoryTest {
 
     @Test
     void exportVideoPreviewDelegates() throws Exception {
-        when(videoExportService.exportPreview(1L, "16:9", null, false, "zh"))
+        // P0-3 审查 Major#1 修复后契约：null 画幅透传，由 doExport fallback 脚本画幅（不再预填 16:9）
+        when(videoExportService.exportPreview(1L, null, null, false, "zh"))
                 .thenReturn(Map.of("video", Map.of("videoUrl", "/images/v.mp4")));
         JsonNode out = call("exportVideo", "{\"scriptId\":1,\"preview\":true}");
         assertTrue(out.get("success").asBoolean());
-        verify(videoExportService).exportPreview(1L, "16:9", null, false, "zh");
-        verify(videoExportService, never()).exportHd(anyLong(), anyString(), anyString(), any(), anyBoolean(), anyBoolean(), anyString());
+        verify(videoExportService).exportPreview(1L, null, null, false, "zh");
+        verify(videoExportService, never()).exportHd(anyLong(), anyString(), any(), any(), anyBoolean(), anyBoolean(), anyString());
+    }
+
+    @Test
+    void exportVideoHdNullAspectPassesThroughForScriptFallback() throws Exception {
+        when(videoExportService.exportHd(eq(1L), eq("720p"), isNull(), isNull(), eq(false), eq(false), eq("zh")))
+                .thenReturn(new LinkedHashMap<>());
+        JsonNode out = call("exportVideo", "{\"scriptId\":1}");
+        assertTrue(out.get("success").asBoolean());
+        verify(videoExportService).exportHd(1L, "720p", null, null, false, false, "zh");
+    }
+
+    @Test
+    void exportVideoDescriptionMentionsScriptAspectFallback() {
+        // 引导 LLM 不主动预填 16:9：description 必须声明缺省跟随脚本画幅
+        assertTrue(tool("exportVideo").getToolDefinition().description().contains("脚本画幅"),
+                tool("exportVideo").getToolDefinition().description());
     }
 
     @Test

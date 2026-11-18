@@ -70,7 +70,9 @@ class ImageGenerationServiceTimeoutCancelTest {
                 new com.github.ylyan2015.springaidemo.video.ShotPromptAssembler(),
                 new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
                         mock(com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository.class),
-                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.MediaAssetRepository.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.StoryScriptRepository.class)),
                 new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false),
                 mock(com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer.class));
         setField(service, "parallelism", 1);

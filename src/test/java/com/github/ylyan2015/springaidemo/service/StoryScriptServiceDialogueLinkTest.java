@@ -44,7 +44,7 @@ class StoryScriptServiceDialogueLinkTest {
         shot2.setDialogue("你是谁？");
         shot2.setDialogueCharacterName("不存在");
         sb.setShots(List.of(shot, shot2));
-        when(videoScriptService.generateScript("idea", null)).thenReturn(sb);
+        when(videoScriptService.generateScript("idea", null, null)).thenReturn(sb);
         when(charRepo.save(any())).thenAnswer(inv -> { StoryCharacter c = inv.getArgument(0); c.setId(11L); return c; });
         when(scriptRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         StoryScript saved = service.generateAndSaveScript("idea");

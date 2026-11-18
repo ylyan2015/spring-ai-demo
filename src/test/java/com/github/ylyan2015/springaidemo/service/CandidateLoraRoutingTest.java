@@ -37,7 +37,7 @@ class CandidateLoraRoutingTest {
         ImageQualityService quality = mock(ImageQualityService.class);
         when(quality.isEnabled()).thenReturn(false);
         resolver = mock(ReferenceImageResolver.class);
-        when(resolver.resolve(any())).thenReturn(List.of());
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of());
         service = new CandidateGenerationService(factory, videoFactory, scriptRepo, shotRepo, userRepo,
                 candRepo, new ShotPromptAssembler(), resolver, quality, mock(VideoGenerationService.class),
                 new LoraResolver(true));

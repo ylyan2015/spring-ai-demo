@@ -1,6 +1,6 @@
 # Spring AI Demo - 多模型智能聊天应用
 
-一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、AI 图像生成（通义万相）、多存储服务、**AI 短视频工作室**（创意想法 → 分镜脚本 → 并行生成画面 → BGM 配乐 → FFmpeg 合成多比例导出）、Docker 一键部署等功能。
+一个基于 Spring Boot 3.4.1 和 Spring AI 1.0.0 的智能聊天应用示例，支持多种AI模型（Ollama、OpenAI、DeepSeek等），内置用户注册登录系统、RAG 知识库、SSE 流式输出、AI 图像生成（通义万相）、多存储服务、**AI 短视频工作室 / 漫剧流水线**（创意想法 → 分镜脚本 → 角色一致性出图 → 真图生视频 → 多声线配音 → BGM/音效 → FFmpeg 合成多比例导出）、**评论工作台**（素材拼接 + 版权护栏）与**参考素材库**（booru 网搜 / LLM 匹配 / IP-Adapter 参考图）、Docker 一键部署等功能。
 
 ## 项目概述
 
@@ -36,7 +36,15 @@
 - ✅ **BGM 配乐** - 内置音乐库（按情感分类，预置 5 首合成免版权音乐）+ LLM 智能推荐 + 自定义上传；自动降音量、淡入淡出、短曲循环
 - ✅ **字幕系统** - 旁白自动生成带时间轴字幕（时间轴与转场精确对齐），支持 SRT 单独导出与 ASS 烧录进画面，样式可定制（字体/字号/颜色/描边/位置），多语言字幕（中文/English/中英双语，LLM 翻译）
 - ✅ **视频模板系统** - 8 个内置风格模板（产品展示/故事讲述/知识科普/风景旅拍/美食制作/情感语录/科技数码/运动健身），一键应用生成对应风格脚本，支持另存自定义模板
-- ✅ **多图像生成后端** - DashScope 通义万相（云端）与本地 Stable Diffusion / FLUX（SD WebUI 协议）配置切换，失败自动重试
+- ✅ **多图像生成后端** - 八源配置或 UI 切换：DashScope 通义万相（默认）/ 本地 SD/FLUX（SD WebUI 协议）/ 智谱 CogView / 硅基流动 / OpenAI / 火山方舟 Seedream / wan2.7 参考图一致性 / 本地 ComfyUI SD1.5+LoRA+IP-Adapter，失败自动重试
+- ✅ **角色卡与一致性** - LLM 先人设后分镜自动产出角色卡（名字/英文特征表/性格/声线/LoRA/触发词），定妆参考图上传 + 脚本级画风锁；云端 wan2.7（≤9 参考图）或本地 IP-Adapter（weight 0.7）锁定角色长相
+- ✅ **真图生视频（i2v）** - 云端 wan2.7-i2v / 本地 ComfyUI Wan2.2（零 API 成本、素材不外传）双路线；脚本级连续性 NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME，真片段+静图运镜混合合成
+- ✅ **抽卡候选与局部重绘** - 每镜图 N=3 / 视频 N=2 候选按质量评分排序，人工择优回写主资产；wan2.7 框选 inpaint 产物入候选不覆盖主图
+- ✅ **多声线配音与后期增强** - 对白用角色卡声线、旁白纪录片男声（语速可配）；SFX 分层混音（人声 100%/BGM 15%/SFX 30%）；Real-ESRGAN 超分 + RIFE 补帧可选勾选
+- ✅ **视频转绘** - 实拍视频 → wan2.7-videoedit 日系动漫/美漫/水彩风格转绘，独立异步任务不触碰主流水线
+- ✅ **参考素材库** - 上传/目录扫描（char_/scene_ 命名约定）/ booru 双源网搜（三道安全闸 + 自家存储转存 + sourceNote 出处可追溯）；LLM 自动匹配推荐，镜头绑定参考图后由 IP-Adapter/wan2.7 消费（每镜前 2 张、人物优先）
+- ✅ **评论工作台** - /commentary-studio 独立页面，format 分离脚本管理，素材切片拼接 + TTS 预探测时长对齐 + 出处水印 + 引用占比 ≤20% 版权护栏 + 异步高清导出
+- ✅ **尾卡镜** - endCard=true 跳过生图，本地 FFmpeg 纯色底+压字渲染（中文 fontfile），零成本收尾 CTA
 
 ## 技术栈
 
@@ -241,17 +249,24 @@ Web 界面右侧提供知识库面板：
 - 📝 **脚本管理** - 输入创意想法生成多镜头分镜脚本，脚本持久化保存，可随时加载继续编辑、重命名、删除；可选视频模板（8 个内置风格 + 自定义）一键生成对应风格脚本，脚本可另存为模板
 - 🎬 **镜头编辑** - 画面描述/旁白/提示词/镜头运动/时长全字段编辑，支持添加、删除镜头与拖拽排序；镜头运动真实生效（固定=纯静态、推进/推近=zoom in、拉远=zoom out、平移=水平 pan），zoompan 超采样消除逐帧截断抖动
 - 🎨 **提示词优化** - 单镜头或批量调用 LLM 将中文场景描述转化为高质量英文图像提示词，内置 8 种视觉风格（电影写实/动漫/水彩/赛博朋克/皮克斯3D/复古/国画/奇幻）
-- 🖼️ **并行图片生成** - 六源一键切换：通义万相（默认）/ 本地 SD/FLUX / 智谱 CogView / 硅基流动 / OpenAI / 火山方舟 Seedream（后四家走通用 OpenAI 兼容实现，本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）；SSE 实时进度条、失败自动重试、单镜头重新生成
+- 🖼️ **并行图片生成** - 八源一键切换：通义万相（默认）/ 本地 SD/FLUX / 智谱 CogView / 硅基流动 / OpenAI / 火山方舟 Seedream（中间四家走通用 OpenAI 兼容实现，本地模型自动套用 SD1.5/SDXL/FLUX 风格预设）/ wan2.7 参考图一致性 / 本地 ComfyUI SD1.5+LoRA+IP-Adapter；SSE 实时进度条、失败自动重试、单镜头重新生成
 - ✅ **图片质量评估**（可选）- 多模态 LLM 按清晰度/相关性/美学三维打分（0-10），低分自动重新生成（≤2 次，保留最高分）；未配多模态 API 时降级为规则评估；镜头卡片显示质量徽章（`image.quality.enabled` 开启，默认关闭）
 - 🤖 **Agent 工具化**（Phase 3 切片1）- 六项核心能力（脚本生成/提示词优化/图片生成/质量评估/视频导出/BGM 推荐）已包装为 Spring AI 工具（FunctionToolCallback），提供工具清单内省端点，为导演 Agent 编排奠基
 - 🎬 **AI 导演对话**（Phase 3 切片2）- ChatClient 挂载六工具自动 ReAct 编排（思考→调用工具→观察→继续），工作室页面内置对话面板；导出视频设人工确认闸门（前端确认按钮/请求 confirmedTools 显式放行）；对话历史按用户+会话内存隔离（上限 20 条，重启清空）
 - 🎭 **多 Agent 编排**（Phase 3 切片3）- 编剧/美术/音频/剪辑四专家 Agent（各自 System Prompt + 工具子集）以「专家即工具」委托给导演；「一键流水线」异步编排（提交→轮询→确认续跑），专用线程池显式传播 SecurityContext；任务内存态上限 100、按用户归属校验
+- 🧑‍🎨 **角色卡与一致性出图**（Phase 4）- 脚本生成自动产出角色卡（名字/英文特征表/性格/声线/LoRA/触发词），支持定妆参考图上传与脚本级画风锁；wan2.7 生成器吃 ≤9 张参考图，本地 ComfyUI 走 IP-Adapter（weight 0.7）/ LoRA / ControlNet 模板路由
+- 🎞️ **真图生视频**（Phase 4/5）- 云端 wan2.7-i2v 或本地 ComfyUI Wan2.2（零成本）；连续性模式让上一镜尾帧链接下一镜首帧；真片段用 ffprobe 实测时长参与混合合成
+- 🎲 **抽卡候选与局部重绘**（Phase 4）- 每镜多候选对比模态人工择优；框选 inpaint 修手修脸，产物入候选
+- 🎙️ **多声线配音与后期**（Phase 4）- 对白按角色卡声线逐行 TTS、旁白纪录片男声（语速可配）；导出可勾选音效/超分/补帧三增强
+- 🖌️ **视频转绘面板**（Phase 4）- 实拍 2-10s 片段上传 → 动漫/美漫/水彩转绘，3s 轮询独立任务
+- 🗂️ **参考素材库面板**（2026-11-17）- 上传/扫描入库（CHARACTER/SCENE/INSERT 分类）、booru 网搜（英文 tag 佳，多 tag 用 `+` 连接 AND；空格转下划线是单 tag 内分词）、勾选入库（自家存储+出处）、LLM 匹配推荐 chip 一键采用、镜头绑定参考图（生成时每镜消费前 2 张、人物优先；仅 comfyui/wan27 生成器吃参考图）
+- 🔚 **尾卡镜**（2026-11-17）- 镜头勾选 endCard 后跳过生图，本地渲染纯色底+压字（关注/下集预告等 CTA），字体由 `video.endcard.font` 配置
 - 🎵 **BGM 配乐** - 内置音乐库按情感分类（轻快/温馨/紧张/史诗等，预置 5 首合成免版权音乐），支持 AI 按脚本主题智能推荐与自定义上传；导出时自动降低音量并淡入淡出
 - 📝 **字幕烧录/导出** - 导出时可勾选「烧录字幕」将旁白硬烧录进画面（社媒静音观看友好）；字幕语言可选中文/English/中英双语（LLM 翻译，配音仍为中文）；支持单独导出 SRT 文件与一帧字幕效果预览
 - 📲 **社媒平台导出** - 平台下拉一键选抖音/B站/小红书等（自动套用规格并提示超时长）；批量三平台（9:16/16:9/1:1）并行导出，支持 ZIP 打包下载（含封面 + 清单）；一键从导出视频截取封面帧
 - 📺 **预览与导出** - 480p 快速预览（带水印）秒级确认效果；720p/1080p 高清导出支持 16:9/9:16/1:1 多比例；导出历史随时重新下载
 
-> **说明**：视频合成依赖 FFmpeg（默认裸名走系统 PATH，可用 `video.ffmpeg-path` / `video.ffprobe-path` 或环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` 指定绝对路径）；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频；解释器由 `video.python-command` / `PYTHON_CMD` 指定）；本地图片生成依赖 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
+> **说明**：视频合成依赖 FFmpeg（默认裸名走系统 PATH，可用 `video.ffmpeg-path` / `video.ffprobe-path` 或环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` 指定绝对路径）；旁白配音依赖 Edge TTS（`pip install edge-tts`，未安装时仅输出无声视频；解释器由 `video.python-command` / `PYTHON_CMD` 指定）；本地图片生成支持 SD WebUI 兼容服务（默认 `http://127.0.0.1:7860`）与原生 ComfyUI 工作流协议（默认 `http://127.0.0.1:8188`，需按 docs/comfyui/ 模板校准）两条路线；评论杂谈类创作请使用独立入口 http://localhost:8080/commentary-studio（评论工作台）。预置 BGM 为程序合成的免版权和弦垫音，可用 `tools/generate-preset-bgm.ps1` 重新生成，或将真实免版权音乐按 `category__name.mp3` 命名放入 `data/bgm/` 替换。
 
 #### 5. 使用 API 测试
 
@@ -311,7 +326,10 @@ spring-ai-demo/
 │   │   ├── SecurityConfig.java         # Spring Security配置
 │   │   ├── StorageConfig.java          # 存储服务工厂（local/oss/minio/fastdfs）
 │   │   ├── StorageProperties.java      # 存储配置属性
-│   │   └── WebMvcConfig.java           # Web MVC配置（本地存储静态资源映射）
+│   │   ├── WebMvcConfig.java           # Web MVC配置（本地存储静态资源映射）
+│   │   ├── ImageGeneratorConfig.java   # 图像生成器装配（八源 + wan27/comfyui 参考图能力）
+│   │   ├── VideoGeneratorConfig.java   # 视频生成器装配（none/dashscope-wan/comfyui）
+│   │   └── BooruConfig.java            # booru 网搜 HttpClient（禁重定向）与源注册
 │   ├── controller/
 │   │   ├── AuthController.java         # 认证控制器（注册/登录/验证码）
 │   │   ├── BgmController.java          # 短视频：BGM 列表/推荐/上传
@@ -329,7 +347,14 @@ spring-ai-demo/
 │   │   ├── TimeZoneController.java     # 时区控制器（IP定位）
 │   │   ├── VideoExportController.java  # 短视频：预览/高清导出/导出历史/ZIP打包
 │   │   ├── VideoTemplateController.java # 短视频：视频模板列表/应用/自定义（模块 H）
-│   │   └── VideoAgentController.java   # 短视频：Agent 内省/导演对话/多 Agent 编排（Phase 3 切片1/2/3）
+│   │   ├── VideoAgentController.java   # 短视频：Agent 内省/导演对话/多 Agent 编排（Phase 3 切片1/2/3）
+│   │   ├── StoryCharacterController.java # 短视频：角色卡 CRUD/定妆参考图/声线列表（Phase 4）
+│   │   ├── ShotCandidateController.java # 短视频：抽卡候选/择优/局部重绘（Phase 4）
+│   │   ├── VideoGenerationController.java # 短视频：真 i2v 单镜/SSE/生成器切换（Phase 4/5）
+│   │   ├── VideoRestyleController.java # 短视频：视频转绘独立任务（Phase 4）
+│   │   ├── MediaAssetController.java   # 短视频：素材库上传/扫描/列表/删除（Track B + 素材库切片）
+│   │   ├── BooruAssetController.java   # 短视频：booru 网搜/预览代理/入库（素材库切片）
+│   │   └── AssetMatchController.java   # 短视频：LLM 素材匹配推荐（素材库切片）
 │   ├── service/
 │   │   ├── AuthService.java            # 认证服务（注册/登录逻辑）
 │   │   ├── BgmService.java             # 短视频：BGM 音乐库/LLM推荐/上传
@@ -340,8 +365,17 @@ spring-ai-demo/
 │   │   ├── ImagePromptOptimizerService.java # 短视频：LLM 提示词优化
 │   │   ├── RagService.java             # RAG 服务（文档解析/向量化/检索）
 │   │   ├── StoryScriptService.java     # 短视频：脚本生成/编辑/排序
-│   │   ├── VideoExportService.java     # 短视频：预览/高清导出/导出历史/ZIP打包
-│   │   └── VideoTemplateService.java   # 短视频：模板预置/应用/自定义（模块 H）
+│   │   ├── VideoExportService.java     # 短视频：预览/高清导出/导出历史/ZIP打包/异步导出
+│   │   ├── VideoTemplateService.java   # 短视频：模板预置/应用/自定义（模块 H）
+│   │   ├── StoryCharacterService.java  # 短视频：角色卡/定妆参考图/声线（Phase 4）
+│   │   ├── ShotCandidateService.java / CandidateGenerationService.java # 短视频：候选择优/抽卡生成（Phase 4）
+│   │   ├── VideoGenerationService.java # 短视频：真 i2v 编排/连续性/尾帧回写（Phase 4/5）
+│   │   ├── VideoRestyleService.java    # 短视频：转绘异步任务（Phase 4）
+│   │   ├── SfxService.java             # 短视频：音效库/LLM 推荐/分层混音（Phase 4）
+│   │   ├── MediaAssetService.java      # 短视频：素材库上传/裁剪/双目录扫描（Track B + 素材库）
+│   │   ├── BooruSearchService.java     # 短视频：booru 三道闸/预览代理/转存入库（素材库）
+│   │   ├── AssetMatchService.java      # 短视频：LLM 素材匹配 + 关键词降级（素材库）
+│   │   └── LoginRateLimiter.java       # 登录限流（5 次/60s 按用户名+IP）
 │   ├── entity/
 │   │   ├── Bgm.java                    # BGM 实体（短视频模块 D）
 │   │   ├── Conversation.java           # 会话实体（绑定userId）
@@ -353,7 +387,12 @@ spring-ai-demo/
 │   │   ├── StoryScript.java / StoryShot.java # 脚本/镜头实体（模块 A）
 │   │   ├── User.java                   # 用户实体
 │   │   ├── VideoExport.java            # 视频导出记录实体（模块 C）
-│   │   └── VideoTemplate.java          # 视频模板实体（模块 H）
+│   │   ├── VideoTemplate.java          # 视频模板实体（模块 H）
+│   │   ├── StoryCharacter.java         # 角色卡实体（声线/LoRA/触发词/定妆图，Phase 4）
+│   │   ├── ShotCandidate.java          # 抽卡候选实体（Phase 4）
+│   │   ├── RestyleTask.java            # 视频转绘任务实体（Phase 4）
+│   │   ├── SfxTrack.java               # 音效轨实体（Phase 4）
+│   │   └── MediaAsset.java             # 素材库实体（kind/category/sourceNote，Track B + 素材库）
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # 图像生成异常
 │   │   └── StorageException.java         # 存储异常
@@ -370,11 +409,13 @@ spring-ai-demo/
 │       ├── VideoExportRepository.java  # 导出记录数据访问（模块 C）
 │       └── VideoTemplateRepository.java # 视频模板数据访问（模块 H）
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
-│   ├── Storyboard.java / Shot.java    # 分镜 DTO（Phase 1）
+│   ├── Storyboard.java / Shot.java    # 分镜 DTO（Phase 1；Shot 含对白/景别/endCard/参考素材字段）
 │   ├── VisualStyle.java               # 8 种视觉风格预设（含负面提示词）
 │   ├── PlatformPreset.java           # 社媒平台预设枚举（抖音/B站/小红书等六平台）
 │   ├── ImageGenerationProgress.java   # SSE 进度事件
-│   ├── VideoScriptService.java        # 脚本生成（Phase 1）
+│   ├── CharacterDesign.java / TtsLine.java # 角色设计 DTO / TTS 逐行合成 DTO（Phase 4）
+│   ├── ShotPromptAssembler.java       # 提示词唯一装配点（画风锁/景别/角色特征/触发词，Phase 4/5）
+│   ├── VideoScriptService.java        # 脚本生成（Phase 1；先人设后分镜）
 │   ├── VideoComposeService.java       # FFmpeg 合成 + ComposeOptions（多比例/水印/BGM 混音/字幕烧录）
 │   ├── subtitle/                     # 模块 F：字幕系统
 │   │   ├── SubtitleService.java        # SRT/ASS 生成 + xfade 对齐时间轴 + 多语言翻译
@@ -390,12 +431,20 @@ spring-ai-demo/
 │   │   ├── DirectorAgentService.java  # 导演 Agent（ChatClient 挂工具 ReAct + 会话历史）
 │   │   ├── SpecialistAgentFactory.java # 四专家 Agent + delegateToXxx 委托工具（切片3）
 │   │   └── AgentOrchestrationService.java # 异步编排（SecurityContext 传播 + 任务表 + 确认续跑）
-│   └── generator/                     # 图片生成抽象（策略+工厂）
-│       ├── ImageGenerator.java / GeneratedImage.java
+│   └── generator/                     # 图片/视频生成抽象（策略+工厂）
+│       ├── ImageGenerator.java / GeneratedImage.java / VideoGenerator.java / GeneratedVideo.java
 │       ├── DashScopeImageGenerator.java  # 云端通义万相
+│       ├── Wan27ImageGenerator.java   # wan2.7 参考图一致性/框选重绘（Phase 4）
+│       ├── OpenAiCompatibleImageGenerator.java # 智谱/硅基流动/OpenAI/火山四家通用实现
 │       ├── LocalSdImageGenerator.java   # 本地 SD WebUI / FLUX
 │       ├── LocalModelStylePreset.java   # SD1.5/SDXL/FLUX 风格预设（模块 G）
-│       └── ImageGeneratorFactory.java   # 配置驱动 + 运行时切换
+│       ├── ComfyUiClient.java / ComfyUiImageGenerator.java # 本地 ComfyUI SD1.5+LoRA+IP-Adapter（Phase 5）
+│       ├── ComfyUiVideoGenerator.java / DashScopeWanVideoGenerator.java / NoneVideoGenerator.java # i2v 三路线
+│       ├── EndCardImageRenderer.java    # 尾卡镜本地压字渲染（2026-11-17）
+│       ├── ReferenceImageResolver.java / LoraResolver.java / LoraSpec.java # 参考图回退链/LoRA 路由
+│       ├── BooruProvider.java / SafebooruOrgProvider.java / DanbooruSafeProvider.java # booru 双源适配
+│       ├── ImageSizeMapper.java         # 宽高比→各家尺寸枚举映射
+│       └── ImageGeneratorFactory.java / VideoGeneratorFactory.java # 配置驱动 + 运行时切换
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # 图像生成请求DTO
 │   └── ImageGenerateResponse.java      # 图像生成响应DTO
@@ -414,7 +463,8 @@ spring-ai-demo/
 │   ├── templates/
 │   │   ├── index.html                  # 主聊天页面模板
 │   │   ├── login.html                  # 登录/注册页面模板
-│   │   └── video-studio.html           # AI 短视频工作室前端（完整工作流界面）
+│   │   ├── video-studio.html           # AI 短视频工作室前端（完整工作流 + 素材库/角色卡/候选/转绘面板）
+│   │   └── commentary-studio.html      # 评论工作台前端（Track B：素材拼接/出处水印/引用占比徽章）
 │   ├── application.yml                 # 主配置文件
 │   ├── application-h2.yml              # H2 数据库配置
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector 配置
@@ -663,6 +713,19 @@ image:
     timeout: 120                       # 本地生成超时（秒）
     style-prefix: ""                   # 风格前缀覆盖（留空时按模型名自动套用内置预设：SD1.5/SDXL/FLUX）
     extra-negative-prompt: ""          # 负面提示词覆盖（留空时按模型名自动套用内置预设）
+  wan27:                               # Phase 4：wan2.7 参考图一致性出图（复用 DASHSCOPE_API_KEY，空 Key 不可用）
+    model: wan2.7-image                # ≤9 张参考图；框选 inpaint 同模型
+    timeout-seconds: 120
+  comfyui:                             # Phase 5：本地 ComfyUI SD1.5+LoRA+IP-Adapter 分镜（零云，实测 ~8s/张）
+    workflow-plain: docs/comfyui/sd15_storyboard.template.json          # 无 LoRA 角色纯 prompt 模板
+    workflow-lora: docs/comfyui/sd15_lora_storyboard.template.json      # 角色 LoRA 模板
+    workflow-canny: docs/comfyui/sd15_lora_canny.template.json          # ControlNet 锁机位（gated）
+    workflow-ipadapter: docs/comfyui/sd15_ipadapter.template.json       # 参考图模板（IP-Adapter plus_sd15 + ViT-H，需本机校准）
+    workflow-ipadapter-lora: docs/comfyui/sd15_ipadapter_lora.template.json  # IP-Adapter+LoRA 组合（需手工校准，未就位自动降级）
+    ipadapter-weight: 0.7              # 参考强度甜点区 0.65-0.85；过高会把参考图抄成贴图
+    controlnet-enabled: false          # 开启后定妆参考图经 canny 锁机位（+~10s/张）
+    timeout-seconds: 120               # base-url 复用 video.comfyui.base-url
+    poll-interval-ms: 1000
   generation:
     parallelism: 3                     # 并行生成数（避免云端 API 限流）
     retry-attempts: 1                 # 失败重试次数
@@ -689,6 +752,53 @@ video:
     logo-path: ""                    # Logo 角标图片路径（透明底 PNG，建议宽 ≤300px，叠在右下角；留空禁用）
   subtitle:                          # 模块 F：字幕烧录
     font-name: Microsoft YaHei       # 字幕字体（需系统已安装；Linux/Docker 可用 Source Han Sans CN）
+  generator: none                    # 真 i2v 源：none（默认静图运镜）/ dashscope-wan（云端）/ comfyui（本地零成本）
+  workers: 2                         # i2v 并行线程；comfyui 本地路线建议 1（单卡串行队列）
+  retry-attempts: 1                  # i2v 失败重试（按秒计费，成本红线）
+  candidates:                        # Phase 4：抽卡候选数（成本敏感可降 1；一键编排不抽卡）
+    image-count: 3
+    video-count: 2
+  wan:                               # 云端 wan2.7-i2v（复用 DASHSCOPE_API_KEY）
+    model: wan2.7-i2v                # 首尾帧；wan2.6-i2v 仅首帧
+    resolution: 720P                 # 成本基线：720P/5s/中低运动幅度
+    timeout-seconds: 600
+    poll-interval-ms: 5000
+  comfyui:                           # Phase 5：本地 ComfyUI Wan2.2 i2v（零 API 成本、素材不外传）
+    base-url: http://127.0.0.1:8188
+    workflow-path: docs/comfyui/wan22_i2v_5b.template.json  # 占位符模板；从 ComfyUI 导出校准后覆盖（COMFYUI_WORKFLOW）
+    fps: 24                          # 帧数自动对齐 4n+1；720P→1280×704 / 480P→832×480
+    timeout-seconds: 2700            # 8-9s 长镜单卡可达 ~30min；短切 1.5-2.5s 为主力
+    poll-interval-ms: 3000
+  tts:                               # 旁白/对白声线与语速（edge-tts rate 偏移）
+    narration-voice: zh-CN-YunyangNeural  # 纪录片男声（TTS_NARRATION_VOICE 覆盖）
+    narration-rate: "+15%"           # 旁白提速档（实测 ~5.5 字/秒）；镜头时长 ≥ 字数/字每秒 + 0.6s
+    dialogue-rate: "+0%"             # 对白不比旁白快，快了就变成报幕
+  commentary:                        # Track B：评论工作台（/commentary-studio）
+    max-insert-ratio: 0.2            # 引用占比护栏：引用镜时长/总时长超限拒绝导出
+    attribution-font: ""             # 出处水印中文字体文件（如 C:/Windows/Fonts/msyh.ttc）
+    import-dir: ""                   # 素材批量扫描目录（epNN_标签_名称.mp4/png 约定；空=禁用）
+  assets:                            # 参考素材库（2026-11-17）
+    reference-import-dir: ""         # char_角色名_描述.png / scene_场景名_描述.jpg 约定扫描目录（空=禁用）
+    booru:
+      allowed-hosts: safebooru.org,safebooru.donmai.us,cdn.donmai.us  # 图片 host 白名单（https+精确匹配+禁重定向）
+      default-provider: safebooru    # 主源：safebooru / danbooru-safe
+  endcard:                           # 尾卡镜：endCard=true 跳过生图，本地纯色底+压字
+    font: C:/Windows/Fonts/msyh.ttc  # 中文必须 fontfile（Linux/Docker 换 Noto Sans CJK）
+    color: black                     # 底色（lavfi color 表达式）
+  sfx:
+    enabled: false                   # 音效推荐混音总开关（开启后导出勾选“音效”才生效）
+  realesrgan-path: ""                # Real-ESRGAN ncnn-vulkan 绝对路径（空=跳过超分）
+  realesrgan-model: realesrgan-x4plus-anime  # 动漫风格推荐 x4plus-anime
+  rife-path: ""                      # RIFE ncnn-vulkan 绝对路径（空=跳过补帧；依赖超分抽帧链）
+  rife-model: ""                     # RIFE 模型目录（如 rife-v4.6）
+  restyle:                           # Phase 4：视频转绘（复用 DASHSCOPE_API_KEY，空 Key 不可用）
+    model: wan2.7-videoedit
+    timeout-seconds: 600
+    poll-interval-ms: 5000
+
+sfx:
+  library-path: ./data/sfx          # 音效库目录；文件名格式 category__name.mp3，
+                                    # 分类：wind/rain/footsteps/heartbeat，启动时自动扫描注册
 
 bgm:
   library-path: ./data/bgm          # 内置音乐库目录；文件名格式 category__name.mp3
@@ -706,6 +816,11 @@ bgm:
 - **平台导出**：平台预设自动映射 1080p 分辨率；封面默认截取最近一次成功导出的中间帧；Logo 角标需配置 `video.watermark.logo-path` 后在导出请求中传 `withLogo: true` 生效
 - **本地模型风格预设**：本地生成时按 `image.local.model` 模型名自动套用 SD1.5/SDXL/FLUX 内置风格前缀与负面词（FLUX 不套用负面词），可用 `image.local.style-prefix` / `image.local.extra-negative-prompt` 覆盖；仅作用于本地生成器，云端 DashScope 不受影响
 - **图片质量评估**：`image.quality.enabled: true` 开启后，每张图片由多模态 LLM 打分（清晰度/相关性/美学，0-10），低于 `threshold` 自动重试（≤ `max-retries` 次，评分反馈并入负面提示词，保留最高分）；未配 API Key 或调用失败时降级为分辨率规则评估；评估异常不阻塞生成；评分随镜头详情与 SSE 进度返回，前端显示质量徽章
+- **本地 ComfyUI 双协议**：图像侧（SD1.5+LoRA+IP-Adapter）与视频侧（Wan2.2 i2v）均走原生工作流协议（/upload/image → /prompt → /history → /view），模板占位符替换、与具体工作流解耦；未启动/模板未校准时 available=false 自动降级，干净启动不受影响；重启后生成器回默认源，需在前端下拉重新切换
+- **参考图消费闸门**：镜头绑定的参考素材（referenceAssetIds）仅由 comfyui（IP-Adapter 模板就位时）与 wan27 生成器消费；每镜最多取前 2 张（角色定妆图在前、CHARACTER 优先 SCENE）；绑定/更换不失效旧图，只影响下次生成；INSERT 类素材禁入生成链路（仅供评论工作台拼接）
+- **booru 网搜三道闸**：① https + host 精确白名单 + 禁重定向；② 预览/入库只认 provider+postId 服务端重查，不信任客户端 URL；③ 下载护栏 10s 连接/30s 读取/≤20MB/image/*；rating 复核覆盖搜索/预览/入库三入口（仅 safe/g/general）；入库字节转存自家存储，sourceNote 记录出处页+分级+tags，外链永不进生成链路
+- **TTS 语速与时长算术**：旁白默认 YunyangNeural +15%（实测 ~5.5 字/秒），镜头时长应 ≥ 字数/字每秒 + 0.6s；改语速后需重算全片时长；评论工作台合成另有 TTS 预探测自动抬升有效时长防旁白被截
+- **尾卡镜**：endCard=true 的镜头旁路生图 provider，由 EndCardImageRenderer 本地 FFmpeg 渲染纯色底+压字；中文必须配置 `video.endcard.font` 字体文件，否则文字静默不渲染
 
 ### 完整配置示例
 
@@ -833,6 +948,39 @@ spring:
 | `/api/video/export/platforms` | GET | 社媒平台预设列表（六平台规格） |
 | `/api/video/export/platform` | POST | 按平台预设一键导出（抖音/B站/小红书/快手/视频号/YT Shorts） |
 | `/api/video/cover/generate` | POST | 从导出视频截取封面帧（默认中间帧，可指定时刻/导出记录） |
+| `/api/video/scripts/{id}/style` | PUT | 脚本级画风锁（Phase 4） |
+| `/api/video/scripts/{id}/continuity` | PUT | 连续性模式 NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME（Phase 4） |
+| `/api/video/scripts/commentary/import` | POST | 导入评论 JSON（format=commentary，Track B） |
+| `/api/video/scripts/{id}/shots/{shotId}/asset` | POST | 镜头绑定素材（片段/主视觉，Track B） |
+| `/api/video/scripts/{scriptId}/asset-matches` | POST | LLM 素材匹配推荐（不落库，确认走镜头 referenceAssetIds） |
+| `/api/video/characters` | GET/POST | 角色卡列表 / 创建（含 loraName/triggerWord，Phase 4） |
+| `/api/video/characters/{id}` | PUT/DELETE | 角色卡更新 / 删除 |
+| `/api/video/characters/{id}/reference-image` | POST | 定妆参考图上传（multipart） |
+| `/api/video/characters/voices` | GET | TTS 声线列表 |
+| `/api/video/candidates` | GET | 镜头候选列表（scriptId+shotId） |
+| `/api/video/candidates/generate` | POST | 抽卡生成（IMAGE N=3 / VIDEO N=2） |
+| `/api/video/candidates/{id}/select` | POST | 人工择优回写主资产 |
+| `/api/video/images/inpaint` | POST | 框选局部重绘（产物入候选） |
+| `/api/video/videos/shot/{scriptId}/{shotId}` | POST | 单镜头真 i2v 生成（Phase 4/5） |
+| `/api/video/videos/script/{scriptId}/stream` | GET | SSE 批量 i2v 进度 |
+| `/api/video/videos/generators` | GET | 视频生成器列表（none/dashscope-wan/comfyui） |
+| `/api/video/videos/generator` | PUT | 运行时切换视频生成器 |
+| `/api/video/restyle` | POST/GET | 视频转绘提交（multipart file+style）/ 我的任务列表 |
+| `/api/video/restyle/{id}` | GET | 转绘任务状态轮询 |
+| `/api/video/assets` | POST/GET | 素材上传（file/name/tags/category/trim）/ 列表（可按 category 过滤） |
+| `/api/video/assets/{id}` | DELETE | 删除素材（归属校验） |
+| `/api/video/assets/scan` | POST | 评论素材目录扫描（epNN_标签_名称 约定） |
+| `/api/video/assets/scan-reference` | POST | 参考素材目录扫描（char_/scene_ 约定，幂等去重） |
+| `/api/video/assets/booru/search` | GET | booru 网搜（q 多 tag 用 + 连接；provider；page 0-4，每页 20） |
+| `/api/video/assets/booru/preview` | GET | 缩略图服务端代理（provider+postId，过闸取字节） |
+| `/api/video/assets/booru/ingest` | POST | 网搜素材入库（自家存储转存 + sourceNote 出处） |
+| `/api/video/export/hd/async` | POST | 异步高清导出（返 jobId，Track B） |
+| `/api/video/export/jobs/{id}` | GET | 异步导出任务状态（RUNNING/SUCCESS/FAILED） |
+| `/api/video/export/batch-download` | POST | 批量三平台导出 + ZIP 打包下载 |
+| `/api/video/templates` | GET | 视频模板列表（8 内置 + 自定义） |
+| `/api/video/templates/{id}` | GET/DELETE | 模板详情 / 删除 |
+| `/api/video/templates/{id}/apply` | POST | 一键应用模板生成脚本 |
+| `/api/video/templates/custom` | POST | 脚本另存为自定义模板 |
 | `/api/video/agent/tools` | GET | Agent 工具清单（名称/描述/输入 Schema，Phase 3 切片1） |
 | `/api/video/agent/chat` | POST | AI 导演对话（ReAct 工具编排；exportVideo 需 confirmedTools 确认，Phase 3 切片2） |
 | `/api/video/agent/chat/{sessionId}` | DELETE | 清空导演对话历史（Phase 3 切片2） |
@@ -840,7 +988,7 @@ spring:
 | `/api/video/agent/orchestrate/{taskId}` | GET | 查询编排任务状态（轮询，Phase 3 切片3） |
 | `/api/video/agent/orchestrate/{taskId}/confirm` | POST | 确认续跑：放行 exportVideo 闸门（Phase 3 切片3） |
 
-> 视频工作室页面：http://localhost:8080/video-studio （详见 [API_TEST.md](API_TEST.md) 第七节）
+> 视频工作室页面：http://localhost:8080/video-studio ；评论工作台：http://localhost:8080/commentary-studio （详见 [API_TEST.md](API_TEST.md) 第七节与尾部 Phase 节）
 
 ## 开发指南
 
@@ -985,11 +1133,12 @@ cat .env  # 确认 API Key 非占位符
 - 多镜头合成较慢属于正常现象（1080p 可能需要几分钟），超时上限由 `video.compose-timeout-minutes` 控制（默认 8 分钟）
 - 旁白配音失败时检查 `video.python-command` 指向的解释器已装 edge-tts（`python -m edge_tts --version`）；Windows 裸 `python` 可能被微软商店别名桩劫持（退出码 49），请写绝对路径
 
-### 15. 如何使用本地 Stable Diffusion / FLUX 生成短视频画面？
+### 15. 如何使用本地 Stable Diffusion / FLUX / ComfyUI 生成短视频画面？
 
-1. 启动本地 SD WebUI（或 OllamaDiffuser 等兼容服务），确认可访问 `http://127.0.0.1:7860`（ComfyUI 需 SD WebUI 兼容层/代理，原生工作流协议暂未支持）
-2. 修改配置 `image.generator: local`，或在前端「图像生成器」下拉中运行时切换
-3. 本地生成原生支持负面提示词（Negative Prompt），并按模型名自动套用风格预设（SD1.5/SDXL/FLUX），画面风格更可控且无 API 成本；可用 `image.local.style-prefix` / `image.local.extra-negative-prompt` 自定义覆盖
+1. **SD WebUI 路线**：启动本地 SD WebUI（或 OllamaDiffuser 等兼容服务），确认可访问 `http://127.0.0.1:7860`；配置 `image.generator: local` 或前端下拉切换
+2. **ComfyUI 路线（原生工作流协议，已支持）**：启动 ComfyUI（默认 `http://127.0.0.1:8188`），按 docs/comfyui/ 参考模板从本机导出校准后覆盖 `image.comfyui.workflow-*`；配置 `image.generator: comfyui` 或前端下拉切换；支持 SD1.5+角色 LoRA、IP-Adapter 参考图（weight 0.7）与 ControlNet 锁机位（gated）
+3. 本地生成原生支持负面提示词（Negative Prompt），SD WebUI 路线按模型名自动套用风格预设（SD1.5/SDXL/FLUX），画面风格更可控且无 API 成本；可用 `image.local.style-prefix` / `image.local.extra-negative-prompt` 自定义覆盖
+4. 视频侧同理：`video.generator: comfyui` 走本地 Wan2.2 i2v（零 API 成本），需校准 `video.comfyui.workflow-path`；单卡建议 `video.workers: 1`
 
 ### 16. 字幕烧录后乱码或字体不对？
 
@@ -1004,6 +1153,20 @@ cat .env  # 确认 API Key 非占位符
   然后在前端勾选「Logo」或导出请求中传 `"withLogo": true`；未配置时自动跳过不报错
 - **封面**：导出成功后（前端结果区或导出历史）点「封面」即可从该视频截帧；默认取中间帧，
   也可调 `POST /api/video/cover/generate` 传 `timeOffset`（秒）指定时刻、`exportId` 指定某次导出；封面地址会回写进导出记录
+
+### 18. booru 网搜素材怎么用？多 tag 搜索为什么零结果？
+
+- 工作室「参考素材库」面板输入英文 tag 搜索（如 `hatsune_miku`），勾选后「入库选中」转存到自家存储（sourceNote 自动记录出处页/分级/tags）
+- **多 tag 语义**：空格会被转成下划线（单个 tag 内分词，如 `black hair`→`black_hair`）；多个 tag 请用 `+` 连接表示 AND（如 `1girl+black_hair`）；tag 越具体结果越少，零结果时先减 tag 再换源（provider=danbooru-safe）
+- 缩略图走服务端代理（浏览器直连源站常失败）；个别缩略图加载失败多为上游瞬时限流，重试即可
+- 入库仅支持 CHARACTER/SCENE 两类参考素材；非 safe 分级、非白名单 host 一律拒绝（三道闸，见配置说明）
+
+### 19. 如何提高角色一致性（漫剧主角不崩脸）？
+
+- **云端路线**：`image.generator: wan27` + 角色卡定妆参考图（≤9 张），参考图回退链自动处理 local/oss 存储
+- **本地路线**：`image.generator: comfyui` + 角色 LoRA（角色卡填 loraName/triggerWord）；无 LoRA 时用 IP-Adapter 参考图模板（需本机校准 `sd15_ipadapter.template.json`，weight 默认 0.7，过高会抄成贴图、过低不像）
+- 镜头绑定参考素材后生成时自动消费（每镜前 2 张、人物优先）；注意重启后生成器回默认源，需重新切换；默认 zhipu 等纯文生图源不吃参考图
+- 构图/机位要求高时可开 `image.comfyui.controlnet-enabled: true`（canny 锁机位，+~10s/张）；崩手崩脸用框选 inpaint 修（产物入候选人工择优）
 
 ## 参考资料
 
@@ -1101,3 +1264,43 @@ ylyan2015
 - 异步导出：POST /api/video/export/hd/async 提交即返 jobId，后台单线程 worker 合成，GET /api/video/export/jobs/{id} 轮询 RUNNING/SUCCESS/FAILED；同步 /export/hd 不变。
 - 发片工具：tools/auto-commentary-concat.js（Node）按脚本时间轴（xfade=0.8）拼接主体+插入素材并烧录出处水印；主体画幅须与脚本 aspectRatio 一致，drawtext 显式 fontfile 中文字形。
 - 配置：video.commentary.max-insert-ratio（0.2）/attribution-font（空）/import-dir（空）。冒烟：mvn test -Dtest=VideoComposeAutoFitTest -Dcommentary=true（真实 FFmpeg loop，默认跳过）。
+
+## Phase 5 素材库切片：参考素材与 booru 网搜（2026-11-17）
+
+面向漫剧角色/场景一致性：把「找参考图 → 绑定镜头 → 参考图出图」打通成闭环，与 Track B 评论素材库共用 MediaAsset 实体但用途分离（CHARACTER/SCENE 进生成链路，INSERT 仅供评论拼接）。
+
+- S1 参考素材入库：上传增 category（CHARACTER/SCENE/INSERT 白名单 fail-fast）；新端点 POST /api/video/assets/scan-reference 扫描配置目录 video.assets.reference-import-dir（文件名约定 char_角色名_描述.png / scene_场景名_描述.jpg，大小写不敏感，多段标签下划线转逗号，幂等去重）。
+- S2 镜头绑定：镜头增 referenceAssetIds 字段（PUT 镜头/批量 PUT 均贯穿）；写侧三校验（归属+IMAGE+category∈{CHARACTER,SCENE}），伪造/他人 id 静默剔除；消费侧 ReferenceImageResolver 同校验最后防线；绑定/更换不失效旧图旧视频（只影响下次生成）。
+- S3 IP-Adapter 参考图出图：ComfyUiImageGenerator 模板路由 refs 优先（ipadapter+lora 组合 / ipadapter / plain / lora / lora+canny）；参考图消费闸门每镜前 2 张（角色定妆图在前、CHARACTER 优先 SCENE）；ipadapter 模板未就位 supportsReferences=false 自动降级不阻塞启动；新模板 docs/comfyui/sd15_ipadapter.template.json（已本机校准，plus_sd15 + ViT-H）/ sd15_ipadapter_lora.template.json（组合待手工校准）；配置 image.comfyui.workflow-ipadapter/ipadapter-lora/ipadapter-weight（0.7）。
+- S4 booru 网搜入库：GET /api/video/assets/booru/search（q/provider/page，每页 20、≤5 页）/ GET preview（服务端代理过闸取字节，魔数嗅探 png/jpeg/webp/gif）/ POST ingest（provider+postId 重查，字节转存自家存储，sourceNote=出处页|rating|tags）；双源 safebooru（主）/ danbooru-safe；三道闸：https+host 精确白名单+禁重定向 / 不信任客户端 URL / 下载护栏 10s+30s+≤20MB+image/*；rating 三入口复核仅 safe/g/general；策略拒绝 400 可透传、内部故障 500 固定文案防 SQL 外泄。
+- 自动匹配：POST /api/video/scripts/{scriptId}/asset-matches 由 LLM 批量判断镜头×素材（name/tags 文本）相关性，失败降级关键词重叠（source=LLM/FALLBACK）；推荐不落库，前端 chip 一键采用后走 updateShot.referenceAssetIds 确认。
+- 前端：工作室素材库面板（上传/扫描/网搜/勾选入库/匹配 chip/绑定管理）；booru 搜索框 placeholder 提示多 tag 用 + 连接。
+- 验收：全量门禁绿；真实 story（GTA6 十三年等待）生产测试 + 浏览器 UI 全链路验证（网搜 hatsune_miku → 入库 → 绑定 → comfyui 生图目视继承初音特征 → HD 导出播放）。
+
+## 生产校准：尾卡镜 / TTS 语速 / ComfyUI 超时（2026-11-17）
+
+真实 story 整片试产后的三项校准（存量行为兼容，默认值已按实测调优）：
+
+- 尾卡镜：镜头增 endCard 字段，true 时旁路生图 provider 由 EndCardImageRenderer 本地 FFmpeg 渲染纯色底+压字（关注/下集预告 CTA）；配置 video.endcard.font（中文必须 fontfile）/color；零 API 成本、不占生成队列。
+- TTS 声线与语速：新配置 video.tts.narration-voice（默认 zh-CN-YunyangNeural 纪录片男声）/narration-rate（+15%，实测 ~5.5 字/秒）/dialogue-rate（+0%）；台词算术：镜头时长 ≥ 字数/字每秒 + 0.6s，改语速后重算全片。
+- ComfyUI i2v 超时上调：video.comfyui.timeout-seconds 1800→2700（实测 8s 镜 193f ~25min、9s 镜 217f ~31min 顶旧红线）；排产建议短切 1.5-2.5s 为主力、workers=1。
+- 已修复（2026-11-18）：字幕时间轴偏移——合成时按 TTS 实测/真片段实测的有效时长累计重排字幕 cue（重排基准为名义声明时长，覆盖 TTS 抬升与真片段实测漂移两类场景）。
+- 已知限制（留后续切片）：booru preview 对不存在 postId 返 500（应 404）。
+
+## 钩子化脚本：叙事硬约束 + 台词密度自动校验（2026-11-18）
+
+P0 留存基本盘，对所有脚本生成生效（VideoScriptService system prompt，story 脚本/模板引导/素材清单路径均继承）：
+
+- 钩子叙事硬约束：首镜 3 秒内抛冲突/悬念（开场旁白 ≤15 字，禁风景铺垫/慢热引入）；每 15-20 秒一个情绪转折（冲突升级/信息反转/情绪落差）；末镜留扣子接尾卡关注 CTA（有尾卡镜时扣子放倒数第二镜）。
+- 台词密度自动校验：生成后逐镜检查时长 ≥ (旁白+对白字数)/5.5 + 0.6s（YunyangNeural +15% 实测语速基准）；超密只 warn 不阻断（LLM 输出不可强控，合成时 TTS 预探测抬升时长兜底）；尾卡镜本地压字不走 TTS 跳过。
+- 测试：VideoScriptServiceHookTest（prompt 约束契约 + 密度算术边界/对白合计/尾卡跳过/null 安全，经变异复证）。
+
+## 竖屏优先：脚本级画幅 + 竖构图提示词 + 多人镜拆特写（2026-11-18）
+
+P0 短视频平台适配（抖音/快手/视频号竖屏信息流），存量横屏脚本行为逐字不变：
+
+- 脚本级画幅字段：StoryScript 增 aspectRatio（白名单 16:9/9:16/1:1，null=默认横屏）；PUT /api/video/scripts/{id}/aspect 更新（空值清空）；脚本详情响应新增 aspectRatio 字段（null 透出 "16:9"）。
+- 生图尺寸自动切换：脚本画幅 9:16 时单镜/批量/尾卡/抽卡四处装配点统一切 720x1280（无视 image.generation.default-size）；其余画幅沿用配置尺寸（非法/缺失退 1280x720）。
+- 竖构图提示词：9:16 时提示词装配点（ShotPromptAssembler）注入 centered subject / vertical framing；多人镜（≥2 角色）强制单人特写（single character close-up, only one person in frame，替代原景别，规避 SD1.5 多人构图脸崩）；单人/空镜保留原景别。
+- 导出画幅 fallback：预览/高清/异步导出请求未指定 aspectRatio 时自动沿用脚本画幅（显式请求优先，双 null 保持存量 16:9）；9:16 脚本默认导出 720x1280。
+- 测试：ShotPromptAssemblerPortraitTest / ImageGenerationPortraitSizeTest / StoryScriptServiceAspectTest / VideoExportAspectFallbackTest（26 用例，四处变异均独红复证）；全量门禁 602 绿。

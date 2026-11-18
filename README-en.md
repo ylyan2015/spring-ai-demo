@@ -1,6 +1,6 @@
 # Spring AI Demo - Multi-Model Intelligent Chat Application
 
-An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, **AI Short Video Studio** (idea → storyboard → parallel image generation → BGM → FFmpeg compose with multi-ratio export), Docker one-click deployment, and more.
+An intelligent chat application example based on Spring Boot 3.4.1 and Spring AI 1.0.0, supporting multiple AI models (Ollama, OpenAI, DeepSeek, etc.) with built-in user authentication, RAG knowledge base, SSE streaming output, AI image generation (Tongyi Wanxiang), multi-storage service, **AI Short Video Studio / Manga-Drama Pipeline** (idea → storyboard → character-consistent images → real image-to-video → multi-voice dubbing → BGM/SFX → FFmpeg compose with multi-ratio export), **Commentary Studio** (asset stitching + copyright guardrails) and **Reference Asset Library** (booru web search / LLM matching / IP-Adapter reference images), Docker one-click deployment, and more.
 
 ## Project Overview
 
@@ -36,7 +36,15 @@ This project demonstrates how to integrate the Spring AI framework into a Spring
 - ✅ **BGM Scoring** - Built-in music library (categorized by mood, 5 pre-generated royalty-free tracks) + LLM smart recommendation + custom upload; auto volume reduction, fade in/out, short-track looping
 - ✅ **Subtitle System** - Narration auto-converted to timed subtitles (timeline precisely aligned with transitions); SRT standalone export and ASS hard-burn into frames; customizable style (font / size / color / outline / position); multilingual subtitles (Chinese / English / bilingual, LLM translation)
 - ✅ **Video Template System** - 8 built-in style templates (product showcase / storytelling / knowledge / travel / food / emotional quotes / tech / fitness), one-click apply to generate styled scripts, save custom templates
-- ✅ **Multiple Image Generation Backends** - Six sources switchable via config or UI: DashScope Tongyi Wanxiang (default), local SD/FLUX, Zhipu CogView, SiliconFlow, OpenAI, Volcano Ark Seedream (the latter four share one OpenAI-compatible implementation); automatic retry on failure
+- ✅ **Multiple Image Generation Backends** - Eight sources switchable via config or UI: DashScope Tongyi Wanxiang (default), local SD/FLUX (SD WebUI protocol), Zhipu CogView, SiliconFlow, OpenAI, Volcano Ark Seedream (the middle four share one OpenAI-compatible implementation), wan2.7 reference-image consistency, local ComfyUI SD1.5+LoRA+IP-Adapter; automatic retry on failure
+- ✅ **Character Cards & Consistency** - LLM designs characters before storyboarding (name / English feature table / personality / voice / LoRA / trigger word); reference-image upload + script-level style lock; cloud wan2.7 (<=9 reference images) or local IP-Adapter (weight 0.7) locks character identity
+- ✅ **Real Image-to-Video (i2v)** - Cloud wan2.7-i2v / local ComfyUI Wan2.2 (zero API cost, assets never leave the machine) dual routes; script-level continuity NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME; mixed real-clip + still-image motion compose
+- ✅ **Candidate Draws & Inpainting** - Per shot image N=3 / video N=2 candidates ranked by quality score, human selection writes back the main asset; wan2.7 bbox inpaint results become candidates without overwriting the main image
+- ✅ **Multi-Voice Dubbing & Post Enhancement** - Dialogue uses character-card voices, narration a documentary male voice (rate configurable); layered SFX mix (voice 100% / BGM 15% / SFX 30%); optional Real-ESRGAN upscale + RIFE interpolation checkboxes
+- ✅ **Video Restyle** - Live-action footage → wan2.7-videoedit anime / American comic / watercolor style transfer, independent async tasks never touching the main pipeline
+- ✅ **Reference Asset Library** - Upload / directory scan (char_/scene_ naming convention) / booru dual-source web search (three security gates + re-storage into own storage + traceable sourceNote); LLM auto-match recommendations, shot-bound reference images consumed by IP-Adapter/wan2.7 (first 2 per shot, characters first)
+- ✅ **Commentary Studio** - /commentary-studio standalone page, format-separated script management, asset clip stitching + TTS pre-probe duration alignment + attribution watermark + insert ratio <=20% copyright guardrail + async HD export
+- ✅ **End-Card Shots** - endCard=true skips image generation, local FFmpeg solid-color + text rendering (Chinese fontfile), zero-cost closing CTA
 
 ## Technology Stack
 
@@ -220,17 +228,24 @@ Complete workflow: **Idea → Storyboard → Prompt Enhancement → Parallel Ima
 - 📝 **Script Management** - Enter a creative idea to generate a multi-shot storyboard; scripts are persisted for later editing, renaming, and deleting; optional video templates (8 built-in styles + custom) generate styled scripts in one click, scripts can be saved as templates
 - 🎬 **Shot Editing** - Full-field editing (scene description / narration / prompt / camera movement / duration); add, delete shots and drag-sort; camera movement is honored (static = no motion, push-in = zoom in, pull-back = zoom out, pan = horizontal move), with zoompan supersampling to eliminate per-frame truncation jitter
 - 🎨 **Prompt Enhancement** - Single-shot or batch LLM optimization converting Chinese scene descriptions into high-quality English image prompts; 8 built-in visual styles (cinematic realism / anime / watercolor / cyberpunk / Pixar 3D / vintage / Chinese painting / fantasy)
-- 🖼️ **Parallel Image Generation** - One-click switching between cloud Tongyi Wanxiang and local Stable Diffusion / FLUX (local models auto-apply SD1.5/SDXL/FLUX style presets); SSE real-time progress bar, automatic retry, per-shot regeneration
+- 🖼️ **Parallel Image Generation** - Eight sources one-click switching: Tongyi Wanxiang (default) / local SD/FLUX / Zhipu CogView / SiliconFlow / OpenAI / Volcano Ark Seedream (the middle four via one OpenAI-compatible implementation; local models auto-apply SD1.5/SDXL/FLUX style presets) / wan2.7 reference-image consistency / local ComfyUI SD1.5+LoRA+IP-Adapter; SSE real-time progress bar, automatic retry, per-shot regeneration
 - ✅ **Image Quality Evaluation** (optional) - Multimodal LLM scores clarity/relevance/aesthetics (0-10); low-scoring images are automatically regenerated (<=2 retries, best score kept); falls back to rule-based evaluation without a multimodal API; quality badge shown on shot cards (enable via `image.quality.enabled`, off by default)
 - 🤖 **Agent Toolification** (Phase 3 slice 1) - Six core capabilities (storyboard generation / prompt enhancement / image generation / quality evaluation / video export / BGM recommendation) wrapped as Spring AI tools (FunctionToolCallback), with a tool-list introspection endpoint, laying the foundation for director-agent orchestration
 - 🎬 **AI Director Chat** (Phase 3 slice 2) - ChatClient with the six tools mounted performs automatic ReAct orchestration (think → call tool → observe → continue); a built-in chat panel on the studio page; video export is protected by a human confirmation gate (frontend confirm button / explicit `confirmedTools` in the request); conversation history is isolated in memory per user + session (max 20 messages, cleared on restart)
 - 🎭 **Multi-Agent Orchestration** (Phase 3 slice 3) - Four specialist agents (screenwriter / artist / audio / editor, each with its own system prompt + tool subset) delegated to the director as "specialist-as-tool"; a "one-click pipeline" runs asynchronous orchestration (submit → poll → confirm to resume) on a dedicated thread pool with explicit SecurityContext propagation; tasks are in-memory (max 100) with per-user ownership checks
+- 🧑‍🎨 **Character Cards & Consistent Images** (Phase 4) - Script generation auto-produces character cards (name / English feature table / personality / voice / LoRA / trigger word); reference-image upload + script-level style lock; wan2.7 consumes <=9 reference images, local ComfyUI routes via IP-Adapter (weight 0.7) / LoRA / ControlNet templates
+- 🎞️ **Real Image-to-Video** (Phase 4/5) - Cloud wan2.7-i2v or local ComfyUI Wan2.2 (zero cost); continuity modes chain the previous shot's last frame into the next shot's first frame; real clips use ffprobe-measured duration in the mixed compose
+- 🎲 **Candidate Draws & Inpainting** (Phase 4) - Per-shot multi-candidate comparison modal with human selection; bbox inpaint fixes hands/faces, results become candidates
+- 🎙️ **Multi-Voice Dubbing & Post** (Phase 4) - Dialogue TTS per line with character-card voices, narration documentary male voice (rate configurable); export checkboxes for SFX / upscale / interpolation
+- 🖌️ **Video Restyle Panel** (Phase 4) - Upload 2-10s live-action clips → anime / American comic / watercolor restyle, independent tasks polled every 3s
+- 🗂️ **Reference Asset Library Panel** (2026-11-17) - Upload / scan ingest (CHARACTER/SCENE/INSERT categories), booru web search (English tags work best; join multiple tags with `+` for AND; spaces become underscores within a single tag), checkbox ingest (own storage + attribution), LLM match recommendation chips one-click adopt, shot reference binding (first 2 consumed per shot at generation, characters first; only comfyui/wan27 generators consume reference images)
+- 🔚 **End-Card Shots** (2026-11-17) - Check endCard on a shot to skip image generation; local solid-color + text rendering (follow / next-episode CTA), font via `video.endcard.font`
 - 🎵 **BGM Scoring** - Built-in music library categorized by mood (uplifting / warm / tense / epic, etc., 5 pre-generated royalty-free tracks), with AI recommendation based on script theme and custom upload; automatically volume-reduced with fade in/out during export
 - 📝 **Subtitle Burn/Export** - Toggle "Burn Subtitles" during export to hard-burn narration into frames (social-media mute-friendly); subtitle language selectable: Chinese / English / bilingual (LLM translation, narration audio stays Chinese); standalone SRT export and single-frame subtitle preview supported
 - 📲 **Social Platform Export** - Pick Douyin/Bilibili/Xiaohongshu from the platform dropdown (spec auto-applied with duration hints); batch three-platform (9:16/16:9/1:1) parallel export with ZIP package download (covers + manifest included); one-click cover frame extraction from exported video
 - 📺 **Preview & Export** - 480p quick preview (with watermark) for fast confirmation; 720p/1080p HD export supports 16:9/9:16/1:1 ratios; export history with re-download
 
-> **Note**: Video composition requires FFmpeg (defaults to bare names on the system PATH; override via `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed; interpreter via `video.python-command` / `PYTHON_CMD`); local image generation requires an SD WebUI-compatible service (default `http://127.0.0.1:7860`). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
+> **Note**: Video composition requires FFmpeg (defaults to bare names on the system PATH; override via `video.ffmpeg-path` / `video.ffprobe-path` or `FFMPEG_PATH` / `FFPROBE_PATH` env vars); narration requires Edge TTS (`pip install edge-tts`, silent video when not installed; interpreter via `video.python-command` / `PYTHON_CMD`); local image generation supports two routes: SD WebUI-compatible services (default `http://127.0.0.1:7860`) and the native ComfyUI workflow protocol (default `http://127.0.0.1:8188`, calibrate per docs/comfyui/ templates); for commentary/review creation use the standalone entry http://localhost:8080/commentary-studio (Commentary Studio). Preset BGM tracks are programmatically synthesized royalty-free chord pads; regenerate them with `tools/generate-preset-bgm.ps1`, or replace with real royalty-free music named `category__name.mp3` in `data/bgm/`.
 
 #### 5. Test with API
 
@@ -267,7 +282,10 @@ spring-ai-demo/
 │   │   ├── SecurityConfig.java         # Spring Security configuration
 │   │   ├── StorageConfig.java          # Storage service factory (local/oss/minio/fastdfs)
 │   │   ├── StorageProperties.java      # Storage configuration properties
-│   │   └── WebMvcConfig.java           # Web MVC config (static resource mapping for local storage)
+│   │   ├── WebMvcConfig.java           # Web MVC config (static resource mapping for local storage)
+│   │   ├── ImageGeneratorConfig.java   # Image generator wiring (eight sources + wan27/comfyui reference capability)
+│   │   ├── VideoGeneratorConfig.java   # Video generator wiring (none/dashscope-wan/comfyui)
+│   │   └── BooruConfig.java            # booru web-search HttpClient (redirects disabled) + provider registry
 │   ├── controller/
 │   │   ├── AuthController.java         # Auth controller (register/login/captcha)
 │   │   ├── BgmController.java          # Video studio: BGM list/recommend/upload
@@ -285,7 +303,14 @@ spring-ai-demo/
 │   │   ├── TimeZoneController.java     # Timezone controller (IP geolocation)
 │   │   ├── VideoExportController.java  # Video studio: preview/HD export/history/ZIP package
 │   │   ├── VideoTemplateController.java # Video studio: template list/apply/custom (module H)
-│   │   └── VideoAgentController.java   # Video studio: agent introspection / director chat / multi-agent orchestration (Phase 3 slices 1/2/3)
+│   │   ├── VideoAgentController.java   # Video studio: agent introspection / director chat / multi-agent orchestration (Phase 3 slices 1/2/3)
+│   │   ├── StoryCharacterController.java # Video studio: character card CRUD / reference image / voice list (Phase 4)
+│   │   ├── ShotCandidateController.java # Video studio: candidate draws / selection / inpainting (Phase 4)
+│   │   ├── VideoGenerationController.java # Video studio: real i2v single-shot / SSE / generator switching (Phase 4/5)
+│   │   ├── VideoRestyleController.java # Video studio: restyle independent tasks (Phase 4)
+│   │   ├── MediaAssetController.java   # Video studio: asset upload / scan / list / delete (Track B + asset library)
+│   │   ├── BooruAssetController.java   # Video studio: booru search / preview proxy / ingest (asset library)
+│   │   └── AssetMatchController.java   # Video studio: LLM asset match recommendations (asset library)
 │   ├── service/
 │   │   ├── AuthService.java            # Auth service (register/login logic)
 │   │   ├── BgmService.java             # Video studio: BGM library/LLM recommend/upload
@@ -296,8 +321,17 @@ spring-ai-demo/
 │   │   ├── ImagePromptOptimizerService.java # Video studio: LLM prompt enhancement
 │   │   ├── RagService.java             # RAG service (parse/vectorize/search)
 │   │   ├── StoryScriptService.java     # Video studio: script generate/edit/reorder
-│   │   ├── VideoExportService.java     # Video studio: preview/HD export/history/ZIP package
-│   │   └── VideoTemplateService.java   # Video studio: template seed/apply/custom (module H)
+│   │   ├── VideoExportService.java     # Video studio: preview/HD export/history/ZIP package/async export
+│   │   ├── VideoTemplateService.java   # Video studio: template seed/apply/custom (module H)
+│   │   ├── StoryCharacterService.java  # Video studio: character cards / reference images / voices (Phase 4)
+│   │   ├── ShotCandidateService.java / CandidateGenerationService.java # Video studio: candidate selection / draw generation (Phase 4)
+│   │   ├── VideoGenerationService.java # Video studio: real i2v orchestration / continuity / last-frame write-back (Phase 4/5)
+│   │   ├── VideoRestyleService.java    # Video studio: restyle async tasks (Phase 4)
+│   │   ├── SfxService.java             # Video studio: SFX library / LLM recommend / layered mix (Phase 4)
+│   │   ├── MediaAssetService.java      # Video studio: asset upload / trim / dual-dir scan (Track B + asset library)
+│   │   ├── BooruSearchService.java     # Video studio: booru three gates / preview proxy / re-storage ingest (asset library)
+│   │   ├── AssetMatchService.java      # Video studio: LLM asset matching + keyword fallback (asset library)
+│   │   └── LoginRateLimiter.java       # Login rate limiting (5 failures / 60s per username+IP)
 │   ├── entity/
 │   │   ├── Bgm.java                    # BGM entity (video module D)
 │   │   ├── Conversation.java           # Conversation entity (bound to userId)
@@ -309,7 +343,12 @@ spring-ai-demo/
 │   │   ├── StoryScript.java / StoryShot.java # Script/shot entities (module A)
 │   │   ├── User.java                   # User entity
 │   │   ├── VideoExport.java            # Video export record entity (module C)
-│   │   └── VideoTemplate.java          # Video template entity (module H)
+│   │   ├── VideoTemplate.java          # Video template entity (module H)
+│   │   ├── StoryCharacter.java         # Character card entity (voice/LoRA/trigger word/reference image, Phase 4)
+│   │   ├── ShotCandidate.java          # Candidate draw entity (Phase 4)
+│   │   ├── RestyleTask.java            # Video restyle task entity (Phase 4)
+│   │   ├── SfxTrack.java               # SFX track entity (Phase 4)
+│   │   └── MediaAsset.java             # Asset library entity (kind/category/sourceNote, Track B + asset library)
 │   ├── exception/
 │   │   ├── ImageGenerationException.java # Image generation exception
 │   │   └── StorageException.java         # Storage exception
@@ -326,11 +365,13 @@ spring-ai-demo/
 │       ├── VideoExportRepository.java  # Export record data access (module C)
 │       └── VideoTemplateRepository.java # Video template data access (module H)
 ├── src/main/java/com/github/ylyan2015/springaidemo/video/
-│   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1)
+│   ├── Storyboard.java / Shot.java    # Storyboard DTOs (Phase 1; Shot carries dialogue/shot size/endCard/reference asset fields)
 │   ├── VisualStyle.java               # 8 visual style presets (with negative prompts)
 │   ├── PlatformPreset.java           # Social platform preset enum (six platforms)
 │   ├── ImageGenerationProgress.java   # SSE progress event
-│   ├── VideoScriptService.java        # Script generation (Phase 1)
+│   ├── CharacterDesign.java / TtsLine.java # Character design DTO / per-line TTS DTO (Phase 4)
+│   ├── ShotPromptAssembler.java       # Single prompt assembly point (style lock/shot size/character features/trigger words, Phase 4/5)
+│   ├── VideoScriptService.java        # Script generation (Phase 1; characters before storyboard)
 │   ├── VideoComposeService.java       # FFmpeg compose + ComposeOptions (multi-ratio/watermark/BGM mix/subtitle burn)
 │   ├── subtitle/                     # Module F: subtitle system
 │   │   ├── SubtitleService.java        # SRT/ASS generation + xfade-aligned timeline + multilingual translation
@@ -346,12 +387,20 @@ spring-ai-demo/
 │   │   ├── DirectorAgentService.java  # Director agent (ChatClient + tools ReAct + session history)
 │   │   ├── SpecialistAgentFactory.java # Four specialist agents + delegateToXxx tools (slice 3)
 │   │   └── AgentOrchestrationService.java # Async orchestration (SecurityContext propagation + task registry + confirm resume)
-│   └── generator/                     # Image generation abstraction (strategy + factory)
-│       ├── ImageGenerator.java / GeneratedImage.java
+│   └── generator/                     # Image/video generation abstraction (strategy + factory)
+│       ├── ImageGenerator.java / GeneratedImage.java / VideoGenerator.java / GeneratedVideo.java
 │       ├── DashScopeImageGenerator.java  # Cloud Tongyi Wanxiang
+│       ├── Wan27ImageGenerator.java   # wan2.7 reference consistency / bbox inpaint (Phase 4)
+│       ├── OpenAiCompatibleImageGenerator.java # Generic impl for Zhipu/SiliconFlow/OpenAI/Ark
 │       ├── LocalSdImageGenerator.java   # Local SD WebUI / FLUX
 │       ├── LocalModelStylePreset.java   # SD1.5/SDXL/FLUX style presets (module G)
-│       └── ImageGeneratorFactory.java   # Config-driven + runtime switching
+│       ├── ComfyUiClient.java / ComfyUiImageGenerator.java # Local ComfyUI SD1.5+LoRA+IP-Adapter (Phase 5)
+│       ├── ComfyUiVideoGenerator.java / DashScopeWanVideoGenerator.java / NoneVideoGenerator.java # Three i2v routes
+│       ├── EndCardImageRenderer.java    # End-card local text rendering (2026-11-17)
+│       ├── ReferenceImageResolver.java / LoraResolver.java / LoraSpec.java # Reference fallback chain / LoRA routing
+│       ├── BooruProvider.java / SafebooruOrgProvider.java / DanbooruSafeProvider.java # booru dual-source adapters
+│       ├── ImageSizeMapper.java         # Aspect ratio → per-provider size enum mapping
+│       └── ImageGeneratorFactory.java / VideoGeneratorFactory.java # Config-driven + runtime switching
 ├── src/main/java/com/github/ylyan2015/springaidemo/dto/
 │   ├── ImageGenerateRequest.java       # Image generation request DTO
 │   └── ImageGenerateResponse.java      # Image generation response DTO
@@ -366,7 +415,8 @@ spring-ai-demo/
 │   ├── static/js/chat.js               # Frontend logic (SSE/RAG/Markdown/Notifications)
 │   ├── templates/index.html            # Main chat page template
 │   ├── templates/login.html            # Login/register page template
-│   ├── templates/video-studio.html     # AI Short Video Studio frontend (complete workflow UI)
+│   ├── templates/video-studio.html     # AI Short Video Studio frontend (full workflow + asset library/character/candidate/restyle panels)
+│   ├── templates/commentary-studio.html # Commentary Studio frontend (Track B: asset stitching/attribution watermark/ratio badge)
 │   ├── application.yml                 # Main configuration
 │   ├── application-h2.yml              # H2 database config
 │   ├── application-postgresql.yml      # PostgreSQL + PgVector config
@@ -506,6 +556,19 @@ image:
     timeout: 120                       # Local generation timeout (seconds)
     style-prefix: ""                   # Style prefix override (empty = auto built-in preset by model name: SD1.5/SDXL/FLUX)
     extra-negative-prompt: ""          # Negative prompt override (empty = auto built-in preset by model name)
+  wan27:                               # Phase 4: wan2.7 reference-image consistency (reuses DASHSCOPE_API_KEY, empty key = unavailable)
+    model: wan2.7-image                # <=9 reference images; bbox inpaint uses the same model
+    timeout-seconds: 120
+  comfyui:                             # Phase 5: local ComfyUI SD1.5+LoRA+IP-Adapter storyboards (zero cloud, measured ~8s/image)
+    workflow-plain: docs/comfyui/sd15_storyboard.template.json          # Plain prompt template for LoRA-less characters
+    workflow-lora: docs/comfyui/sd15_lora_storyboard.template.json      # Character LoRA template
+    workflow-canny: docs/comfyui/sd15_lora_canny.template.json          # ControlNet camera lock (gated)
+    workflow-ipadapter: docs/comfyui/sd15_ipadapter.template.json       # Reference-image template (IP-Adapter plus_sd15 + ViT-H, calibrate locally)
+    workflow-ipadapter-lora: docs/comfyui/sd15_ipadapter_lora.template.json  # IP-Adapter+LoRA combo (manual calibration needed, auto-degrades when absent)
+    ipadapter-weight: 0.7              # Reference strength sweet spot 0.65-0.85; too high copies the reference like a sticker
+    controlnet-enabled: false          # When enabled, character reference goes through canny camera lock (+~10s/image)
+    timeout-seconds: 120               # base-url reuses video.comfyui.base-url
+    poll-interval-ms: 1000
   generation:
     parallelism: 3                     # Parallel generation count (avoid cloud API rate limits)
     retry-attempts: 1                 # Retry attempts on failure
@@ -532,6 +595,53 @@ video:
     logo-path: ""                    # Logo corner image path (transparent PNG, width <=300px recommended, bottom-right; empty = disabled)
   subtitle:                          # Module F: subtitle burning
     font-name: Microsoft YaHei       # Subtitle font (must be installed; Linux/Docker can use Source Han Sans CN)
+  generator: none                    # Real i2v source: none (default still-image motion) / dashscope-wan (cloud) / comfyui (local zero-cost)
+  workers: 2                         # i2v parallel threads; recommend 1 for the local comfyui route (single-GPU serial queue)
+  retry-attempts: 1                  # i2v failure retry (billed per second — cost red line)
+  candidates:                        # Phase 4: candidate draw counts (lower to 1 when cost-sensitive; one-click orchestration never draws)
+    image-count: 3
+    video-count: 2
+  wan:                               # Cloud wan2.7-i2v (reuses DASHSCOPE_API_KEY)
+    model: wan2.7-i2v                # First/last frame; wan2.6-i2v first frame only
+    resolution: 720P                 # Cost baseline: 720P / 5s / low-medium motion
+    timeout-seconds: 600
+    poll-interval-ms: 5000
+  comfyui:                           # Phase 5: local ComfyUI Wan2.2 i2v (zero API cost, assets never leave the machine)
+    base-url: http://127.0.0.1:8188
+    workflow-path: docs/comfyui/wan22_i2v_5b.template.json  # Placeholder template; override with a calibrated ComfyUI export (COMFYUI_WORKFLOW)
+    fps: 24                          # Frame count auto-aligned to 4n+1; 720P→1280×704 / 480P→832×480
+    timeout-seconds: 2700            # 8-9s long shots can take ~30min on a single GPU; prefer 1.5-2.5s short cuts
+    poll-interval-ms: 3000
+  tts:                               # Narration/dialogue voices and rates (edge-tts rate offsets)
+    narration-voice: zh-CN-YunyangNeural  # Documentary male voice (override via TTS_NARRATION_VOICE)
+    narration-rate: "+15%"           # Narration speed-up tier (measured ~5.5 chars/sec); shot duration >= chars / chars-per-sec + 0.6s
+    dialogue-rate: "+0%"             # Dialogue no faster than narration, or it turns into an announcer
+  commentary:                        # Track B: Commentary Studio (/commentary-studio)
+    max-insert-ratio: 0.2            # Copyright guardrail: reject export when insert-shot duration / total exceeds the limit
+    attribution-font: ""             # Attribution watermark Chinese font file (e.g. C:/Windows/Fonts/msyh.ttc)
+    import-dir: ""                   # Asset batch scan dir (epNN_label_name.mp4/png convention; empty = disabled)
+  assets:                            # Reference asset library (2026-11-17)
+    reference-import-dir: ""         # char_Name_desc.png / scene_Name_desc.jpg convention scan dir (empty = disabled)
+    booru:
+      allowed-hosts: safebooru.org,safebooru.donmai.us,cdn.donmai.us  # Image host allowlist (https + exact match + redirects disabled)
+      default-provider: safebooru    # Primary source: safebooru / danbooru-safe
+  endcard:                           # End-card shots: endCard=true skips image gen, local solid-color + text
+    font: C:/Windows/Fonts/msyh.ttc  # Chinese requires a fontfile (Linux/Docker: Noto Sans CJK)
+    color: black                     # Background color (lavfi color expression)
+  sfx:
+    enabled: false                   # SFX recommend/mix master switch (also needs the export "SFX" checkbox)
+  realesrgan-path: ""                # Real-ESRGAN ncnn-vulkan absolute path (empty = skip upscale)
+  realesrgan-model: realesrgan-x4plus-anime  # x4plus-anime recommended for anime style
+  rife-path: ""                      # RIFE ncnn-vulkan absolute path (empty = skip interpolation; depends on the upscale frame-extraction chain)
+  rife-model: ""                     # RIFE model dir (e.g. rife-v4.6)
+  restyle:                           # Phase 4: video restyle (reuses DASHSCOPE_API_KEY, empty key = unavailable)
+    model: wan2.7-videoedit
+    timeout-seconds: 600
+    poll-interval-ms: 5000
+
+sfx:
+  library-path: ./data/sfx          # SFX library dir; filename format category__name.mp3,
+                                    # categories: wind/rain/footsteps/heartbeat, auto-scanned on startup
 
 bgm:
   library-path: ./data/bgm          # Built-in music library dir; filename format category__name.mp3
@@ -549,6 +659,11 @@ bgm:
 - **Platform export**: Presets automatically map to 1080p resolution; cover defaults to the middle frame of the latest successful export; the logo corner badge requires `video.watermark.logo-path` and `withLogo: true` in the export request
 - **Local model style presets**: Local generation auto-applies built-in SD1.5/SDXL/FLUX style prefixes and negative prompts based on `image.local.model` (FLUX gets no negative prompt); override via `image.local.style-prefix` / `image.local.extra-negative-prompt`; applies only to the local generator, cloud DashScope is unaffected
 - **Image quality evaluation**: With `image.quality.enabled: true`, each image is scored by a multimodal LLM (clarity/relevance/aesthetics, 0-10); scores below `threshold` trigger regeneration (<= `max-retries` attempts, feedback merged into the negative prompt, best score kept); falls back to resolution-based rule evaluation when no API key is configured or the call fails; evaluation errors never block generation; scores are returned with shot details and SSE progress, shown as a quality badge in the frontend
+- **Local ComfyUI dual protocol**: Both the image side (SD1.5+LoRA+IP-Adapter) and the video side (Wan2.2 i2v) use the native workflow protocol (/upload/image → /prompt → /history → /view) with template placeholder substitution, decoupled from any specific workflow; when ComfyUI is down or templates are uncalibrated, available=false auto-degrades without affecting clean startup; after a restart generators fall back to the default source — re-switch in the frontend dropdown
+- **Reference-image consumption gate**: Shot-bound reference assets (referenceAssetIds) are consumed only by comfyui (when the IP-Adapter template is in place) and wan27 generators; at most the first 2 per shot (character reference images first, CHARACTER before SCENE); binding/rebinding never invalidates old images — it only affects the next generation; INSERT assets are barred from the generation chain (Commentary Studio stitching only)
+- **booru three security gates**: ① https + exact host allowlist + redirects disabled; ② preview/ingest trust only provider+postId with a server-side re-query, never client URLs; ③ download guards 10s connect / 30s read / <=20MB / image/*; rating re-checked at all three entries (search/preview/ingest, safe/g/general only); ingested bytes are re-stored into own storage with sourceNote recording the source page + rating + tags; external links never enter the generation chain
+- **TTS rate & duration arithmetic**: Narration defaults to YunyangNeural +15% (measured ~5.5 chars/sec); shot duration should be >= chars / chars-per-sec + 0.6s; recompute the whole film after changing rates; the Commentary Studio compose additionally pre-probes TTS and raises effective duration so narration is never cut
+- **End-card shots**: Shots with endCard=true bypass the image provider; EndCardImageRenderer renders solid-color + text locally via FFmpeg; Chinese requires the `video.endcard.font` font file, otherwise text is silently not rendered
 
 #### RAG Storage Modes
 
@@ -695,6 +810,39 @@ spring:
 | `/api/video/export/platforms` | GET | Social platform preset list (six-platform specs) |
 | `/api/video/export/platform` | POST | One-click export by platform preset (Douyin/Bilibili/Xiaohongshu/Kuaishou/WeChat Channels/YT Shorts) |
 | `/api/video/cover/generate` | POST | Extract cover frame from exported video (middle frame by default, configurable time/export record) |
+| `/api/video/scripts/{id}/style` | PUT | Script-level style lock (Phase 4) |
+| `/api/video/scripts/{id}/continuity` | PUT | Continuity mode NONE/PREV_LAST_FRAME/GENERATED_LAST_FRAME (Phase 4) |
+| `/api/video/scripts/commentary/import` | POST | Import commentary JSON (format=commentary, Track B) |
+| `/api/video/scripts/{id}/shots/{shotId}/asset` | POST | Bind asset to shot (clip / key visual, Track B) |
+| `/api/video/scripts/{scriptId}/asset-matches` | POST | LLM asset match recommendations (not persisted; confirm via shot referenceAssetIds) |
+| `/api/video/characters` | GET/POST | Character card list / create (incl. loraName/triggerWord, Phase 4) |
+| `/api/video/characters/{id}` | PUT/DELETE | Update / delete character card |
+| `/api/video/characters/{id}/reference-image` | POST | Upload character reference image (multipart) |
+| `/api/video/characters/voices` | GET | TTS voice list |
+| `/api/video/candidates` | GET | Shot candidate list (scriptId+shotId) |
+| `/api/video/candidates/generate` | POST | Candidate draws (IMAGE N=3 / VIDEO N=2) |
+| `/api/video/candidates/{id}/select` | POST | Human selection writes back the main asset |
+| `/api/video/images/inpaint` | POST | Bbox inpainting (results become candidates) |
+| `/api/video/videos/shot/{scriptId}/{shotId}` | POST | Single-shot real i2v generation (Phase 4/5) |
+| `/api/video/videos/script/{scriptId}/stream` | GET | SSE batch i2v progress |
+| `/api/video/videos/generators` | GET | Video generator list (none/dashscope-wan/comfyui) |
+| `/api/video/videos/generator` | PUT | Switch video generator at runtime |
+| `/api/video/restyle` | POST/GET | Submit restyle (multipart file+style) / my task list |
+| `/api/video/restyle/{id}` | GET | Poll restyle task status |
+| `/api/video/assets` | POST/GET | Asset upload (file/name/tags/category/trim) / list (filter by category) |
+| `/api/video/assets/{id}` | DELETE | Delete asset (ownership check) |
+| `/api/video/assets/scan` | POST | Commentary asset dir scan (epNN_label_name convention) |
+| `/api/video/assets/scan-reference` | POST | Reference asset dir scan (char_/scene_ convention, idempotent dedup) |
+| `/api/video/assets/booru/search` | GET | booru web search (q joins multiple tags with +; provider; page 0-4, 20 per page) |
+| `/api/video/assets/booru/preview` | GET | Server-side thumbnail proxy (provider+postId, gated byte fetch) |
+| `/api/video/assets/booru/ingest` | POST | Ingest searched asset (re-storage into own storage + sourceNote attribution) |
+| `/api/video/export/hd/async` | POST | Async HD export (returns jobId, Track B) |
+| `/api/video/export/jobs/{id}` | GET | Async export job status (RUNNING/SUCCESS/FAILED) |
+| `/api/video/export/batch-download` | POST | Batch three-platform export + ZIP package download |
+| `/api/video/templates` | GET | Video template list (8 built-in + custom) |
+| `/api/video/templates/{id}` | GET/DELETE | Template detail / delete |
+| `/api/video/templates/{id}/apply` | POST | One-click apply template to generate a script |
+| `/api/video/templates/custom` | POST | Save script as custom template |
 | `/api/video/agent/tools` | GET | Agent tool list (name/description/input schema, Phase 3 slice 1) |
 | `/api/video/agent/chat` | POST | AI director chat (ReAct tool orchestration; exportVideo requires confirmedTools, Phase 3 slice 2) |
 | `/api/video/agent/chat/{sessionId}` | DELETE | Clear director conversation history (Phase 3 slice 2) |
@@ -702,7 +850,7 @@ spring:
 | `/api/video/agent/orchestrate/{taskId}` | GET | Query orchestration task status (polling, Phase 3 slice 3) |
 | `/api/video/agent/orchestrate/{taskId}/confirm` | POST | Confirm to resume: pass the exportVideo gate (Phase 3 slice 3) |
 
-> Video Studio page: http://localhost:8080/video-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII)
+> Video Studio page: http://localhost:8080/video-studio ; Commentary Studio: http://localhost:8080/commentary-studio (see [API_TEST-en.md](API_TEST-en.md) Section VII and the trailing Phase sections)
 
 **For detailed API documentation:** [API_TEST-en.md](API_TEST-en.md)
 
@@ -812,11 +960,12 @@ to add custom BGM (mp3/wav/ogg/m4a/flac supported).
 - Multi-shot composition is slow by nature (1080p may take minutes); the timeout is controlled by `video.compose-timeout-minutes` (default 8)
 - If narration fails, check that the interpreter pointed to by `video.python-command` has edge-tts installed (`python -m edge_tts --version`); on Windows bare `python` may be hijacked by the Microsoft Store alias stub (exit code 49) — use an absolute path
 
-### 13. How to Use Local Stable Diffusion / FLUX for Video Frames?
+### 13. How to Use Local Stable Diffusion / FLUX / ComfyUI for Video Frames?
 
-1. Start a local SD WebUI (or OllamaDiffuser-compatible service) and verify it responds at `http://127.0.0.1:7860` (ComfyUI requires an SD WebUI compatibility layer/proxy; the native workflow protocol is not yet supported)
-2. Set `image.generator: local` in config, or switch at runtime via the frontend "Image Generator" dropdown
-3. Local generation natively supports negative prompts and auto-applies style presets by model name (SD1.5/SDXL/FLUX), giving more controllable styles with zero API cost; customize via `image.local.style-prefix` / `image.local.extra-negative-prompt`
+1. **SD WebUI route**: Start a local SD WebUI (or OllamaDiffuser-compatible service) and verify it responds at `http://127.0.0.1:7860`; set `image.generator: local` or switch via the frontend dropdown
+2. **ComfyUI route (native workflow protocol, supported)**: Start ComfyUI (default `http://127.0.0.1:8188`), export a calibrated workflow from your machine per the docs/comfyui/ reference templates and override `image.comfyui.workflow-*`; set `image.generator: comfyui` or switch via the dropdown; supports SD1.5 + character LoRA, IP-Adapter reference images (weight 0.7) and ControlNet camera lock (gated)
+3. Local generation natively supports negative prompts; the SD WebUI route auto-applies style presets by model name (SD1.5/SDXL/FLUX), giving more controllable styles with zero API cost; customize via `image.local.style-prefix` / `image.local.extra-negative-prompt`
+4. Same on the video side: `video.generator: comfyui` runs local Wan2.2 i2v (zero API cost), calibrate `video.comfyui.workflow-path`; recommend `video.workers: 1` on a single GPU
 
 ### 14. Garbled Text or Wrong Font After Subtitle Burning?
 
@@ -831,6 +980,20 @@ to add custom BGM (mp3/wav/ogg/m4a/flac supported).
   then check "Logo" in the frontend or send `"withLogo": true` in the export request; it is silently skipped when unconfigured
 - **Cover**: After a successful export, click "Cover" (result area or export history) to extract a frame; the middle frame is used by default,
   or call `POST /api/video/cover/generate` with `timeOffset` (seconds) and `exportId` to specify; the cover URL is written back to the export record
+
+### 16. How to Use booru Web-Search Assets? Why Do Multi-Tag Searches Return Nothing?
+
+- Search English tags in the studio "Reference Asset Library" panel (e.g. `hatsune_miku`), then "Ingest Selected" re-stores them into your own storage (sourceNote automatically records the source page / rating / tags)
+- **Multi-tag semantics**: spaces become underscores (word segmentation within a single tag, e.g. `black hair`→`black_hair`); join multiple tags with `+` for AND (e.g. `1girl+black_hair`); more specific tags yield fewer results — on zero results, drop tags first, then switch source (provider=danbooru-safe)
+- Thumbnails go through the server-side proxy (direct browser connections to the sources often fail); occasional thumbnail load failures are usually transient upstream rate limits — just retry
+- Ingest supports only CHARACTER/SCENE reference categories; non-safe ratings and non-allowlisted hosts are always rejected (three gates, see Configuration Guide)
+
+### 17. How to Improve Character Consistency (Keep the Protagonist's Face Stable)?
+
+- **Cloud route**: `image.generator: wan27` + character-card reference images (<=9); the reference fallback chain handles local/oss storage automatically
+- **Local route**: `image.generator: comfyui` + character LoRA (fill loraName/triggerWord on the character card); without LoRA use the IP-Adapter reference template (calibrate `sd15_ipadapter.template.json` locally; weight defaults to 0.7 — too high copies it like a sticker, too low loses resemblance)
+- Shot-bound reference assets are consumed automatically at generation (first 2 per shot, characters first); note that generators fall back to the default source after a restart — re-switch; pure text-to-image sources like the default zhipu do not consume reference images
+- For strict composition/camera requirements enable `image.comfyui.controlnet-enabled: true` (canny camera lock, +~10s/image); fix broken hands/faces with bbox inpaint (results become candidates for human selection)
 
 ## References
 
@@ -928,3 +1091,43 @@ For anime/film commentary & review creation (distinct from the /video-studio AI 
 - Async export: POST /api/video/export/hd/async returns jobId immediately, a background single-thread worker composes, GET /api/video/export/jobs/{id} polls RUNNING/SUCCESS/FAILED; sync /export/hd unchanged.
 - Publishing tool: tools/auto-commentary-concat.js (Node) stitches main + insert assets along the script timeline (xfade=0.8) and burns the attribution watermark; main aspect must match the script aspectRatio, drawtext uses an explicit fontfile for Chinese glyphs.
 - Config: video.commentary.max-insert-ratio (0.2)/attribution-font (empty)/import-dir (empty). Smoke: mvn test -Dtest=VideoComposeAutoFitTest -Dcommentary=true (real FFmpeg loop, skipped by default).
+
+## Phase 5 Asset Library Slice: Reference Assets & booru Web Search (2026-11-17)
+
+For manga-drama character/scene consistency: closes the loop "find reference image → bind to shot → generate with references"; shares the MediaAsset entity with the Track B commentary asset library but with separated purposes (CHARACTER/SCENE enter the generation chain, INSERT is commentary-stitching only).
+
+- S1 reference ingest: upload gains category (CHARACTER/SCENE/INSERT allowlist, fail-fast); new endpoint POST /api/video/assets/scan-reference scans the configured dir video.assets.reference-import-dir (filename convention char_Name_desc.png / scene_Name_desc.jpg, case-insensitive, multi-segment labels underscore→comma, idempotent dedup).
+- S2 shot binding: shots gain referenceAssetIds (threaded through single PUT and batch PUT); write-side triple validation (ownership + IMAGE + category∈{CHARACTER,SCENE}), forged/foreign ids silently dropped; consumer-side ReferenceImageResolver re-validates as the last line of defense; binding/rebinding never invalidates old images/videos (only affects the next generation).
+- S3 IP-Adapter reference generation: ComfyUiImageGenerator template routing refs-first (ipadapter+lora combo / ipadapter / plain / lora / lora+canny); reference consumption gate takes the first 2 per shot (character reference images first, CHARACTER before SCENE); when the ipadapter template is absent supportsReferences=false auto-degrades without blocking startup; new templates docs/comfyui/sd15_ipadapter.template.json (locally calibrated, plus_sd15 + ViT-H) / sd15_ipadapter_lora.template.json (combo pending manual calibration); config image.comfyui.workflow-ipadapter/ipadapter-lora/ipadapter-weight (0.7).
+- S4 booru web-search ingest: GET /api/video/assets/booru/search (q/provider/page, 20 per page, <=5 pages) / GET preview (server-side gated byte proxy, magic-number sniffing png/jpeg/webp/gif) / POST ingest (provider+postId re-query, bytes re-stored into own storage, sourceNote=source page|rating|tags); dual sources safebooru (primary) / danbooru-safe; three gates: https + exact host allowlist + redirects disabled / never trust client URLs / download guards 10s+30s+<=20MB+image/*; rating re-checked at all three entries (safe/g/general only); policy rejections 400 with pass-through message, internal failures 500 with a fixed message to prevent SQL leakage.
+- Auto matching: POST /api/video/scripts/{scriptId}/asset-matches lets the LLM batch-judge shot×asset (name/tags text) relevance, degrading to keyword overlap on failure (source=LLM/FALLBACK); recommendations are not persisted — frontend chips adopt with one click, confirmed via updateShot.referenceAssetIds.
+- Frontend: studio asset library panel (upload/scan/web search/checkbox ingest/match chips/binding management); booru search placeholder hints joining multiple tags with +.
+- Acceptance: full test gate green; real story (GTA6 thirteen-year wait) production test + browser UI end-to-end verification (search hatsune_miku → ingest → bind → comfyui generation visually inheriting Miku features → HD export playback).
+
+## Production Calibration: End Cards / TTS Rate / ComfyUI Timeout (2026-11-17)
+
+Three calibrations after a full-film trial production with a real story (backward compatible; defaults tuned by measurement):
+
+- End-card shots: shots gain an endCard field; when true the image provider is bypassed and EndCardImageRenderer renders solid-color + text locally via FFmpeg (follow / next-episode CTA); config video.endcard.font (Chinese requires a fontfile) / color; zero API cost, never occupies the generation queue.
+- TTS voice & rate: new config video.tts.narration-voice (default zh-CN-YunyangNeural documentary male voice) / narration-rate (+15%, measured ~5.5 chars/sec) / dialogue-rate (+0%); line arithmetic: shot duration >= chars / chars-per-sec + 0.6s; recompute the whole film after rate changes.
+- ComfyUI i2v timeout raised: video.comfyui.timeout-seconds 1800→2700 (measured 8s shot 193f ~25min, 9s shot 217f ~31min hitting the old red line); scheduling advice: 1.5-2.5s short cuts as the workhorse, workers=1.
+- Fixed (2026-11-18): subtitle timeline drift — compose now rebuilds subtitle cues on effective durations measured from TTS audio / real clips (rebuild baseline is the nominal declared durations, covering both TTS raise and real-clip measured drift).
+- Known limitations (deferred to later slices): booru preview returns 500 for nonexistent postIds (should be 404).
+
+## Hook-Driven Scripts: Narrative Hard Constraints + Line-Density Auto-Check (2026-11-18)
+
+P0 retention fundamentals, effective for every script generation path (VideoScriptService system prompt; story scripts / template guidance / asset catalog all inherit it):
+
+- Hook narrative hard constraints: the first shot must throw conflict/suspense within 3 seconds (opening narration <= 15 chars, no scenery buildup or slow intros); an emotional turn every 15-20 seconds (conflict escalation / information reversal / emotional drop); the last shot leaves a cliffhanger feeding the end-card follow CTA (with an end-card shot, the cliffhanger goes in the second-to-last shot).
+- Line-density auto-check: after generation each shot is checked against duration >= (narration + dialogue chars) / 5.5 + 0.6s (measured YunyangNeural +15% rate baseline); violations only warn, never block (LLM output cannot be hard-controlled; compose's TTS pre-probing raises durations as the safety net); end-card shots render text locally without TTS and are skipped.
+- Tests: VideoScriptServiceHookTest (prompt constraint contract + density arithmetic boundaries / dialogue summing / end-card skip / null safety, mutation-verified).
+
+## Portrait-First: Script-Level Aspect Ratio + Vertical Composition Prompts + Multi-Character Close-Up Split (2026-11-18)
+
+P0 short-video platform adaptation (Douyin / Kuaishou / WeChat Channels vertical feeds); existing landscape scripts behave byte-for-byte unchanged:
+
+- Script-level aspect field: StoryScript gains aspectRatio (whitelist 16:9 / 9:16 / 1:1, null = default landscape); update via PUT /api/video/scripts/{id}/aspect (blank clears); script detail responses gain an aspectRatio field (null surfaces as "16:9").
+- Automatic image-size switch: with script aspect 9:16, all four assembly points (single shot / batch / end card / candidates) switch to 720x1280 (overriding image.generation.default-size); other aspects keep the configured size (invalid/missing falls back to 1280x720).
+- Vertical composition prompts: at 9:16 the prompt assembly point (ShotPromptAssembler) injects centered subject / vertical framing; multi-character shots (>= 2 characters) are forced into a single-character close-up (single character close-up, only one person in frame, replacing the original shot size to avoid SD1.5 multi-person face collapse); single-character / empty shots keep their original shot size.
+- Export aspect fallback: preview / HD / async export requests without aspectRatio automatically inherit the script aspect (explicit request wins; both null keeps legacy 16:9); a 9:16 script exports 720x1280 by default.
+- Tests: ShotPromptAssemblerPortraitTest / ImageGenerationPortraitSizeTest / StoryScriptServiceAspectTest / VideoExportAspectFallbackTest (26 cases, four mutations each independently red-verified); full gate 602 green.

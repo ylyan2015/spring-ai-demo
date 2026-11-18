@@ -120,7 +120,9 @@ class VideoInvalidationReviewFixTest {
                 new com.github.ylyan2015.springaidemo.video.ShotPromptAssembler(),
                 new com.github.ylyan2015.springaidemo.video.generator.ReferenceImageResolver(
                         mock(StoryCharacterRepository.class),
-                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.MediaAssetRepository.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.StoryScriptRepository.class)),
                 new com.github.ylyan2015.springaidemo.video.generator.LoraResolver(false),
                 mock(com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer.class));
 

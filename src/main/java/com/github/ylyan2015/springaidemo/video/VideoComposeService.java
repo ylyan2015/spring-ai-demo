@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 @Service
@@ -65,6 +66,19 @@ public class VideoComposeService {
      */
     @Value("${video.python-command:python}")
     private String pythonCommand;
+
+    /**
+     * 旁白声线与语速（edge-tts）。实测 2026-11-17：YunyangNeural +0% ≈ 4.78 字/秒、
+     * YunxiNeural +0% ≈ 4.45 字/秒，每 +10% 约多 0.45 字/秒。默认保持存量行为（+0%）。
+     */
+    @Value("${video.tts.narration-voice:zh-CN-YunxiNeural}")
+    private String ttsNarrationVoice;
+
+    @Value("${video.tts.narration-rate:+0%}")
+    private String ttsNarrationRate;
+
+    @Value("${video.tts.dialogue-rate:+0%}")
+    private String ttsDialogueRate;
 
     /** Phase 4 切片 4：Real-ESRGAN ncnn-vulkan 可执行路径（空=跳过超分） */
     @Value("${video.realesrgan-path:}")
@@ -147,11 +161,11 @@ public class VideoComposeService {
                 List<TtsLine> lines = new ArrayList<>();
                 String dialogue = (String) s.getOrDefault("dialogue", "");
                 if (dialogue != null && !dialogue.isBlank()) {
-                    lines.add(new TtsLine(dialogue, (String) s.get("dialogueVoice")));
+                    lines.add(new TtsLine(dialogue, (String) s.get("dialogueVoice"), ttsDialogueRate));
                 }
                 String narration = (String) s.getOrDefault("narration", "");
                 if (narration != null && !narration.isBlank()) {
-                    lines.add(new TtsLine(narration, null));
+                    lines.add(new TtsLine(narration, ttsNarrationVoice, ttsNarrationRate));
                 }
                 linesPerShot.add(lines);
             }
@@ -236,11 +250,15 @@ public class VideoComposeService {
                 log.warn("Logo file not found, skipping logo overlay: {}", options.getLogoPath());
             }
 
-            // 模块 F：可选字幕硬烧录（调用方预先生成 ASS 文本传入）
+            // 模块 F：可选字幕硬烧录。预生成 ASS 按名义声明时长排轴；重排基准必须是名义时长——
+            // durations 已含真片段 ffprobe 实测值，拿它对比会漏掉「实测≠声明但无 TTS 抬升」的漂移（P0-1）。
             boolean hasSubtitle = false;
-            if (options.getSubtitleAss() != null && !options.getSubtitleAss().isBlank()) {
+            List<Integer> nominalDurations = nominalDurationsOf(shots);
+            String assText = resolveSubtitleAss(options.getSubtitleAss(), options.getSubtitleAssFactory(),
+                    nominalDurations, effectiveDurations);
+            if (assText != null && !assText.isBlank()) {
                 Path assFile = workDir.resolve("subtitle.ass");
-                Files.writeString(assFile, options.getSubtitleAss(), StandardCharsets.UTF_8);
+                Files.writeString(assFile, assText, StandardCharsets.UTF_8);
                 finalVideo = burnSubtitlesIntoVideo(finalVideo, assFile, options, workDir);
                 hasSubtitle = true;
             }
@@ -285,6 +303,40 @@ public class VideoComposeService {
         } finally {
             cleanupDir(workDir);
         }
+    }
+
+    // ==================== Subtitle Timeline ====================
+
+    /**
+     * 字幕重排决策（P0-1）：预生成 ASS 按名义声明时长排轴，有效时长一旦偏离名义值
+     * （TTS 预探测抬升 / 真片段实测漂移）就按有效时长重排 cue；无漂移沿用预生成，
+     * 避免多付一次 en/bilingual 翻译成本。重排失败/结果空白降级保留预生成，不阻断合成。
+     */
+    static String resolveSubtitleAss(String precomputedAss, Function<List<Integer>, String> factory,
+                                     List<Integer> nominalDurations, List<Integer> effectiveDurations) {
+        if (factory == null || nominalDurations.equals(effectiveDurations)) {
+            return precomputedAss;
+        }
+        try {
+            String regen = factory.apply(effectiveDurations);
+            if (regen != null && !regen.isBlank()) {
+                log.info("Subtitle timeline rebuilt on effective durations {} (nominal {})",
+                        effectiveDurations, nominalDurations);
+                return regen;
+            }
+        } catch (Exception e) {
+            log.warn("Subtitle timeline rebuild failed, keeping pre-computed ASS: {}", e.getMessage());
+        }
+        return precomputedAss;
+    }
+
+    /** 名义声明时长（预生成 ASS 的时间轴基准）：durationSeconds 缺省/非法兜底 5s，与 SubtitleService.durationsOf 同规则 */
+    static List<Integer> nominalDurationsOf(List<Map<String, Object>> shots) {
+        List<Integer> nominal = new ArrayList<>();
+        for (Map<String, Object> shot : shots) {
+            nominal.add(shot.get("durationSeconds") instanceof Number n ? n.intValue() : 5);
+        }
+        return nominal;
     }
 
     // ==================== Media Download ====================
@@ -799,12 +851,17 @@ public class VideoComposeService {
     /** 包私有测试 seam：单行 TTS 命令（voice 空→默认旁白声线 YunxiNeural，无对白时行为与存量一致） */
     static List<String> buildTtsCommand(String pythonCommand, TtsLine line, Path mp3File) {
         String voice = line.voice() == null || line.voice().isBlank() ? "zh-CN-YunxiNeural" : line.voice();
-        return List.of(
+        List<String> cmd = new ArrayList<>(List.of(
                 pythonCommand, "-m", "edge_tts",
                 "--voice", voice,
-                "--text", line.text(),
-                "--write-media", mp3File.toAbsolutePath().toString()
-        );
+                "--text", line.text()));
+        if (line.rate() != null && !line.rate().isBlank() && !"+0%".equals(line.rate())) {
+            cmd.add("--rate");
+            cmd.add(line.rate());
+        }
+        cmd.add("--write-media");
+        cmd.add(mp3File.toAbsolutePath().toString());
+        return cmd;
     }
 
     private Path concatAudioWithSilence(List<Path> audioFiles, List<Integer> durations, Path workDir)
@@ -1232,6 +1289,8 @@ public class VideoComposeService {
         private String watermark;
         private Path bgmPath;
         private String subtitleAss;
+        /** 按有效时长重排时间轴的 ASS 生成回调（入参=逐镜有效秒数）；仅在有效时长≠声明时长时调用 */
+        private java.util.function.Function<List<Integer>, String> subtitleAssFactory;
         private Path logoPath;
         private List<SfxSpec> sfxTracks;
         private boolean upscale;
@@ -1245,6 +1304,9 @@ public class VideoComposeService {
         public ComposeOptions watermark(String watermark) { this.watermark = watermark; return this; }
         public ComposeOptions bgmPath(Path bgmPath) { this.bgmPath = bgmPath; return this; }
         public ComposeOptions subtitleAss(String subtitleAss) { this.subtitleAss = subtitleAss; return this; }
+        public ComposeOptions subtitleAssFactory(
+                java.util.function.Function<List<Integer>, String> subtitleAssFactory) {
+            this.subtitleAssFactory = subtitleAssFactory; return this; }
         public ComposeOptions logoPath(Path logoPath) { this.logoPath = logoPath; return this; }
         public ComposeOptions sfxTracks(List<SfxSpec> sfxTracks) { this.sfxTracks = sfxTracks; return this; }
         public ComposeOptions upscale(boolean upscale) { this.upscale = upscale; return this; }
@@ -1258,6 +1320,7 @@ public class VideoComposeService {
         public String getWatermark() { return watermark; }
         public Path getBgmPath() { return bgmPath; }
         public String getSubtitleAss() { return subtitleAss; }
+        public java.util.function.Function<List<Integer>, String> getSubtitleAssFactory() { return subtitleAssFactory; }
         public Path getLogoPath() { return logoPath; }
         public List<SfxSpec> getSfxTracks() { return sfxTracks; }
         public boolean isUpscale() { return upscale; }

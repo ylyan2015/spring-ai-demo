@@ -67,6 +67,10 @@ public class CandidateGenerationService {
     @Value("${video.wan.resolution:720P}")
     private String resolution;
 
+    /** P0-3 竖屏优先：与单镜/批量生图同源 default-size（9:16 时被 effectiveSize 覆盖） */
+    @Value("${image.generation.default-size:1280x720}")
+    private String defaultSize;
+
     public CandidateGenerationService(ImageGeneratorFactory imageGeneratorFactory,
                                       VideoGeneratorFactory videoGeneratorFactory,
                                       StoryScriptRepository scriptRepository,
@@ -98,22 +102,20 @@ public class CandidateGenerationService {
                 .orElseThrow(() -> new RuntimeException("镜头不存在: " + shotId));
         VisualStyle style = VisualStyle.fromName(script.getStyle());
         List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
-        String prompt = promptAssembler.assemble(shot, style, characters);
-        List<String> refs = referenceResolver.resolve(characters);
+        String prompt = promptAssembler.assemble(shot, style, characters, script.getAspectRatio());
+        List<String> refs = referenceResolver.resolveAll(shot, characters);
         LoraSpec lora = loraResolver.resolve(characters);
         ImageGenerator gen = imageGeneratorFactory.getActiveGenerator();
+        // P0-3 竖屏优先：抽卡尺寸与主链路同源（9:16 → 720x1280）
+        int[] size = ImageGenerationService.effectiveSize(script.getAspectRatio(), defaultSize);
 
         List<ShotCandidate> candidates = new ArrayList<>();
         ShotCandidate best = null;
         int n = Math.max(1, imageCount);
         for (int i = 0; i < n; i++) {
             try {
-                GeneratedImage img = lora != null && gen.supportsLora()
-                        ? gen.generateWithLora(prompt, style.getNegativePrompt(), 1280, 720,
-                                lora.loraName(), lora.controlNetRefUrl())
-                        : refs != null && !refs.isEmpty() && gen.supportsReferences()
-                        ? gen.generateWithReferences(prompt, style.getNegativePrompt(), 1280, 720, refs)
-                        : gen.generate(prompt, style.getNegativePrompt(), 1280, 720);
+                GeneratedImage img = ImageGenerationService.routeGeneration(gen, prompt,
+                        style.getNegativePrompt(), size[0], size[1], refs, lora);
                 ShotCandidate c = new ShotCandidate();
                 c.setShotId(shotId);
                 c.setType("IMAGE");

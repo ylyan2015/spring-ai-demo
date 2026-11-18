@@ -43,7 +43,14 @@ class VideoStudioPageRenderTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("function submitInpaint")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("function saveShotEdit")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("restylePanel")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("upscaleToggle")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("upscaleToggle")))
+                // Task 12 素材库面板：面板容器 + 三入口函数都得在（历史故障形态是后半 JS 整段丢失）
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("id=\"assetPanel\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("async function booruIngestSelected")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("async function uploadRefAsset")))
+                // esc() 的双引号转义必须以原样落到响应里：一是页内属性注入收口不能逆回，
+                // 二是兼验 <script> 体没被 Thymeleaf 当实体引用解码（&quot; 被解成 " 就是 JS 语法错误）
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(".replace(/\"/g, '&quot;')")));
     }
 
     @Test

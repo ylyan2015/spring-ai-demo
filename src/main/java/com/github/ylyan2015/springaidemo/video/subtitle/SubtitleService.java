@@ -198,6 +198,20 @@ public class SubtitleService {
                 VideoComposeService.XFADE_DURATION), style);
     }
 
+    /**
+     * 合成对齐重载：用**实际生效的逐镜时长**排时间轴。
+     * 合成器会把旁白超时的镜头拉长（有效时长 = max(声明, ⌈实测⌉)），真片段也按 ffprobe 实测取时长；
+     * 此时若仍按 StoryShot 声明时长生成字幕，该镜之后的所有 cue 会整体错位。
+     */
+    public String generateAss(List<StoryShot> shots, SubtitleStyle style, String language,
+                              List<Integer> effectiveDurations) {
+        if (effectiveDurations == null || effectiveDurations.size() != shots.size()) {
+            return generateAss(shots, style, language);
+        }
+        return cuesToAss(buildCues(resolveNarrations(shots, language), effectiveDurations,
+                VideoComposeService.XFADE_DURATION), style);
+    }
+
     // ==================== 多语言翻译（模块 F） ====================
 
     private static final String TRANSLATE_SYSTEM_PROMPT = """

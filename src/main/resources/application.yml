@@ -118,6 +118,9 @@ image:
     workflow-plain: ${COMFYUI_IMG_PLAIN:docs/comfyui/sd15_storyboard.template.json}
     workflow-lora: ${COMFYUI_IMG_LORA:docs/comfyui/sd15_lora_storyboard.template.json}
     workflow-canny: ${COMFYUI_IMG_CANNY:docs/comfyui/sd15_lora_canny.template.json}
+    workflow-ipadapter: ${COMFYUI_IMG_IPADAPTER:docs/comfyui/sd15_ipadapter.template.json}
+    workflow-ipadapter-lora: ${COMFYUI_IMG_IPADAPTER_LORA:docs/comfyui/sd15_ipadapter_lora.template.json}
+    ipadapter-weight: 0.7              # IP-Adapter 参考强度（行业甜点区 0.65-0.85；过高会把参考图抄成贴图）
     controlnet-enabled: false          # 开启后角色定妆参考图经 canny 锁机位（+~10s/张，手册 §4）
     timeout-seconds: 120               # 单张实测 7-9s；120s 余量含模型加载
     poll-interval-ms: 1000
@@ -126,7 +129,7 @@ image:
     retry-attempts: 1                 # 失败重试次数
     retry-delay-ms: 2000              # 重试间隔（毫秒）
     total-timeout-seconds: 300        # 批量生成总超时（秒）；单张超时由 HTTP 客户端层控制（DashScope 60s / image.local.timeout）
-    default-size: 1280x720           # 默认图片尺寸（16:9 横屏）
+    default-size: 1280x720           # 默认图片尺寸（16:9 横屏）；脚本画幅 9:16 时自动切 720x1280（P0-3 竖屏优先，单镜/批量/尾卡/抽卡同源）
   quality:                             # 模块 J：图片质量评估（多模态 LLM 打分 + 低分自动重试）
     enabled: false                     # 是否启用质量评估（关闭时生成流程完全不变）
     base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容多模态端点
@@ -170,6 +173,14 @@ video:
   # 运行 edge-tts 的 Python 解释器。默认裸名走 PATH；Windows 注意避开微软商店的
   # "应用执行别名"桩（返回退出码 49），必要时用环境变量 PYTHON_CMD 指定真实解释器绝对路径
   python-command: ${PYTHON_CMD:python}
+  tts:                                # 旁白/对白声线与语速（edge-tts 的 rate 偏移）
+    # 实测 2026-11-17（同一批 GTA6 文本，261 字旁白 / 47 字对白，ffprobe 取时长）：
+    #   YunyangNeural +0% 4.78 字/秒 | +15% 5.49 | +25% 5.97 | +40% 6.69
+    #   YunxiNeural   +0% 4.45 字/秒 | +15% 5.12 | +25% 5.56
+    # 台词算术的分母就是这个数：镜头时长 ≥ 字数/字每秒 + 0.6s。改语速后重算全片，别只改这里。
+    narration-voice: ${TTS_NARRATION_VOICE:zh-CN-YunyangNeural}   # 纪录片男声；此前脚本里的 narrationVoice 字段工作台未读取
+    narration-rate: ${TTS_NARRATION_RATE:+15%}                    # 旁白提速档；情绪顶点想留重量可回 +0%
+    dialogue-rate: ${TTS_DIALOGUE_RATE:+0%}                       # 内心话不比旁白快，快了就变成报幕
   compose-timeout-minutes: 8        # 单次 FFmpeg 命令超时（分钟）；1080p 多镜头合成较慢，建议 ≥8
   motion:                            # 静图运镜动效（镜头运动字段生效：固定=静态/推/拉/平移）
     zoom-amount: 0.06                # 缩放幅度（占画面比例）；越小画面越稳
@@ -182,6 +193,11 @@ video:
     max-insert-ratio: 0.2            # 引用占比上限（引用镜时长/总时长；超限拒绝导出，版权护栏）
     attribution-font: ""             # 出处水印字体文件（空=不带 fontfile；中文渲染需配置如 C:/Windows/Fonts/msyh.ttc，B0 教训）
     import-dir: ""                   # Task 6：批量入库扫描目录（空=禁用；仅读配置目录防遍历；文件名约定 epNN_标签_名称.mp4/png）
+  assets:                            # 素材库增强（2026-11-17 spec S1）：参考素材扫描目录
+    reference-import-dir: ""         # 空=禁用；文件名约定 char_角色名_描述.png / scene_场景名_描述.jpg（png/jpg/jpeg/webp）；POST /api/video/assets/scan-reference 触发
+    booru:                             # S4 网搜入库（spec §4.2 三道闸）：GET/POST /api/video/assets/booru/*
+      allowed-hosts: safebooru.org,safebooru.donmai.us,cdn.donmai.us   # 图片 host 白名单（Task 12 实测：donmai 系图片不在 API 同域，而在 cdn.donmai.us 子域）；与 DanbooruSafeProvider 的注册域早筛同步放宽，只改一侧等于没改；非空项才生效，逗号后可带空格
+      default-provider: safebooru                        # provider 参数缺省时的主源：safebooru / danbooru-safe
   endcard:                           # Phase 5 Track A：尾卡镜（endCard=true 跳过生图，纯色底+FFmpeg 压字本地渲染）
     font: C:/Windows/Fonts/msyh.ttc  # 压字字体（中文必须 fontfile，B0 教训；Linux/Docker 换 Noto Sans CJK）
     color: black                     # 底色（lavfi color 表达式）

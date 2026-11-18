@@ -152,10 +152,12 @@ public class ImageGenerationService {
 
         VisualStyle visualStyle = VisualStyle.fromName(style != null ? style : script.getStyle());
         List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
-        String prompt = composePrompt(shot, visualStyle, characters);
+        String prompt = composePrompt(shot, visualStyle, characters, script.getAspectRatio());
         String negativePrompt = visualStyle.getNegativePrompt();
-        List<String> refs = referenceResolver.resolve(characters);
+        List<String> refs = referenceResolver.resolveAll(shot, characters);
         LoraSpec lora = loraResolver.resolve(characters);
+        // P0-3 竖屏优先：9:16 脚本生图切 720x1280，其余沿用 default-size
+        int[] size = effectiveSize(script.getAspectRatio(), defaultSize);
 
         log.info("Generating image for shot {} of script {}: style='{}'",
                 shotId, scriptId, visualStyle.getDisplayName());
@@ -164,7 +166,7 @@ public class ImageGenerationService {
         shotRepository.save(shot);
 
         try {
-            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt, refs, lora);
+            QualityGenResult result = generateWithQualityCheck(prompt, negativePrompt, refs, lora, size[0], size[1]);
             GeneratedImage image = result.image();
 
             shot.setImageUrl(image.getImageUrl());
@@ -202,7 +204,7 @@ public class ImageGenerationService {
         try {
             String text = shot.getNarration() != null && !shot.getNarration().isBlank()
                     ? shot.getNarration() : shot.getSceneDescription();
-            int[] size = endCardSize();
+            int[] size = effectiveSize(script.getAspectRatio(), defaultSize);
             GeneratedImage image = endCardRenderer.render(text, size[0], size[1]);
 
             shot.setImageUrl(image.getImageUrl());
@@ -223,10 +225,16 @@ public class ImageGenerationService {
         }
     }
 
-    /** 尾卡尺寸：解析 image.generation.default-size（非法/缺失退 1280x720） */
-    private int[] endCardSize() {
+    /**
+     * P0-3 竖屏优先：9:16 → 720x1280（无视 default-size）；其余解析 default-size（null/非法退 1280x720）。
+     * 包私有静态 seam：单镜/批量/尾卡/抽卡四处装配点共用，避免尺寸判定重复书写。
+     */
+    static int[] effectiveSize(String aspectRatio, String configuredDefault) {
+        if ("9:16".equals(aspectRatio)) {
+            return new int[]{720, 1280};
+        }
         try {
-            String[] parts = defaultSize.toLowerCase().split("x");
+            String[] parts = configuredDefault.toLowerCase().split("x");
             return new int[]{Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim())};
         } catch (Exception e) {
             return new int[]{1280, 720};
@@ -329,7 +337,7 @@ public class ImageGenerationService {
                 //（DashScopeImageGenerator 内部调用 ImageService，依赖当前用户身份）
                 SecurityContextHolder.setContext(securityContext);
                 try {
-                    generateShotWithProgress(shot, scriptId, visualStyle, total,
+                    generateShotWithProgress(shot, script, visualStyle, total,
                             completed, failed, cancelled, progressCallback);
                 } finally {
                     SecurityContextHolder.clearContext();
@@ -379,10 +387,11 @@ public class ImageGenerationService {
     /**
      * 单个镜头的生成任务（批量生成时由工作线程执行，调用前已传播安全上下文）
      */
-    private void generateShotWithProgress(StoryShot shot, Long scriptId, VisualStyle visualStyle,
+    private void generateShotWithProgress(StoryShot shot, StoryScript script, VisualStyle visualStyle,
                                           int total, AtomicInteger completed, AtomicInteger failed,
                                           AtomicBoolean cancelled,
                                           Consumer<ImageGenerationProgress> progressCallback) {
+        Long scriptId = script.getId();
         ImageGenerationProgress shotStart = new ImageGenerationProgress();
         shotStart.setType("SHOT_START");
         shotStart.setScriptId(scriptId);
@@ -394,10 +403,12 @@ public class ImageGenerationService {
 
         try {
             List<StoryCharacter> characters = referenceResolver.charactersForShot(shot);
-            String prompt = composePrompt(shot, visualStyle, characters);
-            List<String> refs = referenceResolver.resolve(characters);
+            String prompt = composePrompt(shot, visualStyle, characters, script.getAspectRatio());
+            List<String> refs = referenceResolver.resolveAll(shot, characters);
             LoraSpec lora = loraResolver.resolve(characters);
-            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt(), refs, lora);
+            int[] size = effectiveSize(script.getAspectRatio(), defaultSize);
+            QualityGenResult result = generateWithQualityCheck(prompt, visualStyle.getNegativePrompt(), refs, lora,
+                    size[0], size[1]);
             GeneratedImage image = result.image();
 
             // 批次已超时取消：丢弃迟到结果，不覆盖 FAILED、不计数（release 复审 m-2）
@@ -489,8 +500,9 @@ public class ImageGenerationService {
      * 重试时将评分反馈并入负面提示词；始终保留得分最高的一张。
      * 评估异常不阻塞生成，保留当前图片。
      */
-    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt, List<String> refs, LoraSpec lora) {
-        GeneratedImage current = generateWithRetry(prompt, negativePrompt, refs, lora);
+    private QualityGenResult generateWithQualityCheck(String prompt, String negativePrompt, List<String> refs,
+                                                      LoraSpec lora, int width, int height) {
+        GeneratedImage current = generateWithRetry(prompt, negativePrompt, refs, lora, width, height);
         if (!qualityService.isEnabled()) {
             return new QualityGenResult(current, null);
         }
@@ -526,7 +538,7 @@ public class ImageGenerationService {
                 negative = (negative == null || negative.isBlank()) ? feedback : negative + ", " + feedback;
             }
             try {
-                current = generateWithRetry(prompt, negative, refs, lora);
+                current = generateWithRetry(prompt, negative, refs, lora, width, height);
             } catch (Exception e) {
                 log.warn("Quality retry generation failed, keeping best image: {}", e.getMessage());
                 break;
@@ -539,25 +551,16 @@ public class ImageGenerationService {
      * 带重试的图片生成
      * 单张失败时自动重试 retryAttempts 次，重试间隔 retryDelayMs
      */
-    private GeneratedImage generateWithRetry(String prompt, String negativePrompt, List<String> refs, LoraSpec lora) {
+    private GeneratedImage generateWithRetry(String prompt, String negativePrompt, List<String> refs, LoraSpec lora,
+                                             int width, int height) {
         ImageGenerator generator = generatorFactory.getActiveGenerator();
         int maxAttempts = retryAttempts + 1;
         Exception lastError = null;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                // Phase 5 切片 3：LoRA 优先（角色带 LoRA 且生成器支持）；否则存量路径逐字不变
-                if (lora != null && generator.supportsLora()) {
-                    return generator.generateWithLora(prompt, negativePrompt,
-                            parseWidth(defaultSize), parseHeight(defaultSize),
-                            lora.loraName(), lora.controlNetRefUrl());
-                }
-                if (refs != null && !refs.isEmpty() && generator.supportsReferences()) {
-                    return generator.generateWithReferences(prompt, negativePrompt,
-                            parseWidth(defaultSize), parseHeight(defaultSize), refs);
-                }
-                return generator.generate(prompt, negativePrompt,
-                        parseWidth(defaultSize), parseHeight(defaultSize));
+                // 四象限路由（LoRA/refs/组合/plain）集中在 routeGeneration，抽卡共用同一判定
+                return routeGeneration(generator, prompt, negativePrompt, width, height, refs, lora);
             } catch (Exception e) {
                 lastError = e;
                 if (attempt < maxAttempts) {
@@ -577,32 +580,37 @@ public class ImageGenerationService {
     }
 
     /**
-     * 组合最终提示词：统一委托 ShotPromptAssembler（风格前缀+角色特征表+镜头+景别/运镜）
+     * 路由矩阵（spec §3.1）：LoRA+refs→组合 / 仅 refs→refs / 仅 LoRA→lora / 无→plain；不支持 refs 静默忽略。
+     * 包私有静态 seam：批量生图与抽卡两处组装点共用，避免四象限判定重复书写。
      */
-    private String composePrompt(StoryShot shot, VisualStyle visualStyle, List<StoryCharacter> characters) {
-        return promptAssembler.assemble(shot, visualStyle, characters);
+    static GeneratedImage routeGeneration(ImageGenerator generator, String prompt, String negativePrompt,
+                                          int width, int height, List<String> refs, LoraSpec lora) {
+        boolean hasRefs = refs != null && !refs.isEmpty() && generator.supportsReferences();
+        // spec §3.1 尾行：不支持 refs 的 provider 静默降级纯 prompt，但必须可观测（否则绑了素材不生效无从排查）
+        if (refs != null && !refs.isEmpty() && !generator.supportsReferences()) {
+            log.warn("Generator {} does not support reference images, dropping {} refs to plain prompt", 
+                    generator.getType(), refs.size());
+        }
+        if (lora != null && generator.supportsLora() && hasRefs) {
+            return generator.generateWithLoraAndReferences(prompt, negativePrompt, width, height,
+                    lora.loraName(), lora.controlNetRefUrl(), refs);
+        }
+        if (lora != null && generator.supportsLora()) {
+            return generator.generateWithLora(prompt, negativePrompt, width, height,
+                    lora.loraName(), lora.controlNetRefUrl());
+        }
+        if (hasRefs) {
+            return generator.generateWithReferences(prompt, negativePrompt, width, height, refs);
+        }
+        return generator.generate(prompt, negativePrompt, width, height);
     }
 
     /**
-     * 解析尺寸字符串中的宽度
+     * 组合最终提示词：统一委托 ShotPromptAssembler（风格前缀+角色特征表+镜头+景别/运镜+竖构图词）
      */
-    private int parseWidth(String size) {
-        try {
-            return Integer.parseInt(size.split("x")[0]);
-        } catch (Exception e) {
-            return 1280;
-        }
-    }
-
-    /**
-     * 解析尺寸字符串中的高度
-     */
-    private int parseHeight(String size) {
-        try {
-            return Integer.parseInt(size.split("x")[1]);
-        } catch (Exception e) {
-            return 720;
-        }
+    private String composePrompt(StoryShot shot, VisualStyle visualStyle, List<StoryCharacter> characters,
+                                 String aspectRatio) {
+        return promptAssembler.assemble(shot, visualStyle, characters, aspectRatio);
     }
 
     /**

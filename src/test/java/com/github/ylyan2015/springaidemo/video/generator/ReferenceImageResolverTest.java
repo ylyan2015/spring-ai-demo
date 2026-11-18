@@ -1,7 +1,9 @@
 package com.github.ylyan2015.springaidemo.video.generator;
 
 import com.github.ylyan2015.springaidemo.entity.StoryCharacter;
+import com.github.ylyan2015.springaidemo.repository.MediaAssetRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository;
+import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.storage.StorageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -15,7 +17,8 @@ import static org.mockito.Mockito.*;
 class ReferenceImageResolverTest {
 
     private ReferenceImageResolver resolver(StorageService storage, String type) {
-        ReferenceImageResolver r = new ReferenceImageResolver(mock(StoryCharacterRepository.class), storage);
+        ReferenceImageResolver r = new ReferenceImageResolver(mock(StoryCharacterRepository.class), storage,
+                mock(MediaAssetRepository.class), mock(StoryScriptRepository.class));
         ReflectionTestUtils.setField(r, "storageType", type);
         return r;
     }

@@ -131,7 +131,8 @@ public class VideoExportService {
     public Map<String, Object> exportPreview(Long scriptId, String aspectRatio, Long bgmId, boolean subtitle,
                                              String subtitleLanguage) {
         Long userId = getCurrentUserId();
-        return doExport(scriptId, userId, "480p", normalizeAspect(aspectRatio), bgmId, subtitle, false, true,
+        // P0-3：传原始画幅进 doExport，未指定时 fallback 脚本 aspectRatio（在加载 script 后判定）
+        return doExport(scriptId, userId, "480p", aspectRatio, bgmId, subtitle, false, true,
                 subtitleLanguage, PostFlags.NONE);
     }
 
@@ -163,7 +164,7 @@ public class VideoExportService {
                                                 PostFlags postFlags) {
         Long userId = getCurrentUserId();
         String res = normalizeResolution(resolution);
-        return doExport(scriptId, userId, res, normalizeAspect(aspectRatio), bgmId, subtitle, withLogo, false,
+        return doExport(scriptId, userId, res, aspectRatio, bgmId, subtitle, withLogo, false,
                 subtitleLanguage, postFlags == null ? PostFlags.NONE : postFlags);
     }
 
@@ -479,6 +480,8 @@ public class VideoExportService {
                                          boolean withLogo, boolean preview, String subtitleLanguage,
                                          PostFlags postFlags) {
         StoryScript script = requireOwnedScript(scriptId, userId);
+        // P0-3 竖屏优先：请求未指定画幅时 fallback 脚本画幅（显式请求优先，双 null 保持存量 16:9）
+        aspectRatio = effectiveAspect(aspectRatio, script.getAspectRatio());
         List<StoryShot> shots = shotRepository.findByScriptIdOrderByShotOrderAsc(scriptId);
         if (shots.isEmpty()) {
             throw new RuntimeException("脚本没有镜头，无法导出");
@@ -517,13 +520,18 @@ public class VideoExportService {
         }
 
         // 模块 F：选择烧录且存在旁白时，预生成 ASS 字幕文本（时间轴已按 xfade 对齐，支持多语言）
+        // 同时挂一个按有效时长重排的回调：合成器发现"有效时长≠声明时长"（旁白超时拉长/真片段实测不同）时会改用它，
+        // 未漂移则沿用下面的预生成结果，不额外付一次翻译成本（en/bilingual 会调翻译接口）
         String subtitleAss = null;
+        java.util.function.Function<List<Integer>, String> subtitleAssFactory = null;
         if (subtitle) {
             boolean anyNarration = shots.stream()
                     .anyMatch(s -> (s.getNarration() != null && !s.getNarration().isBlank())
                             || (s.getDialogue() != null && !s.getDialogue().isBlank()));
             if (anyNarration) {
                 subtitleAss = subtitleService.generateAss(shots, null, subtitleLanguage);
+                subtitleAssFactory = effective -> subtitleService.generateAss(
+                        shots, null, subtitleLanguage, effective);
             } else {
                 log.info("Subtitle requested but script {} has no narration, skipping", scriptId);
             }
@@ -568,6 +576,7 @@ public class VideoExportService {
                 .crf(preview ? 28 : 23)          // 预览低画质快速出片，正式版标准画质
                 .bgmPath(bgmFile)
                 .subtitleAss(subtitleAss)
+                .subtitleAssFactory(subtitleAssFactory)
                 .logoPath(logoFile)
                 .sfxTracks(sfxSpecs)
                 .upscale(postFlags.upscale())
@@ -712,7 +721,7 @@ public class VideoExportService {
         return resolution;
     }
 
-    private String normalizeAspect(String aspectRatio) {
+    private static String normalizeAspect(String aspectRatio) {
         if (aspectRatio == null || aspectRatio.isBlank()) {
             return "16:9";
         }
@@ -720,6 +729,17 @@ public class VideoExportService {
             case "9:16", "1:1" -> aspectRatio;
             default -> "16:9";
         };
+    }
+
+    /**
+     * P0-3 竖屏优先：导出画幅决策——显式请求优先，blank/null fallback 脚本画幅，均归一化白名单。
+     * 包私有静态 seam：预览/高清/异步导出共用同一判定。
+     */
+    static String effectiveAspect(String requested, String scriptAspect) {
+        if (requested != null && !requested.isBlank()) {
+            return normalizeAspect(requested);
+        }
+        return normalizeAspect(scriptAspect);
     }
 
     private StoryScript requireOwnedScript(Long scriptId, Long userId) {

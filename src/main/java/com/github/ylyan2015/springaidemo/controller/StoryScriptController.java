@@ -258,6 +258,25 @@ public class StoryScriptController {
     }
 
     /**
+     * P0-3 竖屏优先：脚本级画幅更新（16:9 / 9:16 / 1:1，空值清空回默认横屏）
+     */
+    @PutMapping("/{id}/aspect")
+    public ResponseEntity<Map<String, Object>> updateAspect(@PathVariable Long id,
+                                                            @RequestBody Map<String, String> request) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            StoryScript updated = storyScriptService.updateAspect(id, request.get("aspectRatio"));
+            result.put("success", true);
+            result.put("data", scriptToMap(updated));
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
      * 删除脚本
      *
      * @param id 脚本ID
@@ -513,9 +532,9 @@ public class StoryScriptController {
     }
 
     /**
-     * 将 Map 数据转换为 StoryShot 实体
+     * 将 Map 数据转换为 StoryShot 实体（包私有测试 seam：round-trip 断言锁字段贯穿，cameraMovement 断链教训）
      */
-    private StoryShot mapToStoryShot(Map<String, Object> data) {
+    StoryShot mapToStoryShot(Map<String, Object> data) {
         StoryShot shot = new StoryShot();
 
         if (data.get("shotOrder") != null) {
@@ -533,6 +552,11 @@ public class StoryScriptController {
         shot.setImageStatus((String) data.getOrDefault("imageStatus", "PENDING"));
         if (data.get("characterIds") instanceof List<?> list) {
             shot.setCharacterIds(list.isEmpty() ? null : list.stream()
+                    .map(String::valueOf).collect(Collectors.joining(",")));
+        }
+        // 素材库切片 S2 写侧组装点（Task 3 审查 Important#1 收口）：批量 PUT 删旧插新，不补则回传 shot map 静默丢绑定
+        if (data.get("referenceAssetIds") instanceof List<?> list) {
+            shot.setReferenceAssetIds(list.isEmpty() ? null : list.stream()
                     .map(String::valueOf).collect(Collectors.joining(",")));
         }
         if (data.get("shotSize") != null) {

@@ -37,7 +37,7 @@ public final class AgentToolRequests {
             @ToolParam(description = "脚本ID，所有镜头图片须已生成") Long scriptId,
             @ToolParam(description = "true=480p快速预览（带水印），false=高清正式导出，默认 false") Boolean preview,
             @ToolParam(description = "高清分辨率 720p/1080p，默认 720p") String resolution,
-            @ToolParam(description = "画面比例 16:9/9:16/1:1，默认 16:9") String aspectRatio,
+            @ToolParam(description = "画面比例 16:9/9:16/1:1，缺省跟随脚本画幅（脚本未设置时为 16:9）") String aspectRatio,
             @ToolParam(description = "可选BGM的ID") Long bgmId,
             @ToolParam(description = "是否烧录字幕，默认 false") Boolean subtitle,
             @ToolParam(description = "字幕语言 zh/en/bilingual，默认 zh") String subtitleLanguage,

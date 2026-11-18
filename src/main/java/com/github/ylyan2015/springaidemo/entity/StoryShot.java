@@ -103,6 +103,10 @@ public class StoryShot {
     @Column(name = "end_card")
     private Boolean endCard;
 
+    /** 素材库切片 S1：绑定的参考素材 id（逗号分隔，MediaAsset CHARACTER/SCENE，镜像 characterIds idiom）；null=未绑定；仅人工确认后写入 */
+    @Column(name = "reference_asset_ids", length = 500)
+    private String referenceAssetIds;
+
     public StoryShot() {}
 
     // ==================== Getters and Setters ====================
@@ -179,4 +183,7 @@ public class StoryShot {
 
     public Boolean getEndCard() { return endCard; }
     public void setEndCard(Boolean endCard) { this.endCard = endCard; }
+
+    public String getReferenceAssetIds() { return referenceAssetIds; }
+    public void setReferenceAssetIds(String referenceAssetIds) { this.referenceAssetIds = referenceAssetIds; }
 }

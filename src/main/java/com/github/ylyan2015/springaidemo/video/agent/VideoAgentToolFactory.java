@@ -88,7 +88,7 @@ public class VideoAgentToolFactory {
                         .description("评估图片质量：清晰度/相关性/美学三维0-10分与综合分、改进建议；未配多模态API时为规则评估；imageUrl 仅接受本服务存储相对路径（如 /images/…）")
                         .inputType(AgentToolRequests.EvaluateImage.class).build(),
                 FunctionToolCallback.builder("exportVideo", guarded(this::exportVideo))
-                        .description("将脚本合成为视频：preview=true出480p带水印预览，否则720p/1080p高清导出；可选BGM/字幕/Logo。耗时较长")
+                        .description("将脚本合成为视频：preview=true出480p带水印预览，否则720p/1080p高清导出；可选BGM/字幕/Logo；aspectRatio 缺省跟随脚本画幅（无需预填16:9）。耗时较长")
                         .inputType(AgentToolRequests.ExportVideo.class).build(),
                 FunctionToolCallback.builder("recommendBgm", guarded(this::recommendBgm))
                         .description("按视频主题情感智能推荐背景音乐，返回推荐分类与曲目")
@@ -170,7 +170,8 @@ public class VideoAgentToolFactory {
 
     private Map<String, Object> exportVideo(AgentToolRequests.ExportVideo req) {
         boolean preview = Boolean.TRUE.equals(req.preview());
-        String aspect = req.aspectRatio() != null ? req.aspectRatio() : "16:9";
+        // null 透传：由 doExport fallback 脚本 aspectRatio（双 null 仍为存量 16:9），预填会屏蔽竖屏脚本
+        String aspect = req.aspectRatio();
         boolean subtitle = Boolean.TRUE.equals(req.subtitle());
         String lang = req.subtitleLanguage() != null ? req.subtitleLanguage() : "zh";
         Map<String, Object> out;

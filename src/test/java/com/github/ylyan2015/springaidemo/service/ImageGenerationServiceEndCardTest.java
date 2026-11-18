@@ -63,7 +63,9 @@ class ImageGenerationServiceEndCardTest {
                 userRepository, new ObjectMapper(), mock(ImageQualityService.class),
                 new ShotPromptAssembler(),
                 new ReferenceImageResolver(mock(com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository.class),
-                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class)),
+                        mock(com.github.ylyan2015.springaidemo.storage.StorageService.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.MediaAssetRepository.class),
+                        mock(com.github.ylyan2015.springaidemo.repository.StoryScriptRepository.class)),
                 new LoraResolver(false), endCardRenderer);
 
         SecurityContextHolder.getContext().setAuthentication(

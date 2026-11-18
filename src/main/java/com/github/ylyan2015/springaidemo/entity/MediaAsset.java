@@ -40,6 +40,10 @@ public class MediaAsset {
     @Column(length = 500)
     private String sourceNote;
 
+    /** CHARACTER / SCENE / INSERT；null=存量 Track B 素材，按 INSERT 语义 */
+    @Column(length = 20)
+    private String category;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -68,6 +72,25 @@ public class MediaAsset {
     public void setTags(String tags) { this.tags = tags; }
     public String getSourceNote() { return sourceNote; }
     public void setSourceNote(String sourceNote) { this.sourceNote = sourceNote; }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+
+    /** 存量兼容：null/空白一律 INSERT（Track B 行为逐字不变） */
+    public String effectiveCategory() {
+        return category == null || category.isBlank() ? "INSERT" : category;
+    }
+
+    /**
+     * 参考图谓词（唯一口径）：kind=IMAGE 且分类落在 CHARACTER/SCENE。
+     * 匹配目录（AssetMatchService）、绑定校验（StoryScriptService.updateShot）、清单注入（buildAssetCatalog）
+     * 与生成侧解析（ReferenceImageResolver）共用：四份手写副本一旦漂移，prompt 里列出的角色可能在匹配阶段
+     * 被另一套谓词排除（spec §2.1 与 §5.2 的闭环前提就是同一谓词，审查 round 1 Minor-4）。
+     */
+    public boolean isReferenceAsset() {
+        return "IMAGE".equals(kind)
+                && ("CHARACTER".equals(effectiveCategory()) || "SCENE".equals(effectiveCategory()));
+    }
+
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

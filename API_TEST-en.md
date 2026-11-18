@@ -1572,7 +1572,7 @@ curl -X POST http://localhost:8080/api/video/export/hd \
 ```
 
 Config: video.sfx.enabled (default false, master switch), sfx.library-path (./data/sfx; presets via tools/generate-preset-sfx.ps1), video.realesrgan-path (empty = skip upscale)/realesrgan-model (default realesrgan-x4plus-anime), video.rife-path (empty = skip interpolation)/rife-model (model dir).
-FAQ: dialogue TTS voice = character card voice (editable via PUT /api/video/characters/{id}); narration stays zh-CN-YunxiNeural; without dialogue exports are byte-identical to before; SFX recommendation falls back to keywords (rain/wind/walk/tense) when the LLM fails; checking enhancement boxes is safe even when tools are unconfigured (silent skip); enhancement failures only warn and never block export; interpolation depends on the upscale frame chain — interpolate-only without realesrgan is skipped; download Real-ESRGAN/RIFE from their ncnn-vulkan releases; CPU runs are slow (minutes per shot); Docker does not bundle them.
+FAQ: dialogue TTS voice = character card voice (editable via PUT /api/video/characters/{id}); narration defaults to zh-CN-YunyangNeural (configurable via video.tts.narration-voice, see the trailing "Production Calibration" section); without dialogue exports are byte-identical to before; SFX recommendation falls back to keywords (rain/wind/walk/tense) when the LLM fails; checking enhancement boxes is safe even when tools are unconfigured (silent skip); enhancement failures only warn and never block export; interpolation depends on the upscale frame chain — interpolate-only without realesrgan is skipped; download Real-ESRGAN/RIFE from their ncnn-vulkan releases; CPU runs are slow (minutes per shot); Docker does not bundle them.
 
 ## Phase 4 Slice 5 Endpoints (Video Restyle)
 
@@ -1602,7 +1602,7 @@ No new endpoints; existing APIs extended:
 | GET | /api/video/videos/generators | list gains comfyui (available depends on ComfyUI running + workflow configured) |
 | PUT | /api/video/videos/generator?type=comfyui | switch to local ComfyUI i2v |
 
-Config: video.comfyui.base-url (default http://127.0.0.1:8188)/workflow-path (default docs/comfyui/wan22_i2v_5b.template.json, env COMFYUI_WORKFLOW)/fps (24)/timeout-seconds (1800)/poll-interval-ms (3000).
+Config: video.comfyui.base-url (default http://127.0.0.1:8188)/workflow-path (default docs/comfyui/wan22_i2v_5b.template.json, env COMFYUI_WORKFLOW)/fps (24)/timeout-seconds (2700, raised from 1800 by the 2026-11-17 production calibration)/poll-interval-ms (3000).
 FAQ: template-agnostic placeholder substitution — export a calibrated workflow from ComfyUI after Phase 0 and override; local storage first-frame pass-through (same-origin byte fetch), no oss/minio needed; local×dashscope-wan still guides oss/minio as before; frames 4n+1, 720P->1280x704 (measured) / 480P->832x480; video.workers=1 recommended for the comfyui route; ComfyUI down => available=false, default none unchanged; smoke -Dcomfyui=true skipped by default.
 
 ## Phase 5 Slice 3: Local ComfyUI SD1.5+LoRA Storyboards
@@ -1622,7 +1622,7 @@ FAQ: LoRA routing only when a character card carries loraName AND the generator 
 |---|---|---|
 | GET | /api/video/scripts?format=commentary | list commentary scripts only (format separation; legacy AI drama not mixed in) |
 | POST | /api/video/scripts/commentary/import | import commentary JSON (title/theme/shots[]; shots[].insert.attribution -> insertAttribution) |
-| PUT | /api/video/scripts/{id}/format | set format (whitelist null/commentary) |
+| POST | /api/video/scripts | save-script body may carry format (whitelist null/commentary, pre-save validation + post-save write-back); no standalone PUT /format endpoint |
 | POST | /api/video/assets | multipart upload ingest (file/name/tags/trimStart/trimEnd; video ffprobe duration + optional trim) |
 | GET | /api/video/assets | asset list (current user) |
 | DELETE | /api/video/assets/{id} | delete asset (ownership check) |
@@ -1633,3 +1633,84 @@ FAQ: LoRA routing only when a character card carries loraName AND the generator 
 
 Config: video.commentary.max-insert-ratio (0.2, insert-ratio guard)/attribution-font (empty, attribution watermark Chinese font)/import-dir (empty, scan dir).
 FAQ: insert ratio = sum(insert shot dur)/sum(total dur), over-limit export rejected (no insert shots always passes, zero impact on legacy AI drama); compose TTS pre-probe raises per-shot effective duration to avoid narration truncation, short clips get -stream_loop -1 loop fill; attribution drawtext expansion=none prevents %{...} injection, Chinese needs fontfile; async export reuses the restyle idiom (single-thread pool + SecurityContext propagation + futures terminal eviction), sync /export/hd unchanged; smoke -Dtest=VideoComposeAutoFitTest -Dcommentary=true skipped by default.
+
+## Phase 5 Asset Library Slice: Reference Assets & booru Web Search (2026-11-17)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | /api/video/assets | multipart upload gains category (CHARACTER/SCENE/INSERT allowlist, invalid value 400 fail-fast) |
+| GET | /api/video/assets?category= | asset list filterable by category |
+| POST | /api/video/assets/scan-reference | scan configured dir video.assets.reference-import-dir (convention char_Name_desc.png / scene_Name_desc.jpg, case-insensitive, multi-segment labels underscore→comma, idempotent dedup; never accepts user paths) |
+| GET | /api/video/assets/booru/search?q=&provider=&page= | web search (q required; join multiple tags with + for AND, spaces become underscores within a single tag; provider defaults to safebooru, alternative danbooru-safe; page 0-based clamped 0-4, 20 per page) |
+| GET | /api/video/assets/booru/preview?provider=&postId= | server-side thumbnail proxy (provider+postId re-query through gates, magic-number sniffing png/jpeg/webp/gif; policy reject→400 empty body / others→500 empty body, frontend treats as load failure) |
+| POST | /api/video/assets/booru/ingest | JSON {provider,postId,category,name,tags}; category CHARACTER/SCENE only; missing/invalid postId→400 (echo truncated to 32); bytes re-stored into own storage booru_ts_uuid.ext + sourceNote |
+| POST | /api/video/scripts/{scriptId}/asset-matches | LLM asset match recommendations (no body; returns {source:LLM\|FALLBACK, matches}; matches=[] is legal; not persisted — confirm via shot referenceAssetIds) |
+| PUT | /api/video/scripts/{id}/shots/{shotId} | body gains referenceAssetIds (id array, threaded through batch PUT too); write-side triple validation (ownership + IMAGE + category) silently drops forged/foreign ids |
+
+curl examples (login Cookie omitted):
+
+```bash
+# Multi-tag AND search: 1girl + black_hair (+ must be URL-encoded as %2B)
+curl "http://localhost:8080/api/video/assets/booru/search?q=1girl%2Bblack_hair&provider=safebooru&page=0"
+
+# Thumbnail preview (server-side proxy, returns image bytes directly)
+curl "http://localhost:8080/api/video/assets/booru/preview?provider=safebooru&postId=123456" -o thumb.jpg
+
+# Checkbox ingest (CHARACTER/SCENE only; name capped at 200 falling back to booru-{postId}, tags capped at 500)
+curl -X POST http://localhost:8080/api/video/assets/booru/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"safebooru","postId":123456,"category":"CHARACTER","name":"Hatsune Miku","tags":"hatsune_miku,vocaloid"}'
+
+# LLM match recommendations (no body; keyword-overlap fallback source=FALLBACK on failure)
+curl -X POST http://localhost:8080/api/video/scripts/1/asset-matches
+
+# Bind reference assets to a shot (confirm recommendations; binding never invalidates old images, only affects next generation)
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/10 \
+  -H "Content-Type: application/json" \
+  -d '{"referenceAssetIds":[3,5]}'
+```
+
+Contract highlights:
+- **Three security gates**: ① https + exact host allowlist (video.assets.booru.allowed-hosts) + redirects disabled; ② preview/ingest trust only provider+postId with server-side re-query, never client URLs; ③ download guards 10s connect / 30s read / <=20MB / image/*; rating re-checked at all three entries (search/preview/ingest, safe/g/general only).
+- **Error routing**: policy RejectException→400 with pass-through message; upstream/storage/DB failures→500 with the fixed message "素材取用失败，请稍后重试或更换关键词" (prevents SQL leakage; details go to logs).
+- **sourceNote**: `source page | rating=X | tags=...` (URL+rating first so truncation never loses attribution, capped at 500); DB write failure compensates by deleting the orphan file; external links never enter the generation chain.
+- **Reference consumption gate**: consumed only by comfyui (when the IP-Adapter template is in place) and wan27 generators; at most the first 2 per shot (character reference images first, CHARACTER before SCENE); consumer-side ReferenceImageResolver re-validates as the last line of defense; INSERT assets barred from the generation chain.
+- **Template routing** (ComfyUiImageGenerator, refs-first): ipadapter+lora combo / ipadapter / plain / lora / lora+canny; when the ipadapter template is absent supportsReferences=false auto-degrades without blocking startup.
+- Config: video.assets.reference-import-dir (empty = disabled)/video.assets.booru.allowed-hosts/default-provider; image.comfyui.workflow-ipadapter (docs/comfyui/sd15_ipadapter.template.json, locally calibrated plus_sd15+ViT-H)/workflow-ipadapter-lora (combo pending manual calibration)/ipadapter-weight (0.7, sweet spot 0.65-0.85).
+- FAQ: on zero results drop tags first then switch source; occasional thumbnail load failures are usually transient upstream rate limits — retry; generators fall back to the default source after restart — re-switch; matches=[] is a legal result, not a failure.
+
+## Production Calibration: End Cards / TTS Rate / ComfyUI Timeout (2026-11-17)
+
+No new endpoints; existing APIs extended:
+
+| Method | Path | Change |
+|---|---|---|
+| PUT | /api/video/scripts/{id}/shots/{shotId} | body gains endCard (boolean, threaded through batch PUT too); when true the image provider is bypassed and EndCardImageRenderer renders solid-color + text locally via FFmpeg (generatorType=endcard) |
+| GET | /api/video/scripts/{id} | shot map gains endCard/referenceAssetIds |
+
+Config:
+- video.endcard.font (default C:/Windows/Fonts/msyh.ttc; Chinese requires a fontfile or text is silently not rendered; Linux/Docker: Noto Sans CJK)/color (default black, lavfi color expression).
+- video.tts.narration-voice (default zh-CN-YunyangNeural documentary male voice, override via TTS_NARRATION_VOICE)/narration-rate (+15%, measured ~5.5 chars/sec)/dialogue-rate (+0%, dialogue no faster than narration).
+- video.comfyui.timeout-seconds 1800→2700 (measured 8s shot 193f ~25min, 9s shot 217f ~31min hitting the old red line).
+
+FAQ: line arithmetic — shot duration >= chars / chars-per-sec + 0.6s; recompute the whole film after rate changes; end cards cost zero API and never occupy the generation queue, ideal for follow / next-episode CTAs; scheduling advice: 1.5-2.5s short cuts as the workhorse, workers=1.
+Fixed (2026-11-18): subtitle timeline drift — compose now rebuilds subtitle cues on effective durations measured from TTS audio / real clips (rebuild baseline is the nominal declared durations, covering both TTS raise and real-clip measured drift).
+
+Known limitations (deferred to later slices): booru preview returns 500 for nonexistent postIds (should be 404).
+
+## Hook-Driven Scripts (2026-11-18)
+
+No new endpoints; behavior enhancement for POST /api/video/scripts (and every generation path through VideoScriptService):
+
+- The system prompt gains hook narrative hard constraints: the first shot throws conflict/suspense within 3 seconds (opening narration <= 15 chars); an emotional turn every 15-20 seconds; the last shot leaves a cliffhanger feeding the end-card follow CTA (second-to-last shot when an end-card shot exists).
+- Line density is auto-checked after generation: per-shot duration >= (narration + dialogue chars) / 5.5 + 0.6s; violations only emit server-side warn logs — the response shape is unchanged and saving is never blocked; at export time TTS pre-probing raises durations as the safety net and subtitles are rebuilt on effective durations (see the fixed item above).
+- End-card shots (endCard=true) render text locally without TTS and are exempt from the density check.
+
+## Portrait-First (2026-11-18)
+
+New endpoint PUT /api/video/scripts/{id}/aspect, body {"aspectRatio": "9:16"} (whitelist 16:9 / 9:16 / 1:1; null/blank clears back to default landscape; invalid values return 400); response success/data = script detail (same idiom as PUT /{id}/style). Script detail responses (GET /api/video/scripts/{id} and every scriptToMap exit) gain an aspectRatio field; null surfaces as "16:9".
+
+Behavior enhancements on existing endpoints (response shapes unchanged):
+
+- Image generation (single shot POST /api/video/images/shot/{scriptId}/{shotId}, batch SSE GET /api/video/images/script/{scriptId}/stream, candidates POST /api/video/candidates/generate): with script aspectRatio=9:16 the size automatically switches to 720x1280 (overriding image.generation.default-size) and prompts gain centered subject / vertical framing; multi-character shots (>= 2 characters) are forced into a single-character close-up replacing the original shot size; end cards render locally at the same size. Other aspects behave unchanged.
+- Export (POST /api/video/export/preview, /export/hd, /export/hd/async, platform export): requests without aspectRatio (null/blank) fall back to the script aspect; explicit values win; both null keeps legacy 16:9. A 9:16 script at 720p outputs 720x1280 by default, and the export record's aspectRatio/width/height are persisted accordingly.

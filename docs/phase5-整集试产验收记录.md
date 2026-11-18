@@ -296,3 +296,63 @@ Track A BLG 双脚本零云链路实证 PASS（2/2 成片）；驱动 `tools/e2e
 ## 状态
 
 成片归档功能 PASS；源码/测试改动与两个 tools 脚本暂存不提交；验证实例已停止。
+
+---
+
+# 素材库与画面感增强（S1→S5）验收（2026-11-17 起，代码切片收口于 2026-11-18）
+
+范围：设计 `docs/superpowers/specs/2026-11-17-asset-library-design.md`；实施计划 `docs/superpowers/plans/2026-11-17-asset-library.md`（14 Task / 5 切片，逐 Task 审查 + 变异复证）。
+
+## 结果：代码切片 PASS（S1–S5 全部收口）；唯一未闭合项 = 组合 IP-Adapter+LoRA 模板由用户手动校准（计划明文 AI 不代搭）
+
+## 每切片门槛（全量 `mvn clean package` / `clean test`）
+
+| 切片 | Task | 全量结果 | 本切片交付 |
+|---|---|---|---|
+| S1 数据面 | 1–3 | **439 tests / 0 fail / 9 skipped** | `MediaAsset.category`（CHARACTER/SCENE/INSERT，null 一律 INSERT 保 Track B）+ `char_`/`scene_` 参考素材扫描目录 + `StoryShot.referenceAssetIds` 与绑定校验（伪造/越权 id 服务端剔除） |
+| S2 匹配 | 4–5 | **454 / 0 fail / 9 skipped** | `AssetMatchService`（LLM 推荐 + 关键词重叠降级 + 阅后即焚不落库）+ `POST /{sid}/asset-matches` + 前端 chip 流 |
+| S3 生成 | 6–9 | **488 / 0 fail**（T10 复跑含 T8/T9 新增） | `ReferenceImageResolver` 素材参考图 + `generateWithLoraAndReferences`/`generateWithSeed` 组合链路与路由 seam + ComfyUI IP-Adapter 模板装配 + gated 真实冒烟 |
+| S4 素材获取 | 10–12 | **543 / 0 fail / 0 error / 12 skipped** | `BooruProvider` 双源适配器（safebooru + danbooru-safe）+ `BooruSearchService` 三道闸（rating 白名单 / host 白名单 / 20MB+30s+Content-Length）+ 三端点 + 素材库面板（上传/扫描/网搜三入口） |
+| S5 脚本增强 | 13–14 | **562 / 0 fail / 0 error / 12 skipped** | 分镜 system prompt 画面感升级（四要素/旁白字数/imagePrompt 公式/禁令/范例镜）+ 素材清单注入（≤30 条、tags 40、行 60、空库与异常零注入）+ 全链路 e2e |
+
+## gated 冒烟执行状态（明示已跑与未跑）
+
+- `IpAdapterRealSmokeTest -Dipadapter=true`（ComfyUI 8188 在线，Task 9）：**19/19 绿 27.2s**；同 prompt 同 seed 有/无参考图对照组 side-by-side 合成图交付——左图继承参考图的青雾、暖橙灯笼、雨丝、湿石板反射，右图无参考时构图漂移。**结论：IP-Adapter 传图链路在真实 ComfyUI 上生效。**
+- `BooruRealSmokeTest -Dbooru=true`（Task 12 起，每轮修完护栏复跑）：**3 例 / 0 失败 / 1 skip**（skip 项 = 本机访问 safebooru.donmai.us 站点 API 返 403，非白名单/代码问题；cdn.donmai.us 图片域已单独用 yml/适配器/`@Value` 三侧同步钉住）。
+- 未闭合：组合模板 `sd15_ipadapter_lora.template.json` 未落盘前，`generateWithLoraAndReferences` 恒降级为纯 LoRA 路径（WARN 每实例一次）。待办：节点 10→11 之间串 `LoraLoader` + `{{LORA_NAME}}` + strength，另存为组合模板名。
+
+## 全链路 e2e（`tools/e2e-asset-library.js`，2026-11-18 实跑两轮）
+
+注册 → 页面标记（含面板/网搜/扫描/chip 共 9 项）→ 上传 CHARACTER 素材并断言 `url` 为自家存储（红线）→ `scan-reference`（未配置目录时 0 且不报错）→ `category` 过滤 → LLM 生成 6 镜脚本 → **`asset-matches source=LLM`** 且推荐不落库 → 人工确认绑定（含伪造 id 被剔除 `kept=[261]`）→ booru 实搜 20 条（ratings 仅 general/safe）+ 代理缩略图 200 `image/jpeg` → **ComfyUI 逐镜真实生图全 READY（镜 1 带绑定参考图走 IP-Adapter）** → `export/hd` 成片归档 `/images/final/雨巷里的一碗暖-视频.mp4`。
+两轮 `exitCode=0`，17 项 PASS + 1 项 INFO，0 FAIL；软断言「脚本是否复用库内角色名『林晚』」两轮均 **true**（S5 清单注入的真实效果证据）。
+
+首轮实测教训两条已写进脚本注释：导出闸要求**全镜 READY**（只生第一镜必红），以及 PUT `shots/{shotId}` 直接返回 shot map（断言要打在 `data.referenceAssetIds` 数组上，写错路径会得到恒真的 `undefined`）。
+
+## Track B 回归硬门槛（存量行为逐字不变）
+
+`node tools/e2e-commentary.js`（需 `video.commentary.import-dir` 指向含 `epNN_标签_名称.mp4/png` 的目录，本轮临时造 1 mp4 + 1 png）：**12 项全 PASS**——评论导入、扫描入库（tags 解析 `ep01,piantou`）、视频/图片绑定、同步 HD 导出（21s 成片）、异步导出（RUNNING→SUCCESS）、引用占比护栏（47% > 20% 拒绝）、导出历史。
+另：`VideoComposeServiceTimeoutTest.hangingProcessIsKilledAfterTimeout` 为**已知环境性 flaky**（Windows 被 kill 进程仍持有 temp 目录 `cmd-*.log` 句柄 → `@TempDir` 清理失败，Task 8 已记过一次）；单跑 2 次绿、随后全量门禁绿，非断言失败。
+
+## 浏览器级 UI 验证（chrome-devtools 真实浏览器，Task 12）
+
+两轮（fix round 1 / round 2 各一次，真实 safebooru 数据）：顶栏按钮开面板 → canvas 造 PNG 走真实 `onchange` 上传入库 → 网搜 20 条（缩略图经服务端代理，`postId` 经 `Number()` 后为纯数字）→ 勾选入库 → 网格刷新且 `sourceNote` 段序为 `URL | rating=general | tags=...`、`url` 全为自家存储 → 删除走 confirm 且网格同步 → 边界（未知 provider 400、缺 postId 400、不存在帖 500、`/preview` 魔数嗅探 `image/jpeg` + `FF D8 FF E0`）→ `esc('a"b<c')` 实跑 `a&quot;b&lt;c`。控制台除上游突发 404/500 外零 JS 错误。
+
+## 审查与变异复证（每 Task 一轮以上）
+
+Task 1–14 逐 Task 派 CodeReview 子代理（spec 合规 + 质量双结论），fix round 最多 2 轮；变异复证累计：Task 11 三轮、Task 12 七轮、Task 13 两轮共 22 条。反复被审查者抓到、值得后人记住的四类自欺：
+1. **恒真断言**（`forEach(≤60)` 在短载荷下、`verifyNoInteractions` 指向从不参与的 bean、`length == codePoints().count()` 对孤立代理照样绿、`undefined` 路径上的 `indexOf < 0`）；
+2. **两份格式清单**（读侧魔数嗅探与写侧扩展名映射不同步 → GIF 被降级成 octet-stream）；
+3. **上游真实形态与 spec 假设不符**（safebooru 的 rating 是 `general` 而非 `safe`；表现是「搜索成功、空列表」而不是报错）；
+4. **文本删除类零覆盖**（prompt 升级项只改文本不写断言，删掉任何一条都全绿）。
+
+## 已知限制 / 遗留（不阻断）
+
+- 不存在的 `postId` 走 `/preview`、`/ingest` 现为 **500**（适配器抛普通 `RuntimeException`「帖子不存在」）：属客户端可修正错误却归成服务端故障，修法需类型化异常或重查未命中返 null，是跨 Task 契约调整，未在本计划内静默改。
+- 面板一次并发拉 20 张代理缩略图时，上游 safebooru 偶发对其中数个 id 的重查返 404（顺序重发全部 200）→ 用户偶见破图，重搜即可。设计建议：`preview` 复用 `search` 已回传并已过闸的 `previewUrl`，可免去每图一次重查（闸 2 语义须保留在 ingest 路径）。
+- `BooruPost` 无 author 字段 → `sourceNote` 缺作者信息（Task 10 契约缺口，spec 验收矩阵「出处完整」按 URL+rating+tags 达成）。
+- 下载护栏残留：中途彻底不吐字节的硬卡死仍靠 TCP/连接层自断，真要钉死需看门狗线程 `close` 该流（已写进代码注释，未假装修完）。
+- 网搜入库的素材在 `sourceNote` 里只带 URL + rating + tags（上游无 author 字段），且 `tags`/`sourceNote` 均按列宽 500 截断；上传时不写 license 信息。
+
+## 状态
+
+S1–S5 代码切片全部收口；源码/测试改动、新增 `tools/e2e-asset-library.js` 与本验收文档均**暂存不提交**（HEAD 仍 `1963d2a`）。唯一待用户动作 = 组合 IP-Adapter+LoRA 模板校准（校准后 `generateWithLoraAndReferences` 自动升级，无需改码）。验证实例已停止，临时 import-dir 仅存在于 gitignore 的工作区目录。

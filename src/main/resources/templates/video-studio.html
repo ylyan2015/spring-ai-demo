@@ -149,6 +149,8 @@
             <div class="divider"></div>
             <span class="bar-label">图像生成器</span>
             <select id="generatorSelect" onchange="switchGenerator()"></select>
+            <div class="divider"></div>
+            <button class="btn btn-sm btn-ghost" onclick="openAssetPanel()" title="参考素材库：上传 / 扫描目录 / booru 网搜入库（人物·场景）">素材库</button>
         </div>
 
         <!-- 创意输入区（新建模式显示） -->
@@ -218,6 +220,25 @@
             <div style="font-size:12px;color:#888;margin-top:6px">mp4/mov、2-10 秒、≤100MB；耗时数分钟，按输入+输出时长计费；local 存储需切换 oss/minio</div>
             <div id="restyleList" style="margin-top:10px"></div>
         </div>
+        <!-- 参考素材库面板（spec §4.3：只放 CHARACTER/SCENE；INSERT 版权护栏仍在评论工作台） -->
+        <div id="assetPanel" style="display:none;margin-top:12px;padding:12px;border:1px solid #2a3441;border-radius:8px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <strong>参考素材库</strong>
+                <select id="assetCategoryFilter" onchange="loadAssetPanel()">
+                    <option value="">全部</option><option value="CHARACTER">人物</option><option value="SCENE">场景</option>
+                </select>
+                <input type="file" id="refAssetFile" accept="image/*" style="display:none" onchange="uploadRefAsset()">
+                <select id="refAssetUploadCategory"><option value="CHARACTER">人物</option><option value="SCENE">场景</option></select>
+                <button class="btn btn-sm" onclick="document.getElementById('refAssetFile').click()">上传图片</button>
+                <button class="btn btn-sm btn-ghost" onclick="scanRefDir()" title="扫描 video.assets.reference-import-dir（文件名 char_名称_描述 / scene_名称_描述）">扫描参考目录</button>
+                <input id="booruQuery" placeholder="英文 tag 佳；多 tag 用 + 连接（AND）；中文自动转" title="空格会转成下划线（单个 tag 内分词）；多个 tag 请用 + 连接，如 1girl+black_hair" style="width:220px">
+                <select id="booruProvider"><option value="safebooru">safebooru.org</option><option value="danbooru-safe">danbooru safe</option></select>
+                <button class="btn btn-sm" onclick="booruSearch(0)">网搜</button>
+                <button class="btn btn-sm btn-ghost" onclick="document.getElementById('assetPanel').style.display='none'">收起</button>
+            </div>
+            <div id="assetGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px"></div>
+            <div id="booruResults" style="margin-top:10px"></div>
+        </div>
     </div>
     <div class="toast" id="toast"></div>
 <script th:inline="none">
@@ -246,7 +267,9 @@ let templates = [];        // 视频模板列表（模块 H）
 let currentTemplateId = ''; // 当前选中的视频模板（空 = 自由创作）
 
 // ==================== 基础工具 ====================
-function esc(t) { if (!t) return ''; var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+// esc 额外转义双引号：本页大量把服务端/第三方串拼进 innerHTML 的属性上下文（title/src/onclick）。
+// 素材库上线后这些数据源变成 booru tag 与外部图站元数据，" 一旦逃出属性位就是可执行的事件处理器属性。
+function esc(t) { if (!t) return ''; var d = document.createElement('div'); d.textContent = t; return d.innerHTML.replace(/"/g, '&quot;'); }
 
 async function api(url, options) {
     try {
@@ -789,6 +812,7 @@ function renderScript() {
         '<option value="PREV_LAST_FRAME"' + (sc.continuityMode === 'PREV_LAST_FRAME' ? ' selected' : '') + '>连续性:上镜末帧</option>' +
         '<option value="GENERATED_LAST_FRAME"' + (sc.continuityMode === 'GENERATED_LAST_FRAME' ? ' selected' : '') + '>连续性:生成尾帧</option></select>';
     h += '<button class="btn btn-sm" onclick="generateAllVideos()" title="批量图生视频（SSE 进度）">批量生成视频</button>';
+    h += '<button class="btn btn-sm btn-ghost" onclick="matchAssetsForScript()" title="LLM 推荐参考素材（阅后即焚，确认才落库）">匹配素材</button>';
     h += '<button class="btn btn-sm btn-ghost" id="subtitlePreviewBtn" onclick="previewSubtitle()" ' + (batchGenerating ? 'disabled' : '') + ' title="按当前比例生成一帧字幕效果预览图（需首镜头已生成图片）">字幕预览</button>';
     h += '<span class="info" id="imageCountInfo">已生成: ' + readyCount + '/' + total + ' 张图片 · 镜头卡片可拖拽排序</span>';
     h += '</div>';
@@ -832,6 +856,7 @@ function shotCardHtml(shot) {
         h += '<div class="shot-narration">' + esc(shot.narration) + '</div>';
         if (shot.dialogue) { const dc = currentCharacters.find(x => String(x.id) === String(shot.dialogueCharacterId)); h += '<div class="shot-narration" style="font-style:normal;color:#aac">对白' + (dc ? '（' + esc(dc.name) + '）' : '') + ': ' + esc(shot.dialogue) + '</div>'; }
         h += '<div class="shot-camera">镜头运动: ' + esc(shot.cameraMovement || '固定') + ' | 景别: ' + esc(shot.shotSize || 'MEDIUM') + ((shot.characterIds || []).length ? ' | 角色: ' + (shot.characterIds || []).map(id => { const c = currentCharacters.find(x => x.id === id); return c ? esc(c.name) : id; }).join(', ') : '') + '</div>';
+        h += matchChipsHtml(shot);
         h += '<div class="shot-prompt"><strong>Image Prompt: </strong>' + esc(shot.imagePrompt) + '</div>';
         h += '<div class="shot-actions">';
         h += '<button class="btn btn-sm btn-ghost" onclick="toggleShotEdit(' + shot.id + ')">编辑</button>';
@@ -847,6 +872,190 @@ function shotCardHtml(shot) {
     }
     h += '</div></div>';
     return h;
+}
+
+// ==================== 素材匹配推荐（spec §2：推荐不落库，确认走 updateShot） ====================
+let assetMatchCache = {};    // shotId -> [{assetId,name,category,reason}]
+let assetMatchSource = '';   // LLM / FALLBACK / EMPTY
+let assetThumbCache = {};    // assetId -> url（候选缩略图，spec §2.2）
+
+async function matchAssetsForScript() {
+    if (!currentScript) return;
+    toast('正在匹配素材推荐...', '');
+    const data = await post('/api/video/scripts/' + currentScript.id + '/asset-matches', {});
+    if (!data.success) { toast(data.message || '匹配失败', 'error'); return; }
+    assetMatchCache = {};
+    assetMatchSource = data.data.source;
+    (data.data.matches || []).forEach(m => { assetMatchCache[m.shotId] = m.candidates || []; });
+    if (assetMatchSource === 'EMPTY') { toast('素材库为空（人物/场景类），请先在素材库入库', ''); return; }
+    // 候选缩略图数据源：全量素材 id→url（失败不阻断 chip 流，退化为无图）
+    const al = await api('/api/video/assets');
+    assetThumbCache = {};
+    ((al && al.data) || []).forEach(a => { assetThumbCache[a.id] = a.url; });
+    toast(assetMatchSource === 'FALLBACK' ? 'LLM 不可用，已用关键词匹配，请逐镜确认' : '素材推荐已生成，请逐镜确认', 'success');
+    renderScript();
+}
+
+function matchChipsHtml(shot) {
+    const bound = shot.referenceAssetIds || [];
+    const recs = assetMatchCache[shot.id] || [];
+    if (!bound.length && !recs.length) return '';
+    let h = '<div class="shot-camera" style="margin-top:4px">参考素材: ';
+    bound.forEach(id => {
+        const thumb = assetThumbCache[id] ? '<img src="' + esc(assetThumbCache[id]) + '" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle"> ' : '';
+        h += '<span class="badge" style="background:#2a3e2a;color:#2ecc71">' + thumb + '已绑定 #' + id + ' <a href="javascript:void(0)" onclick="removeMatch(' + shot.id + ',' + id + ')" style="color:#f74a4a">×</a></span> ';
+    });
+    recs.filter(c => !bound.includes(c.assetId)).forEach(c => {
+        const thumb = assetThumbCache[c.assetId] ? '<img src="' + esc(assetThumbCache[c.assetId]) + '" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle"> ' : '';
+        h += '<span class="badge" style="background:#1a2a3e;color:#6ab0f7" title="' + esc(c.reason || '') + '">' + thumb + (c.category === 'CHARACTER' ? '人物' : '场景') + '·' + esc(c.name) + ' <a href="javascript:void(0)" onclick="adoptMatch(' + shot.id + ',' + c.assetId + ')" style="color:#2ecc71">采用</a></span> ';
+    });
+    if (recs.some(c => !bound.includes(c.assetId))) {
+        h += '<a href="javascript:void(0)" onclick="adoptAllMatches(' + shot.id + ')" style="font-size:11px;color:#ffd75e">全部采用</a>';
+    }
+    return h + '</div>';
+}
+
+async function adoptMatch(shotId, assetId) {
+    const shot = findShot(shotId);
+    const ids = (shot.referenceAssetIds || []).concat([assetId]);
+    await saveAssetBinding(shotId, [...new Set(ids)]);
+}
+
+async function removeMatch(shotId, assetId) {
+    const shot = findShot(shotId);
+    await saveAssetBinding(shotId, (shot.referenceAssetIds || []).filter(x => x !== assetId));
+}
+
+async function adoptAllMatches(shotId) {
+    const recs = assetMatchCache[shotId] || [];
+    const shot = findShot(shotId);
+    const ids = (shot.referenceAssetIds || []).concat(recs.map(c => c.assetId));
+    await saveAssetBinding(shotId, [...new Set(ids)]);
+}
+
+async function saveAssetBinding(shotId, ids) {
+    // 消费闸门：IP-Adapter/wan2.7 最多吃 2 张，绑满 2 条再采用先提示（避免静默截断困惑）
+    if (ids.length > 2) { toast('生成时每镜最多取前 2 张参考图（人物优先），已绑定 ' + ids.length + ' 条仅供换备选', ''); }
+    const data = await put('/api/video/scripts/' + currentScript.id + '/shots/' + shotId, { referenceAssetIds: ids });
+    if (!data.success) { toast(data.message || '绑定失败', 'error'); return; }
+    await loadScriptDetail(currentScript.id);
+    document.getElementById('scriptSelect').value = currentScript.id;
+}
+
+// ==================== 素材库面板（spec §4.3：上传/扫描/网搜三入口） ====================
+let booruSelected = {};   // postId -> post：只有人工勾选的图才会入库（spec 验收矩阵「逐张确认」）
+
+function openAssetPanel() {
+    document.getElementById('assetPanel').style.display = '';
+    loadAssetPanel();
+}
+
+async function loadAssetPanel() {
+    const cat = document.getElementById('assetCategoryFilter').value;
+    const data = await api('/api/video/assets' + (cat ? '?category=' + encodeURIComponent(cat) : ''));
+    const grid = document.getElementById('assetGrid');
+    if (!data.success) { grid.innerHTML = '<span style="color:#f74a4a">' + esc(data.message || '加载失败') + '</span>'; return; }
+    // 双保险过滤：服务端已按 category 筛，这里再钉一次「只列图、只列人物/场景」，INSERT 类素材不在本面板职责内
+    const assets = (data.data || []).filter(a => a.kind === 'IMAGE' && (a.category === 'CHARACTER' || a.category === 'SCENE'));
+    grid.innerHTML = assets.length ? assets.map(a =>
+        '<div style="width:120px;text-align:center">' +
+        '<img src="' + esc(a.url) + '" style="width:120px;height:90px;object-fit:cover;border-radius:6px" loading="lazy">' +
+        '<div style="font-size:11px">' + (a.category === 'CHARACTER' ? '人物' : '场景') + '·' + esc(a.name) + '</div>' +
+        '<div style="font-size:10px;color:#8a97a8" title="' + esc(a.sourceNote || '自家上传') + '">' + esc(a.sourceNote ? '网搜入库' : '本地上传') + '</div>' +
+        '<a href="javascript:void(0)" onclick="deleteRefAsset(' + Number(a.id) + ')" style="font-size:11px;color:#f74a4a">删除</a></div>'
+    ).join('') : '<span style="color:#8a97a8">库空：上传/扫描/网搜入库</span>';
+}
+
+async function uploadRefAsset() {
+    const input = document.getElementById('refAssetFile');
+    if (!input.files.length) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    fd.append('name', input.files[0].name.replace(/\.[^.]+$/, ''));
+    fd.append('category', document.getElementById('refAssetUploadCategory').value);
+    // multipart 不能走 api()（它固定 JSON Content-Type），也不能让浏览器自动边界，故直接 fetch
+    let data;
+    try {
+        const resp = await fetch('/api/video/assets', { method: 'POST', body: fd });
+        data = await resp.json();
+    } catch (e) {
+        data = { success: false, message: '上传失败: ' + e.message };
+    }
+    toast(data.success ? '上传入库成功' : (data.message || '上传失败'), data.success ? 'success' : 'error');
+    input.value = '';   // 同一张图再选一次也要触发 onchange
+    loadAssetPanel();
+}
+
+async function scanRefDir() {
+    const data = await post('/api/video/assets/scan-reference', {});
+    if (!data.success) { toast(data.message || '扫描失败', 'error'); return; }
+    const n = (data.data || []).length;
+    // 空列表有两种原因（目录未配置 / 全部已存在），服务端只返成功项，这里合并提示免得看成「扫描坏了」
+    toast(n ? '扫描入库 ' + n + ' 个' : '无新增：目录未配置（video.assets.reference-import-dir）或已全部入库', n ? 'success' : '');
+    loadAssetPanel();
+}
+
+async function deleteRefAsset(id) {
+    if (!confirm('确定删除该参考素材？已绑定到分镜的引用会在下次生成时报失效。')) return;
+    const data = await api('/api/video/assets/' + id, { method: 'DELETE' });
+    toast(data.success ? '已删除' : (data.message || '删除失败'), data.success ? 'success' : 'error');
+    loadAssetPanel();
+}
+
+async function booruSearch(page) {
+    const q = document.getElementById('booruQuery').value.trim();
+    if (!q) { toast('请输入搜索词', 'error'); return; }
+    const provider = document.getElementById('booruProvider').value;
+    toast('正在搜索 ' + provider + ' ...', '');
+    const data = await api('/api/video/assets/booru/search?q=' + encodeURIComponent(q)
+        + '&provider=' + encodeURIComponent(provider) + '&page=' + page);
+    const box = document.getElementById('booruResults');
+    if (!data.success) { box.innerHTML = '<span style="color:#f74a4a">' + esc(data.message || '搜索失败') + '</span>'; return; }
+    const posts = data.data || [];
+    booruSelected = {};
+    if (!posts.length) { box.innerHTML = '<span style="color:#8a97a8">无结果，试试英文 tag（如 hatsune_miku）</span>'; return; }
+    box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' + posts.map(p =>
+        '<label style="width:140px;text-align:center;cursor:pointer">' +
+        // id 过 Number：拼进 onclick 属性位的值现在来自服务端 JSON，一旦哪天 id 不再是 Long，这里就是属性注入面（审查 S-6）
+        '<input type="checkbox" onchange="toggleBooruSelect(' + Number(p.postId) + ', this.checked)"> ' +
+        // 缩略图走服务端代理（浏览器直连两源常失败），代理自己再过一道 host 白名单
+        '<img src="/api/video/assets/booru/preview?provider=' + encodeURIComponent(p.provider) + '&postId=' + Number(p.postId) + '" style="width:140px;height:105px;object-fit:cover;border-radius:6px" loading="lazy">' +
+        // 尺寸也是服务端 JSON 数值：进标记位前同样过 Number，不给「同一变量一处净化一处不净化」留现场（复审 N-2）
+        '<div style="font-size:10px;color:#8a97a8">' + Number(p.width) + '×' + Number(p.height) + ' · <span style="color:#2ecc71">' + esc(p.rating) + '</span></div>' +
+        '<div style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(p.tags) + '">' + esc(p.tags) + '</div></label>'
+    ).join('') + '</div>' +
+    '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+    '<select id="booruIngestCategory"><option value="CHARACTER">人物</option><option value="SCENE">场景</option></select>' +
+    '<input id="booruIngestName" placeholder="素材名（缺省用搜索词）" style="width:160px">' +
+    '<button class="btn btn-sm" onclick="booruIngestSelected()">入库选中</button>' +
+    (page > 0 ? '<button class="btn btn-sm btn-ghost" onclick="booruSearch(' + (page - 1) + ')">上一页</button>' : '') +
+    (page < 4 ? '<button class="btn btn-sm btn-ghost" onclick="booruSearch(' + (page + 1) + ')">下一页</button>' : '') +
+    '<span style="font-size:11px;color:#8a97a8">第 ' + (page + 1) + '/5 页·服务端限 5 页×20 张</span>' +
+    '</div>';
+    window._booruPosts = posts;
+}
+
+function toggleBooruSelect(postId, checked) {
+    const post = (window._booruPosts || []).find(p => p.postId === postId);
+    if (checked && post) booruSelected[postId] = post; else delete booruSelected[postId];
+}
+
+async function booruIngestSelected() {
+    const posts = Object.values(booruSelected);
+    if (!posts.length) { toast('请先勾选图片（每张必须人工确认）', 'error'); return; }
+    const category = document.getElementById('booruIngestCategory').value;
+    const name = (document.getElementById('booruIngestName').value.trim() || document.getElementById('booruQuery').value.trim());
+    let ok = 0;
+    for (const p of posts) {
+        // 服务端不信任这里的 URL：只发 provider+postId，重查+下载转存全在服务层做（闸 2）
+        const data = await post('/api/video/assets/booru/ingest', { provider: p.provider, postId: p.postId, category: category, name: name });
+        if (data.success) ok++; else toast(data.message || '入库失败', 'error');
+    }
+    toast('入库 ' + ok + '/' + posts.length + ' 张', ok ? 'success' : 'error');
+    booruSelected = {};
+    // 勾选项已入库，清空勾选态；否则复选框看上去仍选中而集合已空（再点一次会报「请先勾选」）
+    document.querySelectorAll('#booruResults input[type=checkbox]').forEach(el => { el.checked = false; });
+    loadAssetPanel();
 }
 
 // ==================== 镜头编辑（模块 A） ====================

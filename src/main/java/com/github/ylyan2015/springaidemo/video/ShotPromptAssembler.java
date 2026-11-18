@@ -20,6 +20,15 @@ public class ShotPromptAssembler {
      * @param characters 出场角色卡（可 null/空 → 纯文本降级）
      */
     public String assemble(StoryShot shot, VisualStyle style, List<StoryCharacter> characters) {
+        return assemble(shot, style, characters, null);
+    }
+
+    /**
+     * P0-3 竖屏优先：aspectRatio=9:16 时注入竖构图词（centered subject / vertical framing），
+     * 多人镜（≥2 角色）强制单人特写（SD1.5 多人构图短板）；横屏/null 输出与存量逐字一致。
+     */
+    public String assemble(StoryShot shot, VisualStyle style, List<StoryCharacter> characters, String aspectRatio) {
+        boolean portrait = "9:16".equals(aspectRatio);
         String base = shot.getImagePrompt();
         if (base == null || base.isBlank()) {
             base = shot.getSceneDescription();
@@ -41,9 +50,17 @@ public class ShotPromptAssembler {
             }
         }
         sb.append(", ").append(base);
-        sb.append(", ").append(shotSizeEnglish(shot.getShotSize()));
+        if (portrait && characters != null && characters.size() >= 2) {
+            // 多人镜拆单人特写：替代原景别，避免竖窄画幅里多人脸崩
+            sb.append(", single character close-up, only one person in frame");
+        } else {
+            sb.append(", ").append(shotSizeEnglish(shot.getShotSize()));
+        }
         if (shot.getCameraMovement() != null && !shot.getCameraMovement().isBlank()) {
             sb.append(", camera: ").append(shot.getCameraMovement());
+        }
+        if (portrait) {
+            sb.append(", centered subject, vertical framing");
         }
         return sb.toString();
     }

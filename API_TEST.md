@@ -1608,7 +1608,7 @@ curl -X POST http://localhost:8080/api/video/export/hd \
 ```
 
 配置：video.sfx.enabled（默认 false，总开关）、sfx.library-path（./data/sfx，预置生成 tools/generate-preset-sfx.ps1）、video.realesrgan-path（空=跳过超分）/realesrgan-model（默认 realesrgan-x4plus-anime）、video.rife-path（空=跳过补帧）/rife-model（模型目录）。
-FAQ：对白 TTS 声线=角色卡 voice（PUT /api/video/characters/{id} 可改），旁白固定 zh-CN-YunxiNeural；无对白时导出与存量逐字一致；音效推荐 LLM 失败自动关键词回退（雨/风/走/紧张）；增强工具未配置勾选也安全（静默跳过），执行失败仅 warn 不阻断导出；补帧依赖超分抽帧链，仅勾补帧未配超分会跳过；Real-ESRGAN/RIFE 下载见各自 ncnn-vulkan release，CPU 耗时较长（分钟级/镜），Docker 不预装。
+FAQ：对白 TTS 声线=角色卡 voice（PUT /api/video/characters/{id} 可改），旁白默认 zh-CN-YunyangNeural（video.tts.narration-voice 可配，见尾部「生产校准」节）；无对白时导出与存量逐字一致；音效推荐 LLM 失败自动关键词回退（雨/风/走/紧张）；增强工具未配置勾选也安全（静默跳过），执行失败仅 warn 不阻断导出；补帧依赖超分抽帧链，仅勾补帧未配超分会跳过；Real-ESRGAN/RIFE 下载见各自 ncnn-vulkan release，CPU 耗时较长（分钟级/镜），Docker 不预装。
 
 ## Phase 4 切片 5 端点（视频转绘）
 
@@ -1638,7 +1638,7 @@ FAQ：转绘为独立输出模式（RestyleTask），不混入导出历史；耗
 | GET | /api/video/videos/generators | 列表增 comfyui（available 取决于 ComfyUI 启动+工作流配置） |
 | PUT | /api/video/videos/generator?type=comfyui | 切换本地 ComfyUI i2v |
 
-配置：video.comfyui.base-url（默认 http://127.0.0.1:8188）/workflow-path（默认 docs/comfyui/wan22_i2v_5b.template.json，环境变量 COMFYUI_WORKFLOW）/fps（24）/timeout-seconds（1800）/poll-interval-ms（3000）。
+配置：video.comfyui.base-url（默认 http://127.0.0.1:8188）/workflow-path（默认 docs/comfyui/wan22_i2v_5b.template.json，环境变量 COMFYUI_WORKFLOW）/fps（24）/timeout-seconds（2700，2026-11-17 生产校准自 1800 上调）/poll-interval-ms（3000）。
 FAQ：模板无关占位符替换，Phase 0 从 ComfyUI 导出校准后覆盖；local 存储首帧直通（同源取字节），无需 oss/minio；local×dashscope-wan 仍照旧指引 oss/minio；帧数 4n+1、720P→1280×704（实测）/480P→832×480；comfyui 路线 video.workers 建议 1；ComfyUI 未启动 available=false、默认 none 零变化；冒烟 -Dcomfyui=true 默认跳过。
 
 ## Phase 5 切片 3：本地 ComfyUI SD1.5+LoRA 分镜
@@ -1658,7 +1658,7 @@ FAQ：LoRA 路由仅当角色卡带 loraName 且生成器 supportsLora 生效，
 |---|---|---|
 | GET | /api/video/scripts?format=commentary | 仅列评论脚本（format 分离，存量 AI 短剧不混入） |
 | POST | /api/video/scripts/commentary/import | 导入评论 JSON（title/theme/shots[]；shots[].insert.attribution→insertAttribution） |
-| PUT | /api/video/scripts/{id}/format | 设置 format（白名单 null/commentary） |
+| POST | /api/video/scripts | 保存脚本 body 可带 format（白名单 null/commentary，保存前置校验+保存后回写）；无独立 PUT /format 端点 |
 | POST | /api/video/assets | multipart 上传入库（file/name/tags/trimStart/trimEnd；视频 ffprobe 实测时长+可选裁剪） |
 | GET | /api/video/assets | 素材列表（当前用户） |
 | DELETE | /api/video/assets/{id} | 删除素材（归属校验） |
@@ -1669,3 +1669,84 @@ FAQ：LoRA 路由仅当角色卡带 loraName 且生成器 supportsLora 生效，
 
 配置：video.commentary.max-insert-ratio（0.2，引用占比护栏）/attribution-font（空，出处水印中文字体）/import-dir（空，扫描目录）。
 FAQ：引用占比=Σ引用镜时长/Σ总时长，超限导出拒绝（无引用镜恒放行，存量 AI 短剧零影响）；合成 TTS 预探测抬升逐镜有效时长防旁白被截，短片段 -stream_loop -1 循环填充；出处水印 drawtext expansion=none 防 %{…} 注入，中文需配 fontfile；异步导出复用转绘 idiom（单线程池+SecurityContext 传播+futures 终态清理），同步 /export/hd 不变；冒烟 -Dtest=VideoComposeAutoFitTest -Dcommentary=true 默认跳过。
+
+## Phase 5 素材库切片：参考素材与 booru 网搜（2026-11-17）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/video/assets | multipart 上传增 category（CHARACTER/SCENE/INSERT 白名单，非法值 400 fail-fast） |
+| GET | /api/video/assets?category= | 素材列表可按 category 过滤 |
+| POST | /api/video/assets/scan-reference | 扫描配置目录 video.assets.reference-import-dir（约定 char_角色名_描述.png / scene_场景名_描述.jpg，大小写不敏感，多段标签下划线转逗号，幂等去重；不接受用户路径） |
+| GET | /api/video/assets/booru/search?q=&provider=&page= | 网搜（q 必填；多 tag 用 + 连接 AND，空格转下划线是单 tag 内分词；provider 缺省 safebooru，可选 danbooru-safe；page 0 基钳 0-4，每页 20） |
+| GET | /api/video/assets/booru/preview?provider=&postId= | 缩略图服务端代理（provider+postId 重查过闸取字节，魔数嗅探 png/jpeg/webp/gif；策略拒绝→400 空体/其余→500 空体，前端按加载失败处理） |
+| POST | /api/video/assets/booru/ingest | JSON {provider,postId,category,name,tags}；category 仅 CHARACTER/SCENE；postId 缺失/非法→400（回显截断 32）；字节转存自家存储 booru_ts_uuid.ext + sourceNote |
+| POST | /api/video/scripts/{scriptId}/asset-matches | LLM 素材匹配推荐（无 body；返 {source:LLM\|FALLBACK, matches}；matches=[] 合法；推荐不落库，确认走镜头 referenceAssetIds） |
+| PUT | /api/video/scripts/{id}/shots/{shotId} | body 增 referenceAssetIds（id 数组，批量 PUT 同贯穿）；写侧三校验（归属+IMAGE+category）静默剔除伪造/他人 id |
+
+curl 示例（登录态 Cookie 略）：
+
+```bash
+# 多 tag AND 搜索：1girl + black_hair（+ 需 URL 编码为 %2B）
+curl "http://localhost:8080/api/video/assets/booru/search?q=1girl%2Bblack_hair&provider=safebooru&page=0"
+
+# 缩略图预览（服务端代理，直接返图片字节）
+curl "http://localhost:8080/api/video/assets/booru/preview?provider=safebooru&postId=123456" -o thumb.jpg
+
+# 勾选入库（仅 CHARACTER/SCENE；name 限 200 回落 booru-{postId}，tags 限 500）
+curl -X POST http://localhost:8080/api/video/assets/booru/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"safebooru","postId":123456,"category":"CHARACTER","name":"初音未来","tags":"hatsune_miku,vocaloid"}'
+
+# LLM 匹配推荐（无 body；失败降级关键词重叠 source=FALLBACK）
+curl -X POST http://localhost:8080/api/video/scripts/1/asset-matches
+
+# 镜头绑定参考素材（确认推荐；绑定不失效旧图，只影响下次生成）
+curl -X PUT http://localhost:8080/api/video/scripts/1/shots/10 \
+  -H "Content-Type: application/json" \
+  -d '{"referenceAssetIds":[3,5]}'
+```
+
+契约要点：
+- **三道安全闸**：① https + host 精确白名单（video.assets.booru.allowed-hosts）+ 禁重定向；② 预览/入库只认 provider+postId 服务端重查，不信任客户端 URL；③ 下载护栏 10s 连接/30s 读取/≤20MB/image/*；rating 三入口（搜索/预览/入库）复核仅 safe/g/general。
+- **错误分流**：策略拒绝 RejectException→400 + 原文可透传；上游/存储/DB 故障→500 + 固定文案「素材取用失败，请稍后重试或更换关键词」（防 SQL 外泄，原文进日志）。
+- **sourceNote**：`出处页 | rating=X | tags=...`（URL+rating 前置防截断丢出处，限 500）；写库失败补偿删孤儿文件；外链永不进生成链路。
+- **参考图消费闸门**：仅 comfyui（IP-Adapter 模板就位时）与 wan27 生成器消费；每镜最多前 2 张（角色定妆图在前、CHARACTER 优先 SCENE）；消费侧 ReferenceImageResolver 三校验最后防线；INSERT 类禁入生成链路。
+- **模板路由**（ComfyUiImageGenerator，refs 优先）：ipadapter+lora 组合 / ipadapter / plain / lora / lora+canny；ipadapter 模板未就位 supportsReferences=false 自动降级不阻塞启动。
+- 配置：video.assets.reference-import-dir（空=禁用）/video.assets.booru.allowed-hosts/default-provider；image.comfyui.workflow-ipadapter（docs/comfyui/sd15_ipadapter.template.json，已本机校准 plus_sd15+ViT-H）/workflow-ipadapter-lora（组合待手工校准）/ipadapter-weight（0.7，甜点区 0.65-0.85）。
+- FAQ：零结果先减 tag 再换源；个别缩略图加载失败多为上游瞬时限流重试即可；重启后生成器回默认源需重新切换；匹配推荐 matches=[] 是合法结果不是故障。
+
+## 生产校准：尾卡镜 / TTS 语速 / ComfyUI 超时（2026-11-17）
+
+无新增端点，存量接口扩展：
+
+| 方法 | 路径 | 变更 |
+|---|---|---|
+| PUT | /api/video/scripts/{id}/shots/{shotId} | body 增 endCard（布尔，批量 PUT 同贯穿）；true 时旁路生图 provider，由 EndCardImageRenderer 本地 FFmpeg 渲染纯色底+压字（generatorType=endcard） |
+| GET | /api/video/scripts/{id} | 镜头 Map 增 endCard/referenceAssetIds |
+
+配置：
+- video.endcard.font（默认 C:/Windows/Fonts/msyh.ttc，中文必须 fontfile 否则文字静默不渲染；Linux/Docker 换 Noto Sans CJK）/color（默认 black，lavfi color 表达式）。
+- video.tts.narration-voice（默认 zh-CN-YunyangNeural 纪录片男声，TTS_NARRATION_VOICE 覆盖）/narration-rate（+15%，实测 ~5.5 字/秒）/dialogue-rate（+0%，对白不比旁白快）。
+- video.comfyui.timeout-seconds 1800→2700（实测 8s 镜 193f ~25min、9s 镜 217f ~31min 顶旧红线）。
+
+FAQ：台词算术——镜头时长 ≥ 字数/字每秒 + 0.6s，改语速后重算全片；尾卡零 API 成本不占生成队列，适合关注/下集预告 CTA；排产建议短切 1.5-2.5s 为主力、workers=1。
+已修复（2026-11-18）：字幕时间轴偏移——合成时按 TTS 实测/真片段实测的有效时长累计重排字幕 cue（重排基准为名义声明时长，覆盖 TTS 抬升与真片段实测漂移两类场景）。
+
+已知限制（留后续切片）：booru preview 对不存在 postId 返 500（应 404）。
+
+## 钩子化脚本（2026-11-18）
+
+无新增端点；POST /api/video/scripts（及一切经 VideoScriptService 的生成路径）行为增强：
+
+- system prompt 增钩子叙事硬约束：首镜 3 秒内抛冲突/悬念（开场旁白 ≤15 字）；每 15-20 秒一个情绪转折；末镜留扣子接尾卡关注 CTA（有尾卡镜时放倒数第二镜）。
+- 生成后自动校验台词密度：逐镜时长 ≥ (旁白+对白字数)/5.5 + 0.6s；超密仅服务端 warn 日志，响应结构不变、不阻断保存；导出时 TTS 预探测抬升时长兜底，字幕按有效时长重排（见上节已修复项）。
+- 尾卡镜（endCard=true）本地压字不走 TTS，不参与密度校验。
+
+## 竖屏优先（2026-11-18）
+
+新增端点 PUT /api/video/scripts/{id}/aspect，请求体 {"aspectRatio": "9:16"}（白名单 16:9/9:16/1:1，null/空串清空回默认横屏，非法值 400）；响应 success/data=脚本详情（同 PUT /{id}/style idiom）。脚本详情（GET /api/video/scripts/{id} 等一切 scriptToMap 出口）新增 aspectRatio 字段，null 透出 "16:9"。
+
+存量端点行为增强（响应结构不变）：
+
+- 生图（单镜 POST /api/video/images/shot/{scriptId}/{shotId}、批量 SSE GET /api/video/images/script/{scriptId}/stream、抽卡 POST /api/video/candidates/generate）：脚本 aspectRatio=9:16 时尺寸自动切 720x1280（无视 image.generation.default-size），提示词注入 centered subject / vertical framing；多人镜（≥2 角色）强制单人特写替代原景别；尾卡本地渲染同尺寸。其余画幅行为不变。
+- 导出（POST /api/video/export/preview、/export/hd、/export/hd/async、平台导出）：请求未传 aspectRatio（null/空）时 fallback 脚本画幅；显式传值优先；双 null 保持存量 16:9。9:16 脚本 720p 默认出 720x1280，导出记录 aspectRatio/width/height 同步落库。

@@ -48,7 +48,7 @@ class CandidateGenerationServiceTest {
         candRepo = mock(ShotCandidateRepository.class);
         resolver = mock(ReferenceImageResolver.class);
         when(resolver.charactersForShot(any())).thenReturn(List.of());
-        when(resolver.resolve(any())).thenReturn(List.of());
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of());
         videoGenService = mock(VideoGenerationService.class);
         service = new CandidateGenerationService(factory, videoFactory, scriptRepo, shotRepo, userRepo,
                 candRepo, new ShotPromptAssembler(), resolver, quality, videoGenService, new LoraResolver(false));
@@ -81,7 +81,7 @@ class CandidateGenerationServiceTest {
     @Test
     void threeImageCandidatesBestScoreBecomesProvisionalMain() {
         when(gen.supportsReferences()).thenReturn(true);
-        when(resolver.resolve(any())).thenReturn(List.of("http://ref/1.png"));
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of("http://ref/1.png"));
         when(gen.generateWithReferences(anyString(), any(), anyInt(), anyInt(), anyList()))
                 .thenReturn(new GeneratedImage("u1", "f1", "wan27", 1280, 720),
                         new GeneratedImage("u2", "f2", "wan27", 1280, 720),
@@ -97,6 +97,7 @@ class CandidateGenerationServiceTest {
         List<ShotCandidate> cands = service.generateImageCandidates(7L, 3L);
 
         assertEquals(3, cands.size());
+        verify(resolver).resolveAll(any(), any());   // 抽卡侧接线锁定（与 ImageGenerationServiceCharacterRefsTest 对称）
         assertEquals("u2", shot.getImageUrl());
         assertEquals(9.0, shot.getQualityScore());
         assertEquals("READY", shot.getImageStatus());

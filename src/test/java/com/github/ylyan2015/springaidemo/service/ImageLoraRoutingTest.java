@@ -47,7 +47,7 @@ class ImageLoraRoutingTest {
         ImageQualityService quality = mock(ImageQualityService.class);
         when(quality.isEnabled()).thenReturn(false);
         resolver = mock(ReferenceImageResolver.class);
-        when(resolver.resolve(any())).thenReturn(List.of());
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of());
         service = new ImageGenerationService(factory, scriptRepo, shotRepo, userRepo,
                 new ObjectMapper(), quality, new ShotPromptAssembler(), resolver, new LoraResolver(false),
                 mock(com.github.ylyan2015.springaidemo.video.generator.EndCardImageRenderer.class));

@@ -67,6 +67,35 @@ class SubtitleServiceTest {
         assertEquals(8800, cues.get(1).startMs());
     }
 
+    @Test
+    void generateAssOnEffectiveDurationsShiftsLaterCues() {
+        // 声明 5/5/5，第 2 镜被旁白撑到 8s：转场起点 4.2s / 11.4s，后段字幕须整体后移
+        List<StoryShot> shots = List.of(shot("一", 5), shot("二", 5), shot("三", 5));
+        String declared = service.generateAss(shots, new SubtitleStyle(), "zh");
+        String effective = service.generateAss(shots, new SubtitleStyle(), "zh", List.of(5, 8, 5));
+
+        assertTrue(declared.contains("Dialogue: 0,0:00:08.80,0:00:13.40"));
+        assertTrue(effective.contains("Dialogue: 0,0:00:04.60,0:00:11.80"));
+        assertTrue(effective.contains("Dialogue: 0,0:00:11.80,0:00:16.40"));
+        verifyNoInteractions(modelService);
+    }
+
+    @Test
+    void generateAssFallsBackToDeclaredWhenSizeMismatch() {
+        List<StoryShot> shots = List.of(shot("一", 5), shot("二", 5));
+        assertEquals(service.generateAss(shots, new SubtitleStyle(), "zh"),
+                service.generateAss(shots, new SubtitleStyle(), "zh", List.of(5)));
+        assertEquals(service.generateAss(shots, new SubtitleStyle(), "zh"),
+                service.generateAss(shots, new SubtitleStyle(), "zh", null));
+    }
+
+    @Test
+    void generateAssOnEqualDurationsMatchesDeclaredTimeline() {
+        List<StoryShot> shots = List.of(shot("一", 5), shot("二", 5), shot("三", 5));
+        assertEquals(service.generateAss(shots, new SubtitleStyle(), "zh"),
+                service.generateAss(shots, new SubtitleStyle(), "zh", List.of(5, 5, 5)));
+    }
+
     // ==================== 多语言 ====================
 
     @Test

@@ -34,6 +34,11 @@ public class StoryScriptService {
 
     private static final Logger log = LoggerFactory.getLogger(StoryScriptService.class);
 
+    /** 素材清单三道 token 闸（spec §5.2）：条数 / tags 字数 / 行字数 */
+    private static final int CATALOG_ASSETS = 30;
+    private static final int CATALOG_TAGS = 40;
+    private static final int CATALOG_LINE = 60;
+
     private final StoryScriptRepository scriptRepository;
     private final StoryShotRepository shotRepository;
     private final UserRepository userRepository;
@@ -81,7 +86,8 @@ public class StoryScriptService {
         // 1. 调用 LLM 生成分镜脚本
         log.info("Generating storyboard for user {}: idea='{}', templateGuidance={}",
                 userId, idea, templateGuidance != null);
-        Storyboard storyboard = videoScriptService.generateScript(idea, templateGuidance);
+        String assetCatalog = buildAssetCatalog(userId);
+        Storyboard storyboard = videoScriptService.generateScript(idea, templateGuidance, assetCatalog);
 
         // 2. 转换为实体并保存
         StoryScript script = new StoryScript();
@@ -325,6 +331,20 @@ public class StoryScriptService {
         return scriptRepository.save(script);
     }
 
+    /**
+     * P0-3 竖屏优先：脚本级画幅更新（白名单 16:9/9:16/1:1，null/blank 清空回默认横屏，对齐 updateStyle idiom）
+     */
+    @Transactional
+    public StoryScript updateAspect(Long scriptId, String aspectRatio) {
+        String a = aspectRatio == null || aspectRatio.isBlank() ? null : aspectRatio.trim();
+        if (a != null && !List.of("16:9", "9:16", "1:1").contains(a)) {
+            throw new IllegalArgumentException("不支持的画幅: " + aspectRatio);
+        }
+        StoryScript script = getScript(scriptId);
+        script.setAspectRatio(a);
+        return scriptRepository.save(script);
+    }
+
     // ==================== 脚本更新 ====================
 
     /**
@@ -473,6 +493,28 @@ public class StoryScriptService {
             } else {
                 shot.setCharacterIds(null);
             }
+        }
+        if (updates.containsKey("referenceAssetIds")) {
+            // 素材库切片 S1：参考素材绑定三校验（归属+IMAGE+category∈{CHARACTER,SCENE}，INSERT 禁入生成链路）；
+            // 绑定/更换不失效旧图旧视频（参考图只影响下次生成，与 imageUrl 变更失效语义区分）；id 解析复用 parseCharacterIds
+            Object v = updates.get("referenceAssetIds");
+            List<String> raw = new ArrayList<>();
+            if (v instanceof List<?> list) {
+                list.forEach(x -> raw.add(String.valueOf(x)));
+            } else if (v instanceof String s && !s.isBlank()) {
+                raw.add(s);
+            }
+            Long uid = script.getUserId();   // getScript 已按当前用户归属查出 script，免重复查库（审查 Minor#3）
+            List<String> valid = parseCharacterIds(String.join(",", raw)).stream()
+                    .map(id -> mediaAssetRepository.findById(id).orElse(null))
+                    .filter(a -> a != null && uid.equals(a.getUserId()) && a.isReferenceAsset())
+                    .map(a -> String.valueOf(a.getId()))
+                    .distinct()
+                    .collect(Collectors.toList());
+            if (valid.size() < raw.size()) {
+                log.warn("参考素材绑定过滤：入参 {} 项，有效 {} 项（shot {}）", raw.size(), valid.size(), shotId);
+            }
+            shot.setReferenceAssetIds(valid.isEmpty() ? null : String.join(",", valid));
         }
         if (updates.containsKey("shotSize")) {
             shot.setShotSize(normalizeShotSize((String) updates.get("shotSize")));
@@ -647,6 +689,7 @@ public class StoryScriptService {
         map.put("style", script.getStyle());
         map.put("format", script.getFormat());
         map.put("continuityMode", script.getContinuityMode() != null ? script.getContinuityMode() : "NONE");
+        map.put("aspectRatio", script.getAspectRatio() != null ? script.getAspectRatio() : "16:9");
         map.put("characters", characterRepository.findByScriptIdOrderByIdAsc(script.getId()).stream()
                 .map(StoryCharacterService::characterToMap).collect(Collectors.toList()));
         map.put("createdAt", script.getCreatedAt());
@@ -685,6 +728,8 @@ public class StoryScriptService {
         map.put("imageStatus", shot.getImageStatus());
         map.put("qualityScore", shot.getQualityScore());
         map.put("characterIds", parseCharacterIds(shot.getCharacterIds()));
+        // 素材库切片 S2（读侧组装点，与 mapToStoryShot 写侧配对；Map 链路新增字段须枚举全部组装点）
+        map.put("referenceAssetIds", parseCharacterIds(shot.getReferenceAssetIds()));
         map.put("shotSize", shot.getShotSize() != null ? shot.getShotSize() : "MEDIUM");
         map.put("videoUrl", shot.getVideoUrl());
         map.put("videoFileId", shot.getVideoFileId());
@@ -794,6 +839,51 @@ public class StoryScriptService {
             case "CLOSE", "MEDIUM", "LONG" -> upper;
             default -> "MEDIUM";
         };
+    }
+
+    /**
+     * 素材清单注入（spec §5.2）：≤30 条（id 倒序≈createdAt 倒序）/tags 截 40/行≤60；空库/异常返 null 零注入
+     *
+     * <p>三道闸都是为了让「库很大」不变成「prompt 很贵」：一次生成只送 30 行、每行 ≤60 字、tags ≤40 字，
+     * 而 null（而非空串）是下游的判据——空串会让 prompt 里出现一个没有内容的「可用素材库」标题。
+     * 先筛后截：INSERT 类（含存量的 category=null）不占名额，否则用户的可用素材数会随上传记录的新旧波动。
+     */
+    private String buildAssetCatalog(Long userId) {
+        try {
+            List<MediaAsset> assets = mediaAssetRepository.findByUserIdOrderByIdDesc(userId).stream()
+                    .filter(MediaAsset::isReferenceAsset)
+                    .limit(CATALOG_ASSETS)
+                    .toList();
+            if (assets.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            for (MediaAsset a : assets) {
+                // 截断次序：先 tags（40），拼行后再按 60 砍整行。长名场景下行闸会再裁掉 tags 尾巴，
+                // 这是两闸叠加的确定结果（行宽是硬上限），不是丢数据（复审 round 2 项 10）
+                String line = ("CHARACTER".equals(a.effectiveCategory()) ? "[人物] " : "[场景] ")
+                        + oneLine(a.getName()) + "：" + truncate(oneLine(a.getTags()), CATALOG_TAGS);
+                sb.append(truncate(line, CATALOG_LINE)).append('\n');
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            // repo 为 null（存量测试构造）与查询异常同走降级：清单是可选增强，不得拖垮生成；栈要留（对齐 AssetMatchService 审查 M-5 口径）
+            log.warn("素材清单加载失败，降级无清单模式", e);
+            return null;
+        }
+    }
+
+    /** 清单单元格净化：名/tags 里的换行与控制符会伪造多一行（30 行上限按 lines().count() 算），折叠成单空格 */
+    private static String oneLine(String value) {
+        return value == null ? "" : value.replaceAll("[\\p{Cntrl}\\p{Zs}\\s]+", " ").trim();
+    }
+
+    /** 按 code point 边界截断：substring 按 UTF-16 code unit 下刀，落在代理对中间会把半个字符喂进 prompt */
+    private static String truncate(String value, int max) {
+        if (value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, Character.isLowSurrogate(value.charAt(max)) ? max - 1 : max);
     }
 
     /**

@@ -82,13 +82,14 @@ class ImageGenerationServiceCharacterRefsTest {
         c.setName("林晚");
         c.setFeatureTable("black hair");
         when(resolver.charactersForShot(any())).thenReturn(List.of(c));
-        when(resolver.resolve(any())).thenReturn(List.of("data:image/png;base64,AAAA"));
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of("data:image/png;base64,AAAA"));
         when(gen.supportsReferences()).thenReturn(true);
         when(gen.generateWithReferences(anyString(), any(), anyInt(), anyInt(), anyList()))
                 .thenReturn(new GeneratedImage("/images/x.png", "fx", "wan27", 64, 64));
 
         service.generateForShot(7L, 3L, null);
 
+        verify(resolver).resolveAll(any(), any());   // 接线锁定：S3 后生产走 resolveAll（stub 错方法即空转）
         verify(gen).generateWithReferences(contains("Character 林晚: black hair."), any(),
                 anyInt(), anyInt(), eq(List.of("data:image/png;base64,AAAA")));
     }
@@ -96,7 +97,7 @@ class ImageGenerationServiceCharacterRefsTest {
     @Test
     void legacyGeneratorUsesPlainGenerate() {
         when(resolver.charactersForShot(any())).thenReturn(List.of());
-        when(resolver.resolve(any())).thenReturn(List.of());
+        when(resolver.resolveAll(any(), any())).thenReturn(List.of());
         when(gen.supportsReferences()).thenReturn(false);
         when(gen.generate(anyString(), any(), anyInt(), anyInt()))
                 .thenReturn(new GeneratedImage("/images/x.png", "fx", "mock", 64, 64));

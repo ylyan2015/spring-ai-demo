@@ -96,10 +96,14 @@ public class ImageGeneratorConfig {
             @Value("${image.comfyui.workflow-canny:docs/comfyui/sd15_lora_canny.template.json}") String cannyPath,
             @Value("${server.port:8080}") int serverPort,
             @Value("${image.comfyui.timeout-seconds:120}") int timeoutSeconds,
-            @Value("${image.comfyui.poll-interval-ms:1000}") long pollIntervalMs) {
+            @Value("${image.comfyui.poll-interval-ms:1000}") long pollIntervalMs,
+            @Value("${image.comfyui.workflow-ipadapter:docs/comfyui/sd15_ipadapter.template.json}") String ipadapterPath,
+            @Value("${image.comfyui.workflow-ipadapter-lora:docs/comfyui/sd15_ipadapter_lora.template.json}") String ipadapterLoraPath,
+            @Value("${image.comfyui.ipadapter-weight:0.7}") double ipWeight) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
                 .proxy(HttpClient.Builder.NO_PROXY).build();
         return new ComfyUiImageGenerator(storageService, new ObjectMapper(), http, baseUrl,
-                plainPath, loraPath, cannyPath, serverPort, timeoutSeconds, pollIntervalMs);
+                plainPath, loraPath, cannyPath, serverPort, timeoutSeconds, pollIntervalMs,
+                ipadapterPath, ipadapterLoraPath, ipWeight);
     }
 }

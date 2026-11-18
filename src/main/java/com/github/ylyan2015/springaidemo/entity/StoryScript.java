@@ -49,6 +49,10 @@ public class StoryScript {
     @Column(name = "format", length = 20)
     private String format;
 
+    /** P0-3 竖屏优先：脚本级画幅 16:9/9:16/1:1，null=默认横屏（生图尺寸/竖构图词/导出 fallback 共用） */
+    @Column(name = "aspect_ratio", length = 10)
+    private String aspectRatio;
+
     /** 创建时间 */
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -92,6 +96,8 @@ public class StoryScript {
     public void setContinuityMode(String continuityMode) { this.continuityMode = continuityMode; }
     public String getFormat() { return format; }
     public void setFormat(String format) { this.format = format; }
+    public String getAspectRatio() { return aspectRatio; }
+    public void setAspectRatio(String aspectRatio) { this.aspectRatio = aspectRatio; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -60,6 +60,17 @@ public interface ImageGenerator {
     }
 
     /**
+     * 素材库切片 S3：LoRA + 参考图组合模式。
+     * 默认降级 generateWithReferences（uploadFinal 同款 default idiom）→ 其余 generator 零改动。
+     */
+    default GeneratedImage generateWithLoraAndReferences(String prompt, String negativePrompt,
+                                                         int width, int height, String loraName,
+                                                         String controlNetRefUrl,
+                                                         java.util.List<String> referenceImageUrls) {
+        return generateWithReferences(prompt, negativePrompt, width, height, referenceImageUrls);
+    }
+
+    /**
      * 生成器类型标识（如 dashscope / local）
      */
     String getType();

@@ -1309,7 +1309,7 @@ P0 短视频平台适配（抖音/快手/视频号竖屏信息流），存量横
 
 分镜脚本首轮生成后，默认经过 2 轮「四人评审团（导演/编剧/画师/乐师单 prompt 串联质疑，不改写）→ 原硬约束下重修」，迭代提升钩子、台词密度、imagePrompt 与声画匹配质量。
 - 配置 `video.script.refine-rounds`（默认 2，0=关闭）；每轮 +2 次 LLM 调用，总耗时与 token 约为直出 3-5 倍。
-- 脚本生成专用模型 `video.script.model`（默认 `deepseek-v4-pro`，仅 deepseek profile 生效；空=跟随全局 chat 模型，省钱可换 deepseek-flash；V4 系思考模式默认开启无需额外参数），单调用读超时 `video.script.read-timeout-seconds` 默认 300s。
+- 脚本生成专用模型 `video.script.model`（默认 `deepseek-flash` 控成本——2026-11-18 成本拍板，v4-pro 约 ×3-5 元；质量优先可设环境变量 `VIDEO_SCRIPT_MODEL=deepseek-v4-pro` 升档；仅 deepseek profile 生效，空=跟随全局 chat 模型；V4 系思考模式默认开启无需额外参数），单调用读超时 `video.script.read-timeout-seconds` 默认 300s。
 - 优雅降级：评审/重修任一调用失败或产物不可解析 → 保留当前最优稿返回，精修绝不拖垮生成。
 - 前端长等待接线（2026-11-18 补）：工作台脚本生成（含模板应用）走 postLong + AbortController，预算由 `video.script.client-timeout-ms`（默认 900s）服务端注入页面；超时提示「服务端仍在精修，稍后刷新列表」而非误报失败；e2e 驱动改 node:http 解除内置 fetch 300s 限制（实测客户端全程等住 580s 响应不断连）；异步化列入后续切片。
-- 测试：VideoScriptServiceRefineTest / ModelServiceScriptClientTest（11 用例，7 处变异均独红复证）+ VideoStudioPageRenderTest 长等待接线断言；全量门禁 620 绿。
+- 测试：VideoScriptServiceRefineTest / ModelServiceScriptClientTest（11 用例，7 处变异均独红复证）+ VideoStudioPageRenderTest 长等待接线断言 + VideoScriptDefaultsTest 配置默认值钉住；全量门禁 621 绿。

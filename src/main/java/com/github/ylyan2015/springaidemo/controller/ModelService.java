@@ -168,8 +168,8 @@ public class ModelService {
 
     /**
      * 脚本生成专用模型覆盖（video.script.model）：仅 deepseek profile 生效；空/离线返 null 回落当前模型。
-     * 精修循环使脚本链路 LLM 调用 ×5，旗舰模型（deepseek-v4-pro，思考模式默认开启）单独钉在生成步骤，
-     * 普通对话不受牵连；包私有 seam 供单测直接验证判定矩阵。
+     * 默认 deepseek-flash（成本拍板 2026-11-18：v4-pro 约 ×3-5 元）；质量优先时可用环境变量升档 v4-pro；
+     * 思考模式 V4 系默认开启；包私有 seam 供单测直接验证判定矩阵。
      */
     String resolveScriptModel() {
         if (!"deepseek".equals(getCurrentModel())) {

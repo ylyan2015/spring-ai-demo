@@ -1718,6 +1718,6 @@ Behavior enhancements on existing endpoints (response shapes unchanged):
 ### Script Self-Refinement (2026-11-18)
 
 - POST /api/video/scripts/generate: the first draft goes through 2 rounds of "critic panel (director/screenwriter/artist/musician) critique -> rewrite under original hard constraints" before persisting; set `video.script.refine-rounds=0` to disable.
-- Script-step model comes from `video.script.model` (default deepseek-v4-pro, thinking mode on by default; deepseek profile only); per-call read timeout 300s.
+- Script-step model comes from `video.script.model` (default deepseek-flash for cost; set VIDEO_SCRIPT_MODEL=deepseek-v4-pro to upgrade for quality; thinking mode on by default; deepseek profile only); per-call read timeout 300s.
 - Measured 9.7-13 min with 2 refine rounds; the studio page now uses postLong (AbortController, budget from `video.script.client-timeout-ms` default 900000ms injected as data-gen-timeout-ms), so clients no longer disconnect early; on timeout it prompts to refresh the script list instead of reporting failure; the e2e driver uses node:http to bypass the fetch 300s cap (verified: full 580s response received). Async endpoint deferred to a later slice.
 - Degradation: any critique/rewrite failure or unparseable output keeps the current best draft without surfacing an error.

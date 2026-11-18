@@ -1,4 +1,4 @@
-// 生成-评价-精修真实链路验证：注册登录 → 一次脚本生成（5 次 DeepSeek v4-pro 调用）
+// 生成-评价-精修真实链路验证：注册登录 → 一次脚本生成（5 次调用，模型见 video.script.model，默认 flash）
 // 用法：node tools/e2e-script-refine.js [baseUrl]；前置：应用已带 DEEPSEEK_API_KEY 与
 //       --logging.level.com.github.ylyan2015.springaidemo.video.VideoScriptService=DEBUG 启动
 const crypto = require('crypto');
@@ -58,7 +58,7 @@ function rsaEncrypt(publicKeyBase64, plain) {
     }
     console.log('PASS | register, cookie acquired');
 
-    console.log('INFO | generate start (5 次 v4-pro 思考调用，预计 5-15 分钟)…');
+    console.log('INFO | generate start (5 次思考调用，模型见 video.script.model，预计 5-15 分钟)…');
     const t0 = Date.now();
     const gen = await req('POST', '/api/video/scripts/generate', {
         idea: '外卖骑手在暴雨夜送到一位独居老人的最后一单，发现老人是他多年前走失的祖母'

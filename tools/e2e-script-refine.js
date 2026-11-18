@@ -2,21 +2,38 @@
 // 用法：node tools/e2e-script-refine.js [baseUrl]；前置：应用已带 DEEPSEEK_API_KEY 与
 //       --logging.level.com.github.ylyan2015.springaidemo.video.VideoScriptService=DEBUG 启动
 const crypto = require('crypto');
+// 客户端不得先于服务端断连：node 内置 fetch（undici）默认 300s headersTimeout 会提前掉线，
+// 而 2 轮精修实测 ≈13 分钟；改用 node:http（客户端 headersTimeout 默认 0=不限）零依赖解决。
+// 与前端 video-studio.html postLong 的 900s 预算同源契约；E2E_WAIT_MS 可调 socket 空闲上限，默认 20 分钟。
+const http = require('http');
 const BASE = process.argv[2] || 'http://localhost:8080';
+const WAIT_MS = parseInt(process.env.E2E_WAIT_MS || '1200000', 10);
 let cookie = '';
 
-async function req(method, path, body) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (cookie) headers['Cookie'] = cookie;
-    const resp = await fetch(BASE + path, {
-        method, headers, body: body ? JSON.stringify(body) : undefined, redirect: 'manual'
+function req(method, path, body) {
+    return new Promise((resolve, reject) => {
+        const u = new URL(BASE + path);
+        const payload = body ? JSON.stringify(body) : null;
+        const headers = { 'Content-Type': 'application/json' };
+        if (payload) headers['Content-Length'] = Buffer.byteLength(payload);
+        if (cookie) headers['Cookie'] = cookie;
+        const rq = http.request(u, { method, headers, timeout: WAIT_MS }, (resp) => {
+            const sc = resp.headers['set-cookie'];
+            if (sc) cookie = sc[0].split(';')[0];
+            let text = '';
+            resp.setEncoding('utf8');
+            resp.on('data', (c) => text += c);
+            resp.on('end', () => {
+                let json = null;
+                try { json = JSON.parse(text); } catch (e) { /* non-JSON */ }
+                resolve({ status: resp.statusCode, json, text });
+            });
+        });
+        rq.on('timeout', () => { rq.destroy(new Error('socket idle timeout ' + WAIT_MS + 'ms')); });
+        rq.on('error', reject);
+        if (payload) rq.write(payload);
+        rq.end();
     });
-    const setCookie = resp.headers.get('set-cookie');
-    if (setCookie) cookie = setCookie.split(';')[0];
-    const text = await resp.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch (e) { /* non-JSON */ }
-    return { status: resp.status, json, text };
 }
 
 function rsaEncrypt(publicKeyBase64, plain) {

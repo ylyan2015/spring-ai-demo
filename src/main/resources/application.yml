@@ -150,6 +150,7 @@ video:
     refine-rounds: 2                 # 精修轮数（0=关闭；每轮 +2 次 LLM 调用，总耗时与 token 约为直出 3-5 倍）
     model: ${VIDEO_SCRIPT_MODEL:deepseek-v4-pro}   # 脚本生成专用模型（仅 deepseek profile 生效；空=跟随全局 chat 模型；省钱可换 deepseek-flash）
     read-timeout-seconds: 300        # 思考模式（v4 系默认开启）单次调用读超时；长 JSON 输出 120s 会顶红线
+    client-timeout-ms: 900000        # 前端工作台等待预算（video-studio.html postLong AbortController）；需覆盖 2 轮精修实测 ≈13 分钟
   # Phase 4 切片 2：图生视频生成源 none（默认，静图运镜回退）/ dashscope-wan；kling/seedance 预留未实现
   generator: ${VIDEO_GENERATOR:none}
   workers: 2                          # i2v 并行工作线程数（云端限流+成本控）；comfyui 本地路线建议 1（单卡无并行收益；workers=2 第二单队列等待 +≈226s/49f）

@@ -128,7 +128,7 @@
         .toast.success { border-color: #2ecc71; }
     </style>
 </head>
-<body>
+<body th:attr="data-gen-timeout-ms=${scriptGenTimeoutMs}">
     <div class="header">
         <h1>AI 短视频工作室</h1>
         <p>创意想法 → 分镜脚本 → 提示词优化 → 批量生成画面（SSE 实时进度） → 快速预览 / BGM 配乐 / 多比例高清导出</p>
@@ -283,6 +283,21 @@ async function api(url, options) {
 
 function post(url, body) {
     return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+}
+// 脚本生成长等待：预算由服务端注入 data-gen-timeout-ms（video.script.client-timeout-ms，含 2 轮自我精修实测 ≈13 分钟）。
+// 超时 abort ≠ 服务端失败：精修仍会继续完成并落库，提示用户刷新脚本列表确认。
+async function postLong(url, body) {
+    const ms = parseInt(document.body.getAttribute('data-gen-timeout-ms') || '900000', 10);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+        return await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}), signal: ctrl.signal });
+    } catch (e) {
+        return { success: false, message: '等待超时（' + Math.round(ms / 1000) + ' 秒），服务端精修仍在继续，请稍后刷新脚本列表查看' };
+    } finally {
+        clearTimeout(timer);
+    }
 }
 function put(url, body) {
     return api(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
@@ -449,11 +464,11 @@ async function generateScript() {
     if (!idea) { toast('请输入创意想法', 'error'); return; }
     const btn = document.getElementById('generateBtn');
     btn.disabled = true; btn.textContent = '生成中...';
-    showProgress('正在生成分镜脚本，请稍候（约 15-30 秒）...', true);
-    // 模块 H：选中模板时走模板应用接口（风格引导注入 System Prompt）
+    showProgress('正在生成分镜脚本（含自我精修 2 轮，实测约 13 分钟，请保持页面打开）...', true);
+    // 模块 H：选中模板时走模板应用接口（风格引导注入 System Prompt）；两路由共用 postLong 长等待预算
     const data = currentTemplateId
-        ? await post('/api/video/templates/' + currentTemplateId + '/apply', { idea })
-        : await post('/api/video/scripts/generate', { idea });
+        ? await postLong('/api/video/templates/' + currentTemplateId + '/apply', { idea })
+        : await postLong('/api/video/scripts/generate', { idea });
     btn.disabled = false; btn.textContent = '生成分镜脚本';
     hideProgress();
     if (!data.success) { toast(data.message || '生成失败', 'error'); return; }

@@ -1135,8 +1135,8 @@ P0 short-video platform adaptation (Douyin / Kuaishou / WeChat Channels vertical
 ### Script Self-Refinement: Generate-Evaluate-Generate (2026-11-18)
 
 After the first-draft storyboard, two rounds of "four-expert critic panel (director / screenwriter / artist / musician chained in one prompt, question-only) -> rewrite under the original hard constraints" iteratively improve hooks, dialogue density, imagePrompt quality and audio-visual timing.
-- Config `video.script.refine-rounds` (default 2, 0 = off); each round adds 2 LLM calls, total latency and tokens roughly 3-5x of direct output.
+- Config `video.script.refine-rounds` (default 2, 0 = off); each round adds 2 LLM calls, total latency and tokens roughly 3-5x of direct output. Frontend wait budget: `video.script.client-timeout-ms` (default 900000ms).
 - Dedicated script model `video.script.model` (default `deepseek-v4-pro`, deepseek profile only; blank = follow global chat model, deepseek-flash saves cost; thinking mode is on by default on the V4 line), per-call read timeout `video.script.read-timeout-seconds` defaults to 300s.
 - Graceful degradation: any critique/rewrite call failure or unparseable output keeps the current best draft; refinement never breaks generation.
-- Field note: 2 refine rounds measured ~13 min end to end; many HTTP clients time out at 300s idle (server still completes and persists). Use longer client timeouts; async endpoint may follow.
-- Tests: VideoScriptServiceRefineTest / ModelServiceScriptClientTest (11 cases, 7 mutations each independently red-verified); full gate 619 green.
+- Field note & wiring fix (2026-11-18): the studio page now calls script generation (and template apply) through postLong with an AbortController, budget injected server-side from `video.script.client-timeout-ms` (default 900s); on timeout it prompts "server still refining, refresh the list later" instead of a false failure. The e2e driver switched to node:http to lift the built-in fetch 300s cap (verified: client held a 580s response with no early disconnect). Async endpoint may follow in a later slice.
+- Tests: VideoScriptServiceRefineTest / ModelServiceScriptClientTest (11 cases, 7 mutations each independently red-verified) + VideoStudioPageRenderTest long-wait wiring assertions; full gate 620 green.

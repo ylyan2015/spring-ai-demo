@@ -58,4 +58,27 @@ class VideoStudioPageRenderTest {
         mockMvc.perform(get("/video-studio"))
                 .andExpect(status().is3xxRedirection());
     }
+
+    /**
+     * 脚本自我精修（2 轮实测 ≈13 分钟）前端长等待接线：服务端注入可配置预算（默认 900s）
+     * + 页面 AbortController 包裹的 postLong。历史隐患：客户端先断连而服务端照常落库，
+     * 用户误判生成失败——三锚点缺一即接线断裂。
+     */
+    @Test
+    void scriptGenerateLongWaitWiringRendered() throws Exception {
+        SecurityContext ctx = SecurityContextHolder.createEmptyContext();
+        ctx.setAuthentication(new UsernamePasswordAuthenticationToken("page-tester", null, null));
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("SPRING_SECURITY_CONTEXT", ctx);
+
+        mockMvc.perform(get("/video-studio").session(session))
+                .andExpect(status().isOk())
+                // 预算由 controller 注入（非硬编码），默认 900000ms 覆盖 13 分钟全链路+余量
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("data-gen-timeout-ms=\"900000\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("function postLong")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("AbortController")))
+                // 两条生成路由（自由创作/模板应用）都得切长等待，漏一条则模板模式照旧先断
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("await postLong('/api/video/scripts/generate'")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("await postLong('/api/video/templates/'")));
+    }
 }

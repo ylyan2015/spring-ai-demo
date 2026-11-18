@@ -1755,5 +1755,5 @@ FAQ：台词算术——镜头时长 ≥ 字数/字每秒 + 0.6s，改语速后�
 
 - POST /api/video/scripts/generate：首轮稿默认经 2 轮「四人评审团（导演/编剧/画师/乐师）质疑 → 原硬约束重修」后落库；`video.script.refine-rounds=0` 关闭。
 - 脚本步骤模型由 `video.script.model` 指定（默认 deepseek-v4-pro，思考模式默认开启；仅 deepseek profile 生效），单调用读超时 300s。
-- 实测 2 轮精修全程 ≈13 分钟；HTTP 客户端 300s 空闲超时会先断连但服务端照常完成落库（断连 ≠ 生成失败）。
+- 实测 2 轮精修全程 ≈9.7-13 分钟；前端工作台已接 postLong（AbortController，预算 `video.script.client-timeout-ms` 默认 900s 由页面 data-gen-timeout-ms 注入），客户端不再先断连；超时不报失败而提示刷新列表；e2e 驱动用 node:http 解除 fetch 300s 限制（实测 580s 完整响应）。异步化列入后续切片。
 - 降级：评审/重修任一失败或产物不可解析 → 保留当前最优稿，接口不报错。

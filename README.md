@@ -1311,5 +1311,5 @@ P0 短视频平台适配（抖音/快手/视频号竖屏信息流），存量横
 - 配置 `video.script.refine-rounds`（默认 2，0=关闭）；每轮 +2 次 LLM 调用，总耗时与 token 约为直出 3-5 倍。
 - 脚本生成专用模型 `video.script.model`（默认 `deepseek-v4-pro`，仅 deepseek profile 生效；空=跟随全局 chat 模型，省钱可换 deepseek-flash；V4 系思考模式默认开启无需额外参数），单调用读超时 `video.script.read-timeout-seconds` 默认 300s。
 - 优雅降级：评审/重修任一调用失败或产物不可解析 → 保留当前最优稿返回，精修绝不拖垮生成。
-- 实测提醒：2 轮精修全程 ≈13 分钟，多数 HTTP 客户端默认 300s 空闲超时会先断连（服务端照常完成落库）；前端等待需更长超时，后续可评估异步化。
-- 测试：VideoScriptServiceRefineTest / ModelServiceScriptClientTest（11 用例，7 处变异均独红复证）；全量门禁 619 绿。
+- 前端长等待接线（2026-11-18 补）：工作台脚本生成（含模板应用）走 postLong + AbortController，预算由 `video.script.client-timeout-ms`（默认 900s）服务端注入页面；超时提示「服务端仍在精修，稍后刷新列表」而非误报失败；e2e 驱动改 node:http 解除内置 fetch 300s 限制（实测客户端全程等住 580s 响应不断连）；异步化列入后续切片。
+- 测试：VideoScriptServiceRefineTest / ModelServiceScriptClientTest（11 用例，7 处变异均独红复证）+ VideoStudioPageRenderTest 长等待接线断言；全量门禁 620 绿。

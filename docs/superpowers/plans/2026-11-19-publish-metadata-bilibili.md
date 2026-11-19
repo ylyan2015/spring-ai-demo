@@ -280,13 +280,21 @@ JPA `ddl-auto: update`（无迁移脚本，新表由 Hibernate 建）/ JUnit 5 +
   `modelService.getChatClient().prompt().user(...).call().content()`（现有 idiom，见 `AssetMatchService`）
 - Produces: `List<String> generateTitles(Long scriptId, String platform)` → 最多 3 条、每条 ≤80 字符；
   `String generateHook(Long scriptId, String platform)` → 简介首 2 行；LLM 异常/超限返回
-  `titlesFromTemplate()`（`collection + 期数 + theme 首句` 截断）并 `log.warn`
+  `titlesFromTemplate()` 并 `log.warn`
+  > **执行期修正（T5）**：原文写的是「`collection + 期数 + theme` 首句」，但 `StoryScript` 既没有
+  > `collection` 也没有期数字段（`collection` 只在 `PublishMeta` 且为用户手填），凭空拼个期数编号
+  > 正是本功能要防的行为。兜底标题定为现有 `script.title`（按码点截断），钩子兜底为 `theme` 首句。
 
-**护栏（三条都要有测试）**
+**护栏（四条都要有测试）**
 1. 字数：>80 直接丢弃，不截断（截断会造出半句话）
 2. 禁用词表：`画质|音质|测试|求支持|第一次投稿|必看|震惊`命中即丢
-3. **数字集合校验**：候选里出现的每个数字串必须 ∈ 事实集（`idea` + 台账抽出的数字集合）；
-   不满足即丢——这是防「LLM 把 1400 万写成 1400 亿」的唯一硬手段
+3. **数字量级校验**：先把候选与事实文本都做空白归一，再把「数字 + 紧跟的量级单位（万亿千百%％）」
+   作为整体比对，事实集里没有的量级组合即丢——这是防「LLM 把 1400 万写成 1400 亿」的唯一硬手段
+   > **执行期修正（T5）**：本节原写的是「每个数字串必须 ∈ 事实集」，那个口径拦不住单位劫持——
+   > 「1400 亿」里的 1400 本身在集内，照样放行，而本节声称要防的恰恰是这个形态。
+   > 现已改为「数字 + 单位整体比对 + 空白归一」，`magnitudeUnitSwapIsDropped` 守住这条。
+4. **集数编号豁免**：「钱坑漫评01：」「第 3 期」是连载序号不是对外声明，否则用户的连载标题会次次被误杀；
+   豁免只认两种封闭形态（数字紧跟冒号 / 第 N 期集季），其余一律 fail-closed
 
 - [ ] **Step 1: 写失败测试**（mock ChatClient 返回受控文本）
 
@@ -417,3 +425,16 @@ JPA `ddl-auto: update`（无迁移脚本，新表由 Hibernate 建）/ JUnit 5 +
 
 Task 1 → 2 → 3 可并行（互不依赖）；4 依赖 1+2+3；5 依赖 4；6 依赖 2+4+5；7 依赖 6；8 依赖 2+4+6；9 收尾。
 预估：1–4 是纯函数与实体（半天），5 需调 prompt 与护栏（半天），6–7（1 天），8（半天），9（半天）。
+
+## 执行记录（逐 Task 回填变异复证结果）
+
+| Task | 交付 | commit | 变异复证（改坏什么 → 哪条用例独红） |
+|---|---|---|---|
+| 1 | `PublishSpec` | 5f0d92f | 去重失效→杀 2；`descLimit` 忽略分区→杀 1；`titleMax` 改 81→杀 2 |
+| 2 | 实体/仓储/校验服务 | 8057332 | 去归属校验→杀 1；`violations && false`→杀 2；**去掉「未传键保留原值」→存活**，补 `partialUpdateValidatesMergedViewNotOnlySubmittedKeys` 后才杀 |
+| 3 | `shotStarts` 单一真源 | ccb7a8f | 退回名义轴→杀 4；`%.2f`→`%.0f`→杀 3 |
+| 4 | `PublishMetaDeriver` | ea3bd11 | 出处不去重→杀 1（需先把桩改成两镜共用同一出处）；静默退回名义轴→杀 1（需先把压缩轴桩改成 4.50 这种名义轴算不出的值）；删【素材出处】节→杀 1；去数字门槛→杀 1；`tagMax-1`→`tagMax`→杀 1（需先把候选量灌到 14 个） |
+| 5 | `PublishMetaLlmService` | 75f612e | 关数字护栏→杀 3；关禁用词→杀 1；超限改截断→杀 1；**去掉空白归一→杀 1**（证明加强口径承重，原计划写法确为后门）；去集数豁免→杀 1；去模板兜底→杀 4；不剥序号引号→杀 1 |
+
+执行方式注记：本环境无通用实现型 subagent，逐 Task 采用 inline TDD（红→绿→变异复证→提交），
+分支整体评审留给最后一次 `CodeReview`。

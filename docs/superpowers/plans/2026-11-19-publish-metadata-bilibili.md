@@ -435,6 +435,29 @@ Task 1 → 2 → 3 可并行（互不依赖）；4 依赖 1+2+3；5 依赖 4；6
 | 3 | `shotStarts` 单一真源 | ccb7a8f | 退回名义轴→杀 4；`%.2f`→`%.0f`→杀 3 |
 | 4 | `PublishMetaDeriver` | ea3bd11 | 出处不去重→杀 1（需先把桩改成两镜共用同一出处）；静默退回名义轴→杀 1（需先把压缩轴桩改成 4.50 这种名义轴算不出的值）；删【素材出处】节→杀 1；去数字门槛→杀 1；`tagMax-1`→`tagMax`→杀 1（需先把候选量灌到 14 个） |
 | 5 | `PublishMetaLlmService` | 75f612e | 关数字护栏→杀 3；关禁用词→杀 1；超限改截断→杀 1；**去掉空白归一→杀 1**（证明加强口径承重，原计划写法确为后门）；去集数豁免→杀 1；去模板兜底→杀 4；不剥序号引号→杀 1 |
+| 6 | `PublishMetaController` 4 端点 | 6ffcfa5 | llm 开关写反→杀 2；500 分流吞成 400→杀 1；violations 不附→杀 1；`/meta` 忽略已存值→杀 1；`/meta` 回退时烧模型→杀 1。全量 700 绿 |
+| 7 | 发布面板 + `tools/e2e-publish-meta.js` | eb1a9e8 | 面板限额改硬编码→杀结构断言；`importCommentary` 不接 `idea`→杀 1。**浏览器实跑抓到真 bug**：`markPublishViolations` 用 `Object.keys(fields)` 把 map key 当元素 id → `$('title')` null → 保存链路抛异常（改 `Object.values`，e2e 补断言）。计划原文「重复标签应 400」断言写反了两级语义→改判为提示级（见 Ruling T7）。全量 702 绿 |
+| 8 | 导出联动发布包 + ZIP 附包 | 2f8f2a8 | M1「只补空」改全覆盖→**先存活**（`manualTitleSurvivesRegeneration` 把 `upsertGenerated` 整个 mock 掉了，该规则零判据）→在 `PublishMetaServiceTest` 补 3 条真判据后杀；M2 附属失败上抛→杀 1；M3 去 ZIP 兜底→杀 1；M4 预览也写包→杀 1；M5 去 manifest 发布列→杀 1；M6 去占比口径标注→杀 1；M7 吐掉免登录 userId 入口→杀 1。全量 719 绿 |
+| 9 | #738 端到端核验 + 文档回填 | c1f1485（缺陷修复）+ 本提交（文档） | 实跑链：`draft?llm=false` → `PUT` 人工稿 §1-§3 → `POST /export/hd/async`（导出记录 647）→ 发布包落盘 `uploads/final/…-发布包.txt` → `batch-download` ZIP 含 `01_720p_16x9_647_发布包.txt` + manifest 四列 → 人工标题与 `source=MANUAL` 未被刷。逐节 diff 结论写进 `docs/story/FX/发布元数据-久留美.md` §9。**端到端真实请求撞出一个存量缺陷**：`POST /export/batch-download` 因签名写成 `ResponseEntity<?>`（泛型被擦除，`StreamingResponseBodyReturnValueHandler` 不认领返回值）分发阶段 500——该端点自 2026-11-14 写下起从未跑通，service 层单测直接调 `writeBatchZip` 看不见这一层；已修并钉住（`VideoExportBatchZipControllerTest` 4 例，红→绿已复证）。全量 723 绿 |
+
+执行期撞到的两个行为（不当 bug 修，写进文档）：
+
+1. **时间轴会分两次变样**。#738 的存量导出记录（id=615）在本能力之前生成，`shot_starts_csv` 为空 → 首次 draft 走名义轴且 `approxTimestamps=true`；在新代码下重导一次（id=647）后拿到真实压缩轴、不再标近似。要时间戳直接可贴必须重导。
+2. **护栏只保证「不编数字」，不保证「数字仍是真的」**。台账里的企划值「总时长 95-115 秒 / 14-16 个镜头」与成片 84.2s / 17 镜不符，原文照抄反而把过时数字送到观众眼前——发布包尾注固定写了人工核对这句话，【本片事实】节仍需人过一遍。
+
+Step 1 要求的「机器缺什么」逐节 diff 表在人工稿同目录文件 `docs/story/FX/发布元数据-久留美.md` §9；
+该目录走 `.git/info/exclude` 本地不入库，所以结论的仓库内版本压缩成下面五条：
+
+- **已对齐**：分区（动漫杂谈 tid=253，与人工结论一致）、创作声明、五节结构与顺序、【素材出处】不漏标。
+- **标题**：机器只会照抄脚本原标题，拼不出「钱坑漫评01：…」这类系列前缀（`StoryScript` 无合集/期数字段，也不编）；`llm=true` 才出 3 条候选。
+- **标签**：只有 4 个且含三个角色英文名（`Kurumi`/`Mochiko`/`Author`，对中文检索无用）；人工 9 个分五层。题材/形式/差异词是人的判断，本期刻意不内置词表。
+- **事实节粒度**：机器把台账里的企划参数也照抄（条目数 12 vs 人工 7），并带出 Markdown 双前缀 `· - 原作：` 与换行截断。
+- **不产的**：时间戳是逐镜旁白首句截断（不是人挑的章节标题）、置顶评论与合集留空、封面只下发规范不下建议。
+
+判定：当前能力适合当「初稿 + 防漏清单」，不适合当终稿——与本计划开头的定位一致。
 
 执行方式注记：本环境无通用实现型 subagent，逐 Task 采用 inline TDD（红→绿→变异复证→提交），
 分支整体评审留给最后一次 `CodeReview`。
+
+台账（含逐条 Ruling）：`.superpowers/sdd/2026-11-19-publish-metadata-bilibili/progress.md`；
+#738 实跑证据：同目录下 `draft-738.json` / `pack-738.txt` / `manifest-738.txt` / `export-738.json`。

@@ -1721,3 +1721,48 @@ Behavior enhancements on existing endpoints (response shapes unchanged):
 - Script-step model comes from `video.script.model` (default deepseek-flash for cost; set VIDEO_SCRIPT_MODEL=deepseek-v4-pro to upgrade for quality; thinking mode on by default; deepseek profile only); per-call read timeout 300s.
 - Measured 9.7-13 min with 2 refine rounds; the studio page now uses postLong (AbortController, budget from `video.script.client-timeout-ms` default 900000ms injected as data-gen-timeout-ms), so clients no longer disconnect early; on timeout it prompts to refresh the script list instead of reporting failure; the e2e driver uses node:http to bypass the fetch 300s cap (verified: full 580s response received). Async endpoint deferred to a later slice.
 - Degradation: any critique/rewrite failure or unparseable output keeps the current best draft without surfacing an error.
+
+## Bilibili Publish Metadata (2026-11-19)
+
+Plan: `docs/superpowers/plans/2026-11-19-publish-metadata-bilibili.md`; live before/after on a real script: `docs/story/FX/发布元数据-久留美.md` §9 (`docs/story/` is listed in `.git/info/exclude`, so it is not in a fresh clone — the repository-side summary lives in the "执行记录" table at the end of the plan, Task 9 row).
+The fields you paste one by one into the upload page (title / category / tags / description / creation declaration / collection / pinned comment / timestamps) are stored in `publish_meta`; whatever can be derived is derived deterministically from the script ledger, and a plain-text publish pack is written after export. **No Bilibili open-platform API integration** (this round is Bilibili only, manual paste).
+
+Four new endpoints (all under `/api/video/publish`; same project idiom — SecurityConfig permits `/api/video/**`, login and script ownership are enforced in the service layer via `getCurrentUserId()` + `findByIdAndUserId`, no `@PreAuthorize`):
+
+```bash
+# 1) Platform spec (single source for the frontend counters / category dropdown / declaration options / banned words)
+curl -b $c "http://localhost:8080/api/video/publish/spec?platform=BILIBILI"
+# data: titleMax=80 tagMax=10 descMax=2000
+#       categories=[{name:动漫杂谈,tid:253,descMax:2000},{name:影视杂谈,tid:182,descMax:2000}]
+#       declarationOptions=["含AI生成内容"] coverNote bannedWords[] tidHint (the ?tid= grey-release workaround)
+
+# 2) Derived draft (llm=false means zero model calls, safe to refresh repeatedly)
+curl -b $c "http://localhost:8080/api/video/publish/738/draft?platform=BILIBILI&llm=false"
+# data: title/description/tags/categoryName/categoryTid/declaration/facts[]/sources[]/timestamps[]
+#       approxTimestamps/insertRatioPercent/insertRatioBasis/descriptionLength/titleCandidates[]/hook
+# With llm=true one extra call produces title candidates (<=3) and a hook (<=2 lines); any failure degrades to template fallback without erroring
+
+# 3) Manual save (partial update: send only changed fields, unsent keys keep their stored values)
+curl -b $c -X PUT "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"...","tags":["FX战士久留美","动漫杂谈"],"categoryTid":253,"pinnedComment":"..."}'
+
+# 4) Read (saved -> fallbackToDraft=false; never saved -> deterministic draft with fallbackToDraft=true, never burns the model)
+curl -b $c "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI"
+```
+
+Contract highlights:
+- **Status routing** (decided in this controller; the project has no global advice): `PublishRejectException` (extends `IllegalArgumentException`, carries violations) -> 400 with the original message plus `violations:[{field,code,message}]` so the panel can red-frame the exact input; any other `RuntimeException` -> 500 with the fixed message "发布元数据操作失败，请查看服务端日志" (raw details contain table/column names and stay in the log).
+- **Two severity levels of violation codes** (once asserted backwards in the plan; the e2e caught it): hard rejects `TITLE_TOO_LONG`/`TAG_TOO_MANY`/`DESC_TOO_LONG` -> 400; advisory `TAG_BLANK`/`TAG_DUPLICATE` are normalized by the service before saving and **never reject the save** — the panel just greys the chip out.
+- Title/description are counted in **code points** (emoji and rare glyphs are not double-charged); the description cap follows the chosen category (`descLimit(tid)`; an unregistered tid falls back to the global 2000 rather than wrongly rejecting).
+- **Numeric guardrail**: the LLM only touches titles and the hook. Every "number plus immediately following magnitude unit (万亿千百%％)" in a candidate must appear verbatim in the fact set, otherwise the whole candidate is dropped (never truncated); whitespace is normalized before comparison; serial markers ("NN:", "第 N 期") are a closed-form exemption. The 【本片事实】 block of the description is copied verbatim and never goes through the model.
+- Single source of truth for timestamps: the compressed axis from the latest successful export (`video_export.shot_starts_csv`, which accounts for the 0.8s crossfades) wins; without that column (legacy records) the derivation falls back to nominal durations and sets `approxTimestamps=true` — **re-export once under the new code to get paste-ready timestamps**.
+
+Behavior changes on existing endpoints (response shapes unchanged):
+- `POST /export/hd` and `/export/hd/async`: after a non-preview export succeeds the response gains `publishPackUrl` (transient, not a `video_export` column) and the pack is written to `uploads/final/<script title>-发布包.txt`. **An auxiliary capability must never block the main product**: a pack write failure only warns and omits the field — it never turns an already-composed film into a failed export. Preview exports write nothing. Rows edited manually are **filled only where blank** (manual values are never refreshed); machine rows (`source=GENERATED`) may be refreshed wholesale.
+- `POST /export/batch-download`: the ZIP carries one `NNN_<resolution>_<ratio>_<id>_发布包.txt` per record and `manifest.txt` gains the tag-count / description-length / category / source columns; failing to read a pack text only drops that attachment.
+- **Fixed (500)**: this endpoint was declared as `ResponseEntity<?>`. Spring MVC's `StreamingResponseBodyReturnValueHandler` claims the return value by its declared generic argument, so a wildcard (erased to Object) leaves the lambda to the ordinary message converters -> `No converter for [class …$$Lambda]` during dispatch — **batch download had never worked since it was written on 2026-11-14** (only the live end-to-end run in Task 9 caught it; the service-layer unit tests call `writeBatchZip` directly and cannot see this layer). It is now pinned to `ResponseEntity<StreamingResponseBody>`, and the failure branch streams a 400 JSON body back through the same channel so the UI can read `err.message`; regression covered by `VideoExportBatchZipControllerTest` (4 cases, including a structural pin on the generic argument).
+- `POST /api/video/scripts/commentary/import`: the `idea` field of the body is now persisted (it is the only entry point of the fact ledger; previously it was dropped, leaving the deriver with no facts).
+
+Frontend: the commentary studio (`/commentary-studio`) gains a publish panel whose limits all come from `/spec` (nothing hard-coded). e2e: `node tools/e2e-publish-meta.js` (optional `PUBLISH_E2E_LLM=1` to assert against the real model).
+Tests: `PublishSpecTest` / `PublishMetaServiceTest` / `PublishMetaDeriverTest` / `PublishMetaLlmServiceTest` / `PublishMetaControllerTest` / `PublishPackServiceTest` / `VideoExportPublishPackTest` / `VideoExportBatchZipControllerTest`; full gate 723 green.

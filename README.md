@@ -1313,3 +1313,18 @@ P0 短视频平台适配（抖音/快手/视频号竖屏信息流），存量横
 - 优雅降级：评审/重修任一调用失败或产物不可解析 → 保留当前最优稿返回，精修绝不拖垮生成。
 - 前端长等待接线（2026-11-18 补）：工作台脚本生成（含模板应用）走 postLong + AbortController，预算由 `video.script.client-timeout-ms`（默认 900s）服务端注入页面；超时提示「服务端仍在精修，稍后刷新列表」而非误报失败；e2e 驱动改 node:http 解除内置 fetch 300s 限制（实测客户端全程等住 580s 响应不断连）；异步化列入后续切片。
 - 测试：VideoScriptServiceRefineTest / ModelServiceScriptClientTest（11 用例，7 处变异均独红复证）+ VideoStudioPageRenderTest 长等待接线断言 + VideoScriptDefaultsTest 配置默认值钉住；全量门禁 621 绿。
+
+## B 站发布元数据：派生 + 润色 + 发布包（2026-11-19）
+
+计划 `docs/superpowers/plans/2026-11-19-publish-metadata-bilibili.md`。目标很小：导出完视频后，B 站投稿页要逐项粘贴的那堆东西（标题/分区/标签/简介/创作声明/合集/置顶评论/时间戳）不用再回头翻脚本、也不用猜平台限到哪里。
+
+- 规格表集流（`PublishSpec`）：标题 80 字符 / 标签 10 个 / 简介 2000 字（随分区变）、动漫杂谈 tid=253 与影视杂谈 tid=182、`?tid=` 灰度口径、禁用词表——**复核日期标在行内**，平台改规则只改这一个文件，前端计数器通过 `GET /api/video/publish/spec` 跟随，不硬编码。
+- 确定性派生（`PublishMetaDeriver`，零模型依赖）：简介五节（【本片事实】【素材出处】【AI 使用说明】【不构成投资建议】【时间轴】）全部从脚本台账原文照抄，出处去重，无数字的主观句不进事实节；时间戳用最近一次导出的压缩轴（`video_export.shot_starts_csv`），无该列时退回名义轴并标 `approxTimestamps`。
+- LLM 只碰标题候选与钩子，带四道护栏（长度/禁用词/数字量级/集数豁免）：候选里每个「数字+紧跟量级单位」必须逐字来自事实集，否则整条丢弃（不截断）；任一失败降级模板兜底。`llm=false` 零调用，`GET /{id}/meta` 恒不烧模型。
+- 存库（`publish_meta`，脚本×平台一行）+ 部分更新（未传键保留原值）+ 400/500 分流（`PublishRejectException` 携 `violations:[{field,code,message}]` 供前端定位红框）。
+- 导出联动（`PublishPackService`）：非预览导出成功后写 `uploads/final/<标题>-发布包.txt`（响应带 `publishPackUrl`），批量 ZIP 每条附一份发布包并在 `manifest.txt` 加四列；附属失败只 warn，绝不把已合成完的出片改判失败；人工存过的行只补空。
+- 面板：评论工作台 `/commentary-studio` 新增发布区（计数器取 `/spec`、重复 tag 标灰、分节折叠、一键复制整包、violation 定位红框）。
+- 端到端实跑（#738 真实脚本）与人工稿逐节对照见 `docs/story/FX/发布元数据-久留美.md` §9（`docs/story/` 本地不入库，clone 里没有；仓库内版本见计划末尾「执行记录」Task 9 行）：结构已对齐，差距全在取舍（事实条目粒度、标签分层、章节挑选、置顶评论）——**护栏只保证不编数字，不保证数字仍是真的**。
+- 本期不做什么：不对接 B 站开放平台 API 自动投稿、不回填播放/点赞数据、不做抖音/小红书等其他平台规格（加平台只需在 `PublishSpec` 添一个工厂方法）。
+- 顺手修掉一个存量缺陷：`POST /api/video/export/batch-download` 因签名写成 `ResponseEntity<?>`（泛型被擦除，Spring MVC 不认领 `StreamingResponseBody`）自 2026-11-14 起一直 500，工作台「打包下载全部」按钮从未跑通——只有 T9 的真实请求端到端才打到（service 层单测直接调 `writeBatchZip` 看不见这一层）。
+- 测试：`PublishSpecTest` / `PublishMetaServiceTest` / `PublishMetaDeriverTest` / `PublishMetaLlmServiceTest` / `PublishMetaControllerTest` / `PublishPackServiceTest` / `VideoExportPublishPackTest` / `VideoExportBatchZipControllerTest`，逐 Task 变异复证记录见计划末尾「执行记录」；全量门禁 723 绿。e2e：`node tools/e2e-publish-meta.js`。

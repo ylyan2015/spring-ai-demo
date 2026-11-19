@@ -1757,3 +1757,49 @@ FAQ：台词算术——镜头时长 ≥ 字数/字每秒 + 0.6s，改语速后�
 - 脚本步骤模型由 `video.script.model` 指定（默认 deepseek-flash 控成本，质量优先可设 VIDEO_SCRIPT_MODEL=deepseek-v4-pro 升档；思考模式默认开启；仅 deepseek profile 生效），单调用读超时 300s。
 - 实测 2 轮精修全程 ≈9.7-13 分钟；前端工作台已接 postLong（AbortController，预算 `video.script.client-timeout-ms` 默认 900s 由页面 data-gen-timeout-ms 注入），客户端不再先断连；超时不报失败而提示刷新列表；e2e 驱动用 node:http 解除 fetch 300s 限制（实测 580s 完整响应）。异步化列入后续切片。
 - 降级：评审/重修任一失败或产物不可解析 → 保留当前最优稿，接口不报错。
+
+## B 站发布元数据（2026-11-19）
+
+计划：`docs/superpowers/plans/2026-11-19-publish-metadata-bilibili.md`；实跑对照：`docs/story/FX/发布元数据-久留美.md` §9
+（`docs/story/` 走 `.git/info/exclude` 本地不入库，clone 里看不到；结论的仓库内版本在计划末尾「执行记录」Task 9 行）。
+把投稿页要逐项粘贴的东西（标题/分区/标签/简介/创作声明/合集/置顶评论/时间戳）存进 `publish_meta`：能派生的从脚本台账确定性派生，导出后落一份纯文本发布包。**不对接 B 站开放平台 API**（本期只做 B 站，人工粘贴）。
+
+新增 4 端点（均在 `/api/video/publish`；沿用本项目口径：SecurityConfig 对 `/api/video/**` permitAll，登录与脚本归属由服务层 `getCurrentUserId()` + `findByIdAndUserId` 兜，不加 `@PreAuthorize`）：
+
+```bash
+# 1) 平台规格表（前端计数器 / 分区下拉 / 声明候选 / 禁用词提示的唯一源）
+curl -b $c "http://localhost:8080/api/video/publish/spec?platform=BILIBILI"
+# data: titleMax=80 tagMax=10 descMax=2000
+#       categories=[{name:动漫杂谈,tid:253,descMax:2000},{name:影视杂谈,tid:182,descMax:2000}]
+#       declarationOptions=["含AI生成内容"] coverNote bannedWords[] tidHint（含 ?tid= 灰度口径）
+
+# 2) 派生草稿（llm=false 即零模型调用，可反复刷不扣费）
+curl -b $c "http://localhost:8080/api/video/publish/738/draft?platform=BILIBILI&llm=false"
+# data: title/description/tags/categoryName/categoryTid/declaration/facts[]/sources[]/timestamps[]
+#       approxTimestamps/insertRatioPercent/insertRatioBasis/descriptionLength/titleCandidates[]/hook
+# llm=true 额外跑一次标题候选（≤3）与钩子（≤2 行）；任一失败降级模板兜底，不报错
+
+# 3) 人工保存（部分更新：只带改动字段，未传键保留原值）
+curl -b $c -X PUT "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"钱坑漫评01：…","tags":["FX战士久留美","动漫杂谈"],"categoryTid":253,"pinnedComment":"…"}'
+
+# 4) 读取（存过 → fallbackToDraft=false；没人存过 → 回确定性草稿 fallbackToDraft=true，恒不烧模型）
+curl -b $c "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI"
+```
+
+契约要点：
+- **状态码分流**（本控制器自己判，项目无全局 advice）：`PublishRejectException`（继承 `IllegalArgumentException`，携带 violations）→ 400 + message 原文 + `violations:[{field,code,message}]`（前端据此定位红框）；其余 `RuntimeException` → 500 + 固定文案「发布元数据操作失败，请查看服务端日志」（原文含表名列名，不回显）。
+- **违规码分两级**（执行期写反过一次，e2e 拓的）：拒收级 `TITLE_TOO_LONG`/`TAG_TOO_MANY`/`DESC_TOO_LONG` → 400；提示级 `TAG_BLANK`/`TAG_DUPLICATE` → 服务层保存前 `normalizeTags` 归一，**不拒收**，面板只把 chip 标灰。
+- 标题/简介按**码点**计数（emoji/生僻字不双倍占用）；简介上限随分区变（`descLimit(tid)`，未登记分区号退回全局 2000 档而不误拒）。
+- **数字护栏**：LLM 只碰标题/钩子，候选内每个「数字 + 紧跟量级单位（万亿千百%％）」必须逐字来自事实集，否则整条丢弃（不截断）；比对前空白归一；集数编号「NN：」「第 N 期」为封闭形态可豁免。简介的【本片事实】原文照抄，不进模型。
+- 时间戳单一真源：优先用最近一次成功导出的 `video_export.shot_starts_csv`（含 0.8s 淡入淡出的压缩轴）；无该列（存量记录）则退回名义时长并标 `approxTimestamps=true`——**要时间戳直接可贴必须在新代码下重导一次**。
+
+存量端点行为变更（响应结构不变）：
+- `POST /export/hd`、`/export/hd/async`：非预览导出成功后响应新增 `publishPackUrl`（瞬时字段，不入 `video_export` 表），同时写 `uploads/final/<脚本标题>-发布包.txt`。**附属能力不阻断主产物**：发布包写失败只 warn + 少一个字段，绝不把已合成完的出片改判失败；预览导出不写包。人工存过的行**只补空**（不刷人工值），机器行（`source=GENERATED`）可整体刷新。
+- `POST /export/batch-download`：ZIP 每条记录附 `NNN_<分辨率>_<比例>_<id>_发布包.txt`，`manifest.txt` 增「标签数 / 简介字数 / 分区 / 来源」列；取发布包文本失败只少一个附件，主产物照旧。
+- **修复（500）**：该端点签名原为 `ResponseEntity<?>`，Spring MVC 的 `StreamingResponseBodyReturnValueHandler` 靠声明的泛型实参认领返回值，通配符擦成 Object 后不认领 → 分发阶段 `No converter for [class …$$Lambda]` → **批量打包下载自 2026-11-14 写下起从未跑通过**（T9 端到端实跑才打到，service 层单测直接调 `writeBatchZip` 看不见这一层）。现钉为 `ResponseEntity<StreamingResponseBody>`，失败分支走同一通道回 400 JSON（前端 `err.message` 可读）；回归见 `VideoExportBatchZipControllerTest`（4 例，含泛型实参结构钉）。
+- `POST /api/video/scripts/commentary/import`：body 的 `idea` 现在会落库（事实台账唯一入口，之前被丢弃 → 派生器无事实可用）。
+
+前端：评论工作台 `/commentary-studio` 新增发布面板（限额全取自 `/spec`，不硬编码）。e2e：`node tools/e2e-publish-meta.js`（可选 `PUBLISH_E2E_LLM=1` 跑真模型断言）。
+测试：`PublishSpecTest` / `PublishMetaServiceTest` / `PublishMetaDeriverTest` / `PublishMetaLlmServiceTest` / `PublishMetaControllerTest` / `PublishPackServiceTest` / `VideoExportPublishPackTest` / `VideoExportBatchZipControllerTest`；全量门禁 723 绿。

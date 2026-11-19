@@ -114,6 +114,14 @@ public class PublishMetaDeriver {
                 .filter(l -> !l.isEmpty())
                 .orElse(null);
         boolean approx = starts == null;
+        // 评审 W-1：镜边界是「导出当时」的镜数，镜头在这之后被增删过就与当前 shots 对不上。
+        // 长一截时按下标配镜文本直接 IndexOutOfBounds → 面板一打开就 500；短一截时时间轴会漏掉后加的镜。
+        // 两个方向都视为失真，整条退回名义轴（它永远与当前镜头一一对应）并标 approx；重导一次即恢复真实轴。
+        if (!approx && starts.size() != shots.size()) {
+            log.info("Shot-starts axis for script {} covers {} shots but the script now has {} — falling back to nominal axis",
+                    scriptId, starts.size(), shots.size());
+            approx = true;
+        }
         if (approx) {
             starts = nominalStarts(shots);
         }

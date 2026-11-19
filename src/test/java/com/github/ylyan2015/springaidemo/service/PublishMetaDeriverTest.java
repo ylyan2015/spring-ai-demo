@@ -180,6 +180,31 @@ class PublishMetaDeriverTest {
         assertEquals(List.of("00:00", "00:03"), ts);   // 4 − 0.8 = 3.2
     }
 
+    /**
+     * 评审 W-1：导出记录的镜边界是「导出当时」的镜数。导出后删过镜头，这条轴就比当前镜头长，
+     * 按下标配镜文本会越界 → 面板一打开就 500（而「有较新导出记录」恰是该轴最准的那条路径）。
+     */
+    @Test
+    void shotStartsLongerThanCurrentShotsIsTreatedAsStaleNotCrashing() {
+        stubTwoShotsWithExport("0.00,4.50,8.00");   // 导出时 3 镜，现在只剩 2 镜
+        Map<String, Object> out = assertDoesNotThrow(() -> deriver.derive(738L, "BILIBILI"),
+                "轴与镜头数不一致时不得把面板端点打成 500");
+        assertEquals(Boolean.TRUE, out.get("approxTimestamps"), out.toString());
+        assertEquals(List.of("00:00", "00:03"), out.get("timestamps"),
+                "失真轴必须整条退回名义轴，而不是只截断到前 2 镜");
+        assertTrue(String.valueOf(out.get("description")).contains("【时间轴】"));
+    }
+
+    /** 反方向同样算失真（钉住 size 不一致就退名义轴，而不是只防越界的 > 判据） */
+    @Test
+    void shotStartsShorterThanCurrentShotsAlsoFlagsApprox() {
+        stubTwoShotsWithExport("0.00");   // 导出后才加的镜头不在轴里：轴覆盖不满当前镜头
+        Map<String, Object> out = deriver.derive(738L, "BILIBILI");
+        assertEquals(Boolean.TRUE, out.get("approxTimestamps"), out.toString());
+        assertEquals(List.of("00:00", "00:03"), out.get("timestamps"),
+                "时间轴要盖住当前全部镜头，宁可近似也不能少一镜");
+    }
+
     @Test
     void tagsReserveOneSlotForViewersAndIncludeCharacterAndFormWords() {
         stubTwoShotsWithExport("0.00,3.20");

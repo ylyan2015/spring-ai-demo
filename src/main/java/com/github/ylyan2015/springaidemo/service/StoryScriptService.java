@@ -195,6 +195,8 @@ public class StoryScriptService {
         script.setFormat("commentary");
         script.setTitle(str(json.get("title"), "未命名漫评"));
         script.setTheme(str(json.get("theme"), ""));
+        // idea 是发布派生【本片事实】的唯一台账源，导入时不接就等于丢掉事实
+        script.setIdea(str(json.get("idea"), ""));
         script.setStyle(str(json.get("style"), null));
         script.setStatus("DRAFT");
         @SuppressWarnings("unchecked")

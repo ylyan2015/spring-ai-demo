@@ -122,6 +122,15 @@ public record PublishSpec(String platform,
     /**
      * 校验发布字段。简介上限取所选分区档（未登记分区号退回全局档）；
      * 标题与简介按码点计数（emoji/生僻字不双倍占用）。
+     *
+     * <p>码分两级（执行期 T7 写进注释，因为 e2e 曾把提示级当成拒收级）：
+     * <ul>
+     *   <li><b>拒收级</b>：{@link #TITLE_TOO_LONG}、{@link #TAG_TOO_MANY}、{@link #DESC_TOO_LONG}
+     *       —— 超硬上限，贴不上投稿页，{@code PublishMetaService.save} 会因此 400</li>
+     *   <li><b>提示级</b>：{@link #TAG_BLANK}、{@link #TAG_DUPLICATE} —— 仅在调用方传入未归一的原样输入时报，
+     *       供面板标灰 chip；服务层保存前自己会 {@link #normalizeTags} 清掉，不会拿它拒用户</li>
+     * </ul>
+     * 所以服务层传给这里的 tags 如果已经归一过，后两个码不会出现——那不是 bug。
      */
     public List<Violation> validate(String title, List<String> tags, String description, int tid) {
         List<Violation> out = new ArrayList<>();

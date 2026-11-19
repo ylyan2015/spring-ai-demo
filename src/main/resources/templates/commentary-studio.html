@@ -27,8 +27,39 @@ textarea,input[type=text]{width:95%}.quote-badge{background:#c0392b;color:#fff;p
   <label><input type="checkbox" id="cInterpolate"> 补帧</label>
   <button id="cExportBtn" onclick="exportCommentary()">导出高清</button>
   <button id="cAsyncBtn" onclick="exportCommentaryAsync()">后台导出</button>
+  <button id="cPublishBtn" onclick="togglePublishPanel()">发布元数据</button>
   <span id="cExportStatus"></span>
   <ul id="cExportHistory"></ul>
+</section>
+<section id="publishPanel" hidden><h2>发布元数据 · B 站投稿页</h2>
+  <div id="pubSpecNote" style="font-size:12px;color:#666">规格未加载</div>
+  <div>
+    <button onclick="loadPublishDraft()">派生草稿（含 AI 标题候选，耗一次模型）</button>
+    <button onclick="openPublishPanel(currentScript.id)">重读库内值</button>
+    <button id="pubSaveBtn" onclick="savePublishMeta()">保存到库</button>
+    <button onclick="copyPublishPack()">复制整包</button>
+    <span id="pubStatus"></span>
+  </div>
+  <div id="pubViolations" style="font-size:12px;color:#c0392b"></div>
+  <label>标题 <span id="pubTitleCount"></span>
+    <input type="text" id="pubTitle" oninput="renderPublishCounters()"></label>
+  <div id="pubBannedWarn" style="font-size:12px;color:#c0392b"></div>
+  <div id="pubCandidates"></div>
+  <label>标签 <span id="pubTagCount"></span>
+    <input type="text" id="pubTags" placeholder="输入后回车或点添加">
+    <button onclick="addPublishTag()">添加</button></label>
+  <div id="pubTagChips"></div>
+  <label>简介 <span id="pubDescCount"></span>
+    <textarea id="pubDesc" rows="14" oninput="renderPublishCounters()"></textarea></label>
+  <button onclick="togglePublishDescOutline()">分节预览</button>
+  <div id="pubDescOutline" hidden style="border:1px dashed #ccc;padding:8px"></div>
+  <div id="pubApproxNote" style="font-size:12px;color:#c0392b"></div>
+  <label>分区 <select id="pubCategory" onchange="renderPublishCounters()"></select>
+    <span id="pubTidHint" style="font-size:12px;color:#666"></span></label>
+  <label>创作声明 <select id="pubDeclaration"></select></label>
+  <label>合集<input type="text" id="pubCollection"></label>
+  <label>置顶评论<textarea id="pubPinned" rows="3"></textarea></label>
+  <label>整包文本（剪贴板不可用时从这里手动复制）<textarea id="pubPackText" rows="8" readonly></textarea></label>
 </section>
 <section id="assetPanel" hidden><h2>素材库</h2>
   <div>
@@ -75,6 +106,8 @@ async function openScript(id) {
   currentScript = j.data;
   $('editorPanel').hidden = false;
   $('editorTitle').textContent = currentScript.title;
+  // 切脚本先把发布面板收起来：库内值与当前脚本不是一个，挂着就是让人往错的稿子里改字段
+  $('publishPanel').hidden = true;
   renderShots(); loadExportHistory();
 }
 function renderShots() {
@@ -232,6 +265,180 @@ async function openAssetPicker(shotId) {
   $('assetPickerModal').hidden = false;
 }
 function closeAssetPicker() { $('assetPickerModal').hidden = true; }
+
+// ==================== 发布元数据面板（计划 Task 7） ====================
+// 限额、分区候选、声明选项、禁用词全部来自 GET /api/video/publish/spec：
+// 平台改了规则只改服务端 PublishSpec，这里不得再抄一份 80/10/2000（否则就是第二套真源）。
+let publishSpec = null;
+let publishTags = [];
+let publishCandidates = [];
+const cp = s => [...String(s == null ? '' : s)].length;   // 码点计数，与后端 codePointCount 同口径
+function pubLimit(v) { return publishSpec ? v : '?'; }
+function pubDescLimit() {
+  if (!publishSpec) return NaN;
+  const tid = +$('pubCategory').value;
+  const c = (publishSpec.categories || []).find(x => x.tid === tid);
+  return c && c.descMax > 0 ? c.descMax : publishSpec.descMax;
+}
+async function loadPublishSpec() {
+  if (publishSpec) return publishSpec;
+  const j = await api('/api/video/publish/spec?platform=BILIBILI');
+  publishSpec = j.data;
+  $('pubSpecNote').textContent = '规格来源 /api/video/publish/spec（' + publishSpec.platform
+    + '）；封面：' + (publishSpec.coverNote || '');
+  $('pubCategory').innerHTML = (publishSpec.categories || []).map(c =>
+    '<option value="' + c.tid + '">' + esc(c.name) + '（tid ' + c.tid + '，简介 ' + c.descMax + '）</option>').join('');
+  $('pubDeclaration').innerHTML = (publishSpec.declarationOptions || []).map(d =>
+    '<option>' + esc(d) + '</option>').join('');
+  $('pubTidHint').textContent = publishSpec.tidHint || '';
+  renderPublishCounters();
+  return publishSpec;
+}
+function togglePublishPanel() {
+  const p = $('publishPanel');
+  if (p.hidden) { openPublishPanel(currentScript.id); } else { p.hidden = true; }
+}
+function renderPublishCounters() {
+  if (!publishSpec) return;
+  const t = $('pubTitle').value, d = $('pubDesc').value, descLimit = pubDescLimit();
+  const tOver = cp(t) > publishSpec.titleMax, dOver = cp(d) > descLimit;
+  $('pubTitleCount').textContent = cp(t) + '/' + pubLimit(publishSpec.titleMax);
+  $('pubTitleCount').style.color = tOver ? '#c0392b' : '#666';
+  $('pubDescCount').textContent = cp(d) + '/' + pubLimit(descLimit);
+  $('pubDescCount').style.color = dOver ? '#c0392b' : '#666';
+  const overTags = publishTags.length > publishSpec.tagMax;
+  $('pubTagCount').textContent = publishTags.length + '/' + pubLimit(publishSpec.tagMax);
+  $('pubTagCount').style.color = overTags ? '#c0392b' : '#666';
+  // 禁用词只提示不拦保存：那是用户的编辑自由，服务端 validate() 也没把它当违规
+  const banned = (publishSpec.bannedWords || []).filter(w => t.indexOf(w) >= 0);
+  $('pubBannedWarn').textContent = banned.length
+    ? '标题含推荐侧不友好词：' + banned.join('、') + '（仅提示，人工确认后可保留）' : '';
+  $('pubSaveBtn').disabled = tOver || dOver || overTags;
+  renderPublishTagChips();
+}
+function renderPublishTagChips() {
+  const seen = Object.create(null);
+  $('pubTagChips').innerHTML = publishTags.map((t, i) => {
+    const dup = !!seen[t]; seen[t] = 1;   // 重复标签标红：现稿就吃过「fx久留美 / FX战士久留美」的亏
+    return '<span style="display:inline-block;border:1px solid ' + (dup ? '#c0392b' : '#888')
+      + ';border-radius:10px;padding:0 6px;margin:2px' + (dup ? ';background:#fdecea' : '') + '">'
+      + esc(t) + (dup ? ' 重复' : '') + ' <a href="#" onclick="removePublishTag(' + i + ');return false">×</a></span>';
+  }).join('');
+}
+function addPublishTag() {
+  const v = $('pubTags').value.trim();
+  if (!v) return;
+  publishTags.push(v);        // 故意不去重：得让用户看见自己输了两个一样的，服务端也会以 TAG_DUPLICATE 拒
+  $('pubTags').value = '';
+  renderPublishCounters();
+}
+function removePublishTag(i) { publishTags.splice(i, 1); renderPublishCounters(); }
+function togglePublishDescOutline() {
+  const box = $('pubDescOutline');
+  box.hidden = !box.hidden;
+  if (box.hidden) return;
+  // 按【节】切块折叠：简介长到几百字时人要看的是结构而不是行
+  box.innerHTML = String($('pubDesc').value).split(/(?=【)/).map(p => {
+    const nl = p.indexOf('\n');
+    const head = (nl > 0 ? p.slice(0, nl) : p).trim() || '（开头）';
+    const body = nl > 0 ? p.slice(nl + 1) : '';
+    return '<details><summary style="font-size:13px;cursor:pointer">' + esc(head)
+      + '</summary><pre style="white-space:pre-wrap;font-size:12px">' + esc(body) + '</pre></details>';
+  }).join('');
+}
+async function openPublishPanel(scriptId) {
+  $('pubStatus').textContent = '读取中…';
+  try {
+    await loadPublishSpec();
+    const j = await api('/api/video/publish/' + scriptId + '/meta?platform=BILIBILI');
+    fillPublishForm(j.data, j.data.fallbackToDraft === true);
+  } catch (e) { $('pubStatus').textContent = '读取失败: ' + e.message; }
+}
+function fillPublishForm(d, fromDraft) {
+  $('pubTitle').value = d.title || '';
+  $('pubDesc').value = d.description || '';
+  publishTags = (d.tags || []).slice();
+  $('pubCollection').value = d.collection || '';
+  $('pubPinned').value = d.pinnedComment || '';
+  if (d.categoryTid) $('pubCategory').value = String(d.categoryTid);
+  if (d.declaration) $('pubDeclaration').value = d.declaration;
+  $('pubApproxNote').textContent = d.approxTimestamps
+    ? '时间轴是近似值（这条导出记录没存镜边界），发布前自己核一遍新时间戳' : '';
+  publishCandidates = d.titleCandidates || [];
+  $('pubCandidates').innerHTML = publishCandidates.length
+    ? 'AI 候选（点一下填到标题框）：' + publishCandidates.map((t, i) =>
+        '<button onclick="applyPublishCandidate(' + i + ')">' + esc(t) + '</button>').join(' ')
+    : (fromDraft ? '（当前内容来自确定性派生，没调模型；要候选点上面「派生草稿」）' : '');
+  renderPublishCounters();
+  $('pubStatus').textContent = fromDraft ? '已填入派生草稿（库里还没存过）' : '已载入库内人工值';
+  $('publishPanel').hidden = false;
+}
+function applyPublishCandidate(i) {
+  $('pubTitle').value = publishCandidates[i] || '';
+  renderPublishCounters();
+}
+async function loadPublishDraft() {
+  $('pubStatus').textContent = '派生中（含一次模型调用）…';
+  try {
+    const j = await api('/api/video/publish/' + currentScript.id + '/draft?platform=BILIBILI&llm=true');
+    fillPublishForm(j.data, true);
+  } catch (e) { $('pubStatus').textContent = '派生失败: ' + e.message; }
+}
+async function savePublishMeta() {
+  const body = {
+    title: $('pubTitle').value, description: $('pubDesc').value, tags: publishTags,
+    categoryTid: +$('pubCategory').value, declaration: $('pubDeclaration').value,
+    collection: $('pubCollection').value, pinnedComment: $('pubPinned').value
+  };
+  // 不走 api()：它只拿 message，这里需要 400 响应体里的 violations 数组才能把红框点到具体输入框
+  const r = await fetch('/api/video/publish/' + currentScript.id + '/meta?platform=BILIBILI',
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.success === false) {
+    $('pubStatus').textContent = '保存失败: ' + (j.message || ('HTTP ' + r.status));
+    markPublishViolations(j.violations || []);
+    return;
+  }
+  $('pubStatus').textContent = '已保存（source=' + ((j.data && j.data.source) || 'MANUAL') + '）';
+  markPublishViolations([]);
+}
+function markPublishViolations(vs) {
+  const fields = { title: 'pubTitle', description: 'pubDesc', tags: 'pubTagChips' };
+  // 注意取的是 value（元素 id）：写成 key 会去 $('title') 上读 style，整个保存链路当场抽风
+  Object.values(fields).forEach(id => { $(id).style.outline = ''; });
+  const hit = {};
+  vs.forEach(v => {
+    const id = fields[v.field];
+    if (!id) return;
+    hit[v.field] = (hit[v.field] ? hit[v.field] + '；' : '') + v.code + '：' + v.message;
+    $(id).style.outline = '2px solid #c0392b';
+  });
+  // 违规单独占一行，与禁用词提示分开：两个都写同一个框的话，一次重新输入就会把 400 原因抹掉
+  $('pubViolations').textContent = Object.keys(hit).map(k => k + ' → ' + hit[k]).join('  |  ');
+}
+function publishPackText() {
+  const opt = $('pubCategory').selectedOptions[0];
+  return ['【标题】', $('pubTitle').value.trim(),
+          '【分区】', opt ? opt.textContent.trim() : '',
+          '【标签】', publishTags.join(', '),
+          '【简介】', $('pubDesc').value.trim(),
+          '【置顶评论】', $('pubPinned').value.trim()].join('\n');
+}
+async function copyPublishPack() {
+  const text = publishPackText();
+  $('pubPackText').value = text;      // 无论剪贴板能不能用，先把整包落到页面上（人得能看到自己复制了什么）
+  try {
+    await navigator.clipboard.writeText(text);
+    $('pubStatus').textContent = '整包已复制（顺序：标题/分区/标签/简介/置顶评论）';
+  } catch (e) {
+    $('pubPackText').select();
+    $('pubStatus').textContent = '剪贴板不可用（非 https 且非 localhost），已在下方文本框选中，请手动 Ctrl+C';
+  }
+}
+$('pubTags').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addPublishTag(); }
+});
+
 async function bindAsset(assetId, kind) {
   // 审查 Major#2：asVideo 由素材 kind 自动判定，与后端 kind 护栏一致
   await post('/api/video/scripts/' + currentScript.id + '/shots/' + pickerShotId + '/asset',

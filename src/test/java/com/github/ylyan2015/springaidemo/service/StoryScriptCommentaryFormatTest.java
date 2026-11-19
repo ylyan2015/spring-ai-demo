@@ -69,6 +69,14 @@ class StoryScriptCommentaryFormatTest {
         assertThrows(IllegalArgumentException.class, () -> service.importCommentary(Map.of("title", "x")));
     }
 
+    @Test void importCarriesIdeaAsFactLedger() {
+        // 发布派生的【本片事实】只读 script.idea；导入时丢掉它，等于让 JSON 里本有的台账在派生环节失明
+        StoryScript s = service.importCommentary(Map.of(
+                "title", "c", "idea", "作者 18 年外汇，峰值亏 1400 万日元。",
+                "shots", List.of(Map.of("durationSeconds", 5))));
+        assertEquals("作者 18 年外汇，峰值亏 1400 万日元。", s.getIdea());
+    }
+
     @Test void updateShotPersistsAttribution() {
         StoryScript s = service.importCommentary(Map.of("title", "c", "shots", List.of(Map.of("durationSeconds", 5))));
         Long shotId = s.getShots().get(0).getId();

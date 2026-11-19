@@ -32,6 +32,9 @@ public record PublishSpec(String platform,
     /** 校验结果：field 供前端定位输入框，code 为稳定枚举串（不可本地化） */
     public record Violation(String field, String code, String message) {}
 
+    /** 已登记的平台名（与 {@code PlatformPreset} 枚举名保持一致，避免两套平台串） */
+    public static final String PLATFORM_BILIBILI = "BILIBILI";
+
     public static final String TITLE_TOO_LONG = "TITLE_TOO_LONG";
     public static final String TAG_TOO_MANY = "TAG_TOO_MANY";
     public static final String TAG_BLANK = "TAG_BLANK";

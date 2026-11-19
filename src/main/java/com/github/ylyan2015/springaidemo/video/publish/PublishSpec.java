@@ -41,6 +41,29 @@ public record PublishSpec(String platform,
     public static final String TAG_DUPLICATE = "TAG_DUPLICATE";
     public static final String DESC_TOO_LONG = "DESC_TOO_LONG";
 
+    /**
+     * 文案禁用词：推荐侧对这类词不友好，且与评论类内容的调性冲突。
+     *
+     * <p>定位是<b>软提示</b>：不进 {@link #validate}（人工标题里写「震惊」是用户的编辑自由，不该被 400 拒），
+     * 但模型生成的候选一律拦下（模型没有人替它兜底），同时经 {@code GET /spec} 下发给面板做实时提示。
+     * 只有这一份表，面板与护栏共用。
+     */
+    public static final List<String> BANNED_WORDS =
+            List.of("画质", "音质", "测试", "求支持", "第一次投稿", "必看", "震惊");
+
+    /** 命中的第一个禁用词；无命中（含 null）返回 {@code null} */
+    public static String firstBannedWord(String text) {
+        if (text == null) {
+            return null;
+        }
+        for (String w : BANNED_WORDS) {
+            if (text.contains(w)) {
+                return w;
+            }
+        }
+        return null;
+    }
+
     /** B 站（bilibili 创作中心 · 投稿页）规格 */
     public static PublishSpec bilibili() {
         return new PublishSpec(

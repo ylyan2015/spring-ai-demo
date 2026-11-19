@@ -5,6 +5,7 @@ import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.StoryShot;
 import com.github.ylyan2015.springaidemo.entity.User;
 import com.github.ylyan2015.springaidemo.entity.VideoExport;
+import com.github.ylyan2015.springaidemo.exception.PublishRejectException;
 import com.github.ylyan2015.springaidemo.repository.StoryCharacterRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryShotRepository;
@@ -92,7 +93,7 @@ public class PublishMetaDeriver {
     public Map<String, Object> derive(Long scriptId, String platform) {
         Long userId = getCurrentUserId();
         StoryScript script = scriptRepository.findByIdAndUserId(scriptId, userId)
-                .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
+                .orElseThrow(() -> new PublishRejectException("脚本不存在或无权访问: " + scriptId));
         PublishSpec spec = PublishMetaService.specFor(platform);
         List<StoryShot> shots = shotRepository.findByScriptIdOrderByShotOrderAsc(scriptId);
         Optional<VideoExport> latest =
@@ -317,10 +318,10 @@ public class PublishMetaDeriver {
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
-            throw new RuntimeException("用户未登录");
+            throw new PublishRejectException("用户未登录");
         }
         return userRepository.findByUsername(auth.getName())
-                .orElseThrow(() -> new RuntimeException("用户不存在"))
+                .orElseThrow(() -> new PublishRejectException("用户不存在"))
                 .getId();
     }
 }

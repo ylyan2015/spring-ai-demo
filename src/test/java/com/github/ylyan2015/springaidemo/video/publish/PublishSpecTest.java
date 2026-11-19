@@ -82,4 +82,19 @@ class PublishSpecTest {
     void unknownCategoryNameFailsFast() {
         assertThrows(IllegalArgumentException.class, () -> PublishSpec.bilibili().category("不存在的分区"));
     }
+
+    @Test
+    void bannedWordsAreSharedByFrontendHintAndLlmGuard() {
+        // 禁用词只能有一份：面板提示与模型候选护栏各自持一份表的话，改一处就会静默不一致
+        assertTrue(PublishSpec.BANNED_WORDS.contains("必看"), PublishSpec.BANNED_WORDS.toString());
+        assertEquals("必看", PublishSpec.firstBannedWord("【必看】久留美爆仓"));
+        assertNull(PublishSpec.firstBannedWord("一部番讲完一个账户"));
+        assertNull(PublishSpec.firstBannedWord(null));
+    }
+
+    @Test
+    void bannedWordsAreStyleHintNotHardViolation() {
+        // 人工标题里出现「震惊」不该被 400 拒掉：那是用户的编辑自由，面板只提示
+        assertTrue(PublishSpec.bilibili().validate("震惊！久留美爆仓", List.of("a"), "", 253).isEmpty());
+    }
 }

@@ -2,6 +2,7 @@ package com.github.ylyan2015.springaidemo.service;
 
 import com.github.ylyan2015.springaidemo.entity.PublishMeta;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
+import com.github.ylyan2015.springaidemo.exception.PublishRejectException;
 import com.github.ylyan2015.springaidemo.repository.PublishMetaRepository;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
@@ -60,11 +61,11 @@ public class PublishMetaService {
         if (PublishSpec.PLATFORM_BILIBILI.equalsIgnoreCase(p)) {
             return PublishSpec.bilibili();
         }
-        throw new IllegalArgumentException("暂不支持的发布平台: " + p
+        throw new PublishRejectException("暂不支持的发布平台: " + p
                 + "（当前仅 " + PublishSpec.PLATFORM_BILIBILI + "）");
     }
 
-    /** 人工保存：校验通过才落库，超限抛 IllegalArgumentException 且 message 带违规码 */
+    /** 人工保存：校验通过才落库，超限抛 {@link PublishRejectException}（带结构化 violations，端点据此回 400） */
     @Transactional
     public PublishMeta save(Long scriptId, String platform, Map<String, Object> form) {
         Long userId = getCurrentUserId();
@@ -96,7 +97,7 @@ public class PublishMetaService {
             String detail = violations.stream()
                     .map(v -> v.code() + "(" + v.message() + ")")
                     .collect(Collectors.joining("; "));
-            throw new IllegalArgumentException("发布字段不符合 " + spec.platform() + " 规格: " + detail);
+            throw new PublishRejectException("发布字段不符合 " + spec.platform() + " 规格: " + detail, violations);
         }
 
         // 只有请求体里出现的键才覆盖（部分更新）
@@ -182,16 +183,16 @@ public class PublishMetaService {
 
     private StoryScript requireOwnedScript(Long scriptId, Long userId) {
         return scriptRepository.findByIdAndUserId(scriptId, userId)
-                .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
+                .orElseThrow(() -> new PublishRejectException("脚本不存在或无权访问: " + scriptId));
     }
 
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
-            throw new RuntimeException("用户未登录");
+            throw new PublishRejectException("用户未登录");
         }
         return userRepository.findByUsername(auth.getName())
-                .orElseThrow(() -> new RuntimeException("用户不存在"))
+                .orElseThrow(() -> new PublishRejectException("用户不存在"))
                 .getId();
     }
 }

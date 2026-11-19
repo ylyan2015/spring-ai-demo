@@ -3,6 +3,7 @@ package com.github.ylyan2015.springaidemo.service;
 import com.github.ylyan2015.springaidemo.controller.ModelService;
 import com.github.ylyan2015.springaidemo.entity.StoryScript;
 import com.github.ylyan2015.springaidemo.entity.User;
+import com.github.ylyan2015.springaidemo.exception.PublishRejectException;
 import com.github.ylyan2015.springaidemo.repository.StoryScriptRepository;
 import com.github.ylyan2015.springaidemo.repository.UserRepository;
 import com.github.ylyan2015.springaidemo.video.publish.PublishSpec;
@@ -42,9 +43,6 @@ public class PublishMetaLlmService {
     static final int MAX_TITLES = 3;
     static final int MAX_HOOK_LINES = 2;
 
-    /** 营销味/自我感动式标题词：B 站推荐侧对这类词不友好，且与评论类内容的调性冲突 */
-    private static final Pattern BANNED_WORDS =
-            Pattern.compile("画质|音质|测试|求支持|第一次投稿|必看|震惊");
     /** 模型自带的序号与包裹引号（不剥掉，序号里的数字会被数字护栏误杀） */
     private static final Pattern LIST_MARKER = Pattern.compile("^\\s*(?:[-*·•]|\\d+\\s*[.、)）])\\s+?");
     private static final Pattern WRAPPING_QUOTES = Pattern.compile("^[「『“'\u2019]+|[」』”'\u2019]+$");
@@ -158,9 +156,9 @@ public class PublishMetaLlmService {
             // 整条丢弃而不是截断：截断会造出半句话，而半句话贴在投稿页上比没标题更难看
             return "超过 " + spec.titleMax() + " 字符（" + len + "）";
         }
-        Matcher banned = BANNED_WORDS.matcher(line);
-        if (banned.find()) {
-            return "命中禁用词「" + banned.group() + "」";
+        String banned = PublishSpec.firstBannedWord(line);
+        if (banned != null) {
+            return "命中禁用词「" + banned + "」";
         }
         List<String> bad = foreignNumbers(line, allowed);
         if (!bad.isEmpty()) {
@@ -257,16 +255,16 @@ public class PublishMetaLlmService {
     private StoryScript loadOwnedScript(Long scriptId) {
         Long userId = getCurrentUserId();
         return scriptRepository.findByIdAndUserId(scriptId, userId)
-                .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
+                .orElseThrow(() -> new PublishRejectException("脚本不存在或无权访问: " + scriptId));
     }
 
     private Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
-            throw new RuntimeException("用户未登录");
+            throw new PublishRejectException("用户未登录");
         }
         return userRepository.findByUsername(auth.getName())
-                .orElseThrow(() -> new RuntimeException("用户不存在"))
+                .orElseThrow(() -> new PublishRejectException("用户不存在"))
                 .getId();
     }
 }

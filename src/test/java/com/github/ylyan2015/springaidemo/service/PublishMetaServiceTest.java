@@ -175,4 +175,68 @@ class PublishMetaServiceTest {
         assertTrue(e.getMessage().contains("TITLE_TOO_LONG"), e.getMessage());
         verify(metaRepository, never()).save(any());
     }
+
+    // ==================== 导出联动：派生稿只补空不覆盖 ====================
+    // 这三条是「只补空」规则的真判据。PublishPackServiceTest 里那条同名的用例把本方法整个 mock 掉了，
+    // 改坏规则它不会红——规则住在哪里，判据就得落在哪里。
+
+    private PublishMeta storedRow(long id, String source) {
+        PublishMeta m = new PublishMeta();
+        m.setId(id);
+        m.setScriptId(738L);
+        m.setUserId(7L);
+        m.setPlatform("BILIBILI");
+        m.setSource(source);
+        when(metaRepository.findByScriptIdAndUserIdAndPlatform(738L, 7L, "BILIBILI"))
+                .thenReturn(Optional.of(m));
+        return m;
+    }
+
+    private static Map<String, Object> generatedDraft() {
+        return Map.of("title", "机器派生标题", "description", "机器派生简介",
+                "tags", List.of(" 解说 ", "", "爆仓", "解说"), "categoryName", "动漫杂谈",
+                "categoryTid", 253, "declaration", "含AI生成内容",
+                "timestamps", List.of("00:00", "00:03"));
+    }
+
+    @Test
+    void generatedDraftFillsOnlyBlankFieldsOnManualRow() {
+        PublishMeta manual = storedRow(9L, PublishMetaService.SOURCE_MANUAL);
+        manual.setTitle("人工标题");
+        manual.setDescription("人工简介");
+
+        PublishMeta saved = service.upsertGenerated(738L, 7L, "BILIBILI", generatedDraft());
+
+        assertEquals("人工标题", saved.getTitle(), "用户手改的标题被机器刷掉是最恼人的 bug");
+        assertEquals("人工简介", saved.getDescription());
+        assertEquals("解说,爆仓", saved.getTags(), "空字段该补还是要补（同时去空去重）");
+        assertEquals("00:00,00:03", saved.getTimestampsCsv());
+        assertEquals(PublishMetaService.SOURCE_MANUAL, saved.getSource(),
+                "补空不得改来源标记，否则下次导出就敢直接覆盖");
+    }
+
+    @Test
+    void generatedDraftOverwritesPreviousGeneratedRow() {
+        PublishMeta prev = storedRow(10L, PublishMetaService.SOURCE_GENERATED);
+        prev.setTitle("上一版派生标题");
+        prev.setDescription("上一版派生简介");
+        prev.setTags("旧标签");
+
+        PublishMeta saved = service.upsertGenerated(738L, 7L, "BILIBILI", generatedDraft());
+
+        assertEquals("机器派生标题", saved.getTitle(), "机器行可以刷机器行，否则台账改了简介永远不跟着走");
+        assertEquals("机器派生简介", saved.getDescription());
+        assertEquals("解说,爆仓", saved.getTags());
+        assertEquals(PublishMetaService.SOURCE_GENERATED, saved.getSource());
+    }
+
+    @Test
+    void firstSyncOfUntouchedRowIsMarkedGenerated() {
+        // findOrCreate 给新行也标 MANUAL，不区分「还没被人写过」的话，
+        // 第一次导出的派生值就会被当成人工值锁住，之后再也刷不动
+        PublishMeta saved = service.upsertGenerated(738L, 7L, "BILIBILI", generatedDraft());
+
+        assertEquals("机器派生标题", saved.getTitle());
+        assertEquals(PublishMetaService.SOURCE_GENERATED, saved.getSource());
+    }
 }

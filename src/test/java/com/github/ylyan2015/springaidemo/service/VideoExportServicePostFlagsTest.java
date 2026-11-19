@@ -30,7 +30,7 @@ class VideoExportServicePostFlagsTest {
         sfx = mock(SfxService.class);
         service = new VideoExportService(scriptRepo, shotRepo, exportRepo, userRepo,
                 compose, mock(BgmService.class), mock(SubtitleService.class),
-                mock(StoryCharacterRepository.class), sfx);
+                mock(StoryCharacterRepository.class), sfx, mock(PublishPackService.class));
         User u = new User(); u.setId(1L); u.setUsername("alice");
         when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
         SecurityContextHolder.getContext().setAuthentication(

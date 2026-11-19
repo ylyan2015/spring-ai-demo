@@ -47,7 +47,7 @@ class VideoExportAspectFallbackTest {
         compose = mock(VideoComposeService.class);
         service = new VideoExportService(scriptRepo, shotRepo, exportRepo, userRepo,
                 compose, mock(BgmService.class), mock(SubtitleService.class),
-                mock(StoryCharacterRepository.class), mock(SfxService.class));
+                mock(StoryCharacterRepository.class), mock(SfxService.class), mock(PublishPackService.class));
         User u = new User();
         u.setId(1L);
         u.setUsername("alice");

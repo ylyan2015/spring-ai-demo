@@ -89,9 +89,18 @@ public class PublishMetaDeriver {
         this.userRepository = userRepository;
     }
 
-    /** 派生发布包草稿（不落库；人工确认后再 PUT） */
+    /** 派生发布包草稿（不落库；人工确认后再 PUT），用户取自当前登录态 */
     public Map<String, Object> derive(Long scriptId, String platform) {
-        Long userId = getCurrentUserId();
+        return derive(scriptId, getCurrentUserId(), platform);
+    }
+
+    /**
+     * 显式传 userId 的入口：导出 worker 线程里调派生不能依赖登录态。
+     *
+     * <p>本项目踩过的坑：SecurityContextHolder 基于 ThreadLocal，异步线程里不显式传播就报
+     * 「用户未登录」。发布包是导出成功后顺手写的附属产物，不该依赖调用线程有没有会话。
+     */
+    public Map<String, Object> derive(Long scriptId, Long userId, String platform) {
         StoryScript script = scriptRepository.findByIdAndUserId(scriptId, userId)
                 .orElseThrow(() -> new PublishRejectException("脚本不存在或无权访问: " + scriptId));
         PublishSpec spec = PublishMetaService.specFor(platform);
@@ -125,6 +134,10 @@ public class PublishMetaDeriver {
         out.put("sources", sources);
         out.put("timestamps", timestamps);
         out.put("approxTimestamps", approx);
+        // 计划风险 4：引用占比有两个口径（整镜计入 vs 外部工具按插入秒数），数值差 3 倍。
+        // 不带上口径的百分比会与版权说明自相矛盾，所以两者一起下发。
+        out.put("insertRatioPercent", (int) Math.round(VideoExportService.insertRatio(shots) * 100));
+        out.put("insertRatioBasis", "整镜口径：镜头只要叠了出处水印就整镜计入，与按插入秒数统计的外部口径不同");
         out.put("descriptionLength", description.codePointCount(0, description.length()));
         if (description.codePointCount(0, description.length()) > spec.descLimit(spec.categories().get(0).tid())) {
             log.warn("Derived description for script {} is {} chars, over {} limit — trim facts or timeline",

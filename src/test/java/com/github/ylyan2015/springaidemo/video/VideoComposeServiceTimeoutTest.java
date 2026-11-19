@@ -1,14 +1,17 @@
 package com.github.ylyan2015.springaidemo.video;
 
 import com.github.ylyan2015.springaidemo.storage.StorageService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,14 +24,36 @@ import static org.mockito.Mockito.mock;
  */
 class VideoComposeServiceTimeoutTest {
 
-    @TempDir
-    Path workDir;
+    private Path workDir;
 
     @BeforeEach
-    void windowsOnly() {
+    void windowsOnly() throws IOException {
         // 挂起/退出进程用 Windows 专属命令（ping -n / cmd /c）；其他平台跳过（release 复审 n-2）
         assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("win"),
                 "超时回归用例使用 Windows 命令，非 Windows 平台跳过");
+        workDir = Files.createTempDirectory("compose-timeout-");
+    }
+
+    /**
+     * 不用 @TempDir 自动清理：被强杀进程的日志句柄在 Windows 上会短暂不释放，
+     * JUnit 删不掉目录就报「Failed to close extension context」，与本用例要验的超时逻辑无关却随机弄红门禁。
+     * 本用例的判据全在超时与退出码上，目录回收交给系统。
+     */
+    @AfterEach
+    void cleanWorkDir() {
+        if (workDir == null) {
+            return;
+        }
+        try (var walk = Files.walk(workDir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // 句柄未释放就放弃，不抛
+                }
+            });
+        } catch (IOException ignored) {
+        }
     }
 
     private VideoComposeService newServiceWithTimeout(Duration timeout) throws Exception {

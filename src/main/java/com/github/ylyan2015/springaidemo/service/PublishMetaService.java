@@ -140,6 +140,53 @@ public class PublishMetaService {
                 });
     }
 
+    /** 免登录读取（导出 worker 线程与发布包用）：不创建行，没存过就是空 */
+    @Transactional(readOnly = true)
+    public Optional<PublishMeta> findExisting(Long scriptId, Long userId, String platform) {
+        return metaRepository.findByScriptIdAndUserIdAndPlatform(scriptId, userId, platform);
+    }
+
+    /**
+     * 导出联动：把派生稿写进库。人工行只补空、绝不覆盖（用户手改的标题被机器刷掉是最恼人的 bug）；
+     * 机器行可以刷机器行。这里不走 {@link #save} 的平台校验：派生值是起点不是投稿，而视频已经
+     * 合成完了，为一条待修剪的超长简介把整次导出改判成失败是本末倒置。
+     */
+    @Transactional
+    public PublishMeta upsertGenerated(Long scriptId, Long userId, String platform, Map<String, Object> draft) {
+        PublishMeta meta = findOrCreate(scriptId, userId, platform);
+        // findOrCreate 给新行标的也是 MANUAL，靠 id==null 区分「还没被人写过」
+        boolean untouched = meta.getId() == null;
+        boolean manual = !untouched && SOURCE_MANUAL.equals(meta.getSource());
+
+        String title = text(draft.get("title"));
+        String description = text(draft.get("description"));
+        String csv = String.join(",", PublishSpec.normalizeTags(asStringList(draft.get("tags"))));
+        Object tid = draft.get("categoryTid");
+        String timestamps = draft.get("timestamps") instanceof List<?> l && !l.isEmpty()
+                ? l.stream().map(String::valueOf).collect(Collectors.joining(",")) : null;
+
+        if (!manual || isBlank(meta.getTitle())) meta.setTitle(title);
+        if (!manual || isBlank(meta.getDescription())) meta.setDescription(description);
+        if (!manual || isBlank(meta.getTags())) meta.setTags(csv);
+        if (!manual || meta.getCategoryTid() == null) {
+            if (tid instanceof Number n) {
+                meta.setCategoryTid(n.intValue());
+                meta.setCategoryName(text(draft.get("categoryName")));
+            }
+        }
+        if (!manual || isBlank(meta.getDeclaration())) meta.setDeclaration(text(draft.get("declaration")));
+        if (!manual || isBlank(meta.getTimestampsCsv())) meta.setTimestampsCsv(timestamps);
+        if (!manual) meta.setSource(SOURCE_GENERATED);
+        meta.setUpdatedAt(LocalDateTime.now());
+        log.info("Publish draft synced for script {} platform {}: manual={} title={} tags={}",
+                scriptId, platform, manual, meta.getTitle(), csv);
+        return metaRepository.save(meta);
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
     public Map<String, Object> toMap(PublishMeta meta) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", meta.getId());

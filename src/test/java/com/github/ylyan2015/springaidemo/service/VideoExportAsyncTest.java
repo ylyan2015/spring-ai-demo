@@ -39,7 +39,7 @@ class VideoExportAsyncTest {
         VideoExportService real = new VideoExportService(mock(StoryScriptRepository.class),
                 mock(StoryShotRepository.class), mock(VideoExportRepository.class), userRepo,
                 mock(VideoComposeService.class), mock(BgmService.class), mock(SubtitleService.class),
-                mock(StoryCharacterRepository.class), mock(SfxService.class));
+                mock(StoryCharacterRepository.class), mock(SfxService.class), mock(PublishPackService.class));
         spy = spy(real);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("async-user", null, List.of()));

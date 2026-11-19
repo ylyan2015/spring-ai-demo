@@ -23,6 +23,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -224,6 +225,31 @@ class PublishMetaDeriverTest {
                 assertFalse(p.getSimpleName().contains("ChatClient"), "派生器不得接模型服务: " + p);
             }
         }
+    }
+
+    @Test
+    void deriveWithoutLoginContextUsesGivenUserId() {
+        // 导出 worker 线程里调派生：登录态不能是唯一入口（异步线程没拿到 SecurityContext 就会直接失败）
+        stubTwoShotsWithExport("0.00,3.20");
+        SecurityContextHolder.clearContext();
+        Map<String, Object> out = deriver.derive(738L, 7L, "BILIBILI");
+        assertEquals("BILIBILI", out.get("platform"));
+        verify(scriptRepository).findByIdAndUserId(738L, 7L);
+    }
+
+    @Test
+    void draftStatesInsertRatioWithMeasurementBasis() {
+        stubTwoShotsWithExport("0.00,3.20");
+        // 重装配成「三镜里只有一镜带出处」：上面那个桩两镜都带出处，比例被顶成 100%，
+        // 拿它当期望值等于没卡住任何算法
+        when(shotRepository.findByScriptIdOrderByShotOrderAsc(738L)).thenReturn(List.of(
+                shot(1, 5, "开场。", null, null),
+                shot(2, 5, "引用段。", null, "图取自作品官网 fxkurumi-info.com"),
+                shot(3, 5, "收尾。", null, null)));
+        Map<String, Object> out = deriver.derive(738L, "BILIBILI");
+        assertEquals(33, out.get("insertRatioPercent"), out.toString());
+        String basis = String.valueOf(out.get("insertRatioBasis"));
+        assertTrue(basis.contains("整镜"), "不标口径的百分比会与外部工具口径自相矛盾：" + basis);
     }
 
     private static int occurrences(String text, String needle) {

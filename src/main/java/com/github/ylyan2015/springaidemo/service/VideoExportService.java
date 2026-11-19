@@ -91,6 +91,8 @@ public class VideoExportService {
     private final SubtitleService subtitleService;
     private final StoryCharacterRepository characterRepository;
     private final SfxService sfxService;
+    /** 计划 Task 8：发布包是导出的附属产物，任何失败不得反过来影响出片 */
+    private final PublishPackService publishPacks;
 
     public VideoExportService(StoryScriptRepository scriptRepository,
                               StoryShotRepository shotRepository,
@@ -100,7 +102,8 @@ public class VideoExportService {
                               BgmService bgmService,
                               SubtitleService subtitleService,
                               StoryCharacterRepository characterRepository,
-                              SfxService sfxService) {
+                              SfxService sfxService,
+                              PublishPackService publishPacks) {
         this.scriptRepository = scriptRepository;
         this.shotRepository = shotRepository;
         this.exportRepository = exportRepository;
@@ -110,6 +113,7 @@ public class VideoExportService {
         this.subtitleService = subtitleService;
         this.characterRepository = characterRepository;
         this.sfxService = sfxService;
+        this.publishPacks = publishPacks;
     }
 
     /** Phase 4 切片 4：导出后期增强开关（超分/补帧/音效；存量入口全 false 零变化） */
@@ -401,7 +405,11 @@ public class VideoExportService {
                         .append("BGM: ").append(record.getBgmName() == null ? "无" : record.getBgmName()).append(" | ")
                         .append("字幕: ").append(Boolean.TRUE.equals(record.getHasSubtitle())
                                 ? "已烧录(" + (record.getSubtitleLanguage() == null ? "zh" : record.getSubtitleLanguage()) + ")"
-                                : "无").append('\n');
+                                : "无");
+                appendPublishColumns(manifest, record);
+                manifest.append('\n');
+
+                writePublishPackEntry(zos, workDir, baseName, record);
 
                 // 封面可选：下载失败不阻断打包
                 if (record.getCoverUrl() != null && !record.getCoverUrl().isBlank()) {
@@ -433,6 +441,38 @@ public class VideoExportService {
     static String zipEntryBaseName(int index, VideoExport record) {
         String aspect = record.getAspectRatio() == null ? "16x9" : record.getAspectRatio().replace(':', 'x');
         return String.format("%02d_%s_%s_%d", index, record.getResolution(), aspect, record.getId());
+    }
+
+    /**
+     * 清单里的发布列（标题/标签数/简介字数/分区/来源）：下载 ZIP 的人不用重开面板就知道
+     * 这条片子投稿时准备用什么标题。取不到只缺这一列，不阻断打包。
+     */
+    private void appendPublishColumns(StringBuilder manifest, VideoExport record) {
+        try {
+            PublishPackService.Summary sum = publishPacks.summaryFor(record.getScriptId(), record.getUserId());
+            manifest.append(" | 标题: ").append(sum.title() == null ? "?" : sum.title())
+                    .append(" | 标签 ").append(sum.tagCount())
+                    .append(" | 简介 ").append(sum.descriptionChars())
+                    .append(" | 分区: ").append(sum.categoryName() == null ? "?" : sum.categoryName())
+                    .append(" | ").append(PublishMetaService.SOURCE_MANUAL.equals(sum.source()) ? "人工" : "派生");
+        } catch (Exception e) {
+            log.warn("Publish summary skipped for export {}: {}", record.getId(), e.getMessage());
+        }
+    }
+
+    /** 每条记录附一个 NNN_发布包.txt；附属文本取不到就少一个附件，不得把整个 ZIP 拖失败 */
+    private void writePublishPackEntry(ZipOutputStream zos, Path workDir, String baseName, VideoExport record) {
+        try {
+            String text = publishPacks.packTextFor(record.getScriptId(), record.getUserId());
+            if (text == null || text.isBlank()) {
+                return;
+            }
+            Path packFile = workDir.resolve(baseName + "_发布包.txt");
+            Files.writeString(packFile, text, StandardCharsets.UTF_8);
+            writeZipEntry(zos, baseName + "_发布包.txt", packFile);
+        } catch (Exception e) {
+            log.warn("Publish pack entry skipped for export {}: {}", record.getId(), e.getMessage());
+        }
     }
 
     private void writeZipEntry(ZipOutputStream zos, String entryName, Path file) throws IOException {
@@ -617,6 +657,18 @@ public class VideoExportService {
 
         Map<String, Object> result = toMap(record);
         result.put("video", video);
+        // 发布包只在正式版导出后写：预览片不归档、也不该为它生成一份投稿文本。
+        // syncAfterExport 内部不抛，这里再兜一层：附属能力不能把已经成功的出片改判成失败。
+        if (!preview) {
+            try {
+                String packUrl = publishPacks.syncAfterExport(scriptId, userId, script.getTitle());
+                if (packUrl != null) {
+                    result.put("publishPackUrl", packUrl);
+                }
+            } catch (Exception e) {
+                log.warn("Publish pack skipped for script {}: {}", scriptId, e.getMessage());
+            }
+        }
         log.info("Export {} done: url={}, size={} bytes", record.getId(),
                 video.get("videoUrl"), video.get("fileSizeBytes"));
         return result;

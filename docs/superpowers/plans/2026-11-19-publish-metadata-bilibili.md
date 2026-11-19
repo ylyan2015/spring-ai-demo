@@ -456,6 +456,16 @@ Step 1 要求的「机器缺什么」逐节 diff 表在人工稿同目录文件 
 
 判定：当前能力适合当「初稿 + 防漏清单」，不适合当终稿——与本计划开头的定位一致。
 
+分支整体评审（`CodeReview`，区间 6db23dd..HEAD）只出一条警告，已修（commit 636766e）：
+
+- **W-1｜导出后增删镜头 → 面板 500**。`shot_starts_csv` 存的是「导出当时」的镜数，之后删过镜头则该轴比当前 shots 长，
+  `buildDescription` 按下标 `shots.get(i)` 取镜文本直接 `IndexOutOfBoundsException` → `/meta`、`/draft` 被控制器判 500。
+  修法：`derive()` 里 `starts.size() != shots.size()` 即视为失真，整条退回名义轴（它永远与当前镜头一一对应）并标 `approxTimestamps`。
+  两个方向都算失真（不只防越界）：轴短一截时时间轴会漏掉导出后新加的镜，与「盖住全片」的用途矛盾。
+  新增 2 例：`shotStartsLongerThanCurrentShotsIsTreatedAsStaleNotCrashing`（修前独红：Index: 2 Size: 2）、
+  `shotStartsShorterThanCurrentShotsAlsoFlagsApprox`（变异复证：把 `!=` 改回 `>` 后仅此条红，证明双向判据承重）。
+  全量 725 绿。其余裁决点（附属不阻断出片、人工行只补空、数字护栏、`/meta` 恒不烧模型、`ResponseEntity<StreamingResponseBody>` 泛型钉）评审判定均成立。
+
 执行方式注记：本环境无通用实现型 subagent，逐 Task 采用 inline TDD（红→绿→变异复证→提交），
 分支整体评审留给最后一次 `CodeReview`。
 

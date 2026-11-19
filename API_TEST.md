@@ -1790,10 +1790,10 @@ curl -b $c "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI"
 
 契约要点：
 - **状态码分流**（本控制器自己判，项目无全局 advice）：`PublishRejectException`（继承 `IllegalArgumentException`，携带 violations）→ 400 + message 原文 + `violations:[{field,code,message}]`（前端据此定位红框）；其余 `RuntimeException` → 500 + 固定文案「发布元数据操作失败，请查看服务端日志」（原文含表名列名，不回显）。
-- **违规码分两级**（执行期写反过一次，e2e 拓的）：拒收级 `TITLE_TOO_LONG`/`TAG_TOO_MANY`/`DESC_TOO_LONG` → 400；提示级 `TAG_BLANK`/`TAG_DUPLICATE` → 服务层保存前 `normalizeTags` 归一，**不拒收**，面板只把 chip 标灰。
+- **违规码分两级**（计划原文把两级语义写反过一次，e2e 跑出来才发现）：拒收级 `TITLE_TOO_LONG`/`TAG_TOO_MANY`/`DESC_TOO_LONG` → 400；提示级 `TAG_BLANK`/`TAG_DUPLICATE` → 服务层保存前 `normalizeTags` 归一，**不拒收**，面板只把 chip 标灰。
 - 标题/简介按**码点**计数（emoji/生僻字不双倍占用）；简介上限随分区变（`descLimit(tid)`，未登记分区号退回全局 2000 档而不误拒）。
 - **数字护栏**：LLM 只碰标题/钩子，候选内每个「数字 + 紧跟量级单位（万亿千百%％）」必须逐字来自事实集，否则整条丢弃（不截断）；比对前空白归一；集数编号「NN：」「第 N 期」为封闭形态可豁免。简介的【本片事实】原文照抄，不进模型。
-- 时间戳单一真源：优先用最近一次成功导出的 `video_export.shot_starts_csv`（含 0.8s 淡入淡出的压缩轴）；无该列（存量记录）则退回名义时长并标 `approxTimestamps=true`——**要时间戳直接可贴必须在新代码下重导一次**。
+- 时间戳单一真源：优先用最近一次成功导出的 `video_export.shot_starts_csv`（含 0.8s 淡入淡出的压缩轴）；无该列（存量记录）**或该轴镜数与当前镜头数不一致**（导出后又增删过镜头，旧版会在这里 `IndexOutOfBoundsException` → 面板 500）则退回名义时长并标 `approxTimestamps=true`——**改过分镜就重导一次，时间戳才直接可贴**。
 
 存量端点行为变更（响应结构不变）：
 - `POST /export/hd`、`/export/hd/async`：非预览导出成功后响应新增 `publishPackUrl`（瞬时字段，不入 `video_export` 表），同时写 `uploads/final/<脚本标题>-发布包.txt`。**附属能力不阻断主产物**：发布包写失败只 warn + 少一个字段，绝不把已合成完的出片改判失败；预览导出不写包。人工存过的行**只补空**（不刷人工值），机器行（`source=GENERATED`）可整体刷新。
@@ -1802,4 +1802,4 @@ curl -b $c "http://localhost:8080/api/video/publish/738/meta?platform=BILIBILI"
 - `POST /api/video/scripts/commentary/import`：body 的 `idea` 现在会落库（事实台账唯一入口，之前被丢弃 → 派生器无事实可用）。
 
 前端：评论工作台 `/commentary-studio` 新增发布面板（限额全取自 `/spec`，不硬编码）。e2e：`node tools/e2e-publish-meta.js`（可选 `PUBLISH_E2E_LLM=1` 跑真模型断言）。
-测试：`PublishSpecTest` / `PublishMetaServiceTest` / `PublishMetaDeriverTest` / `PublishMetaLlmServiceTest` / `PublishMetaControllerTest` / `PublishPackServiceTest` / `VideoExportPublishPackTest` / `VideoExportBatchZipControllerTest`；全量门禁 723 绿。
+测试：`PublishSpecTest` / `PublishMetaServiceTest` / `PublishMetaDeriverTest` / `PublishMetaLlmServiceTest` / `PublishMetaControllerTest` / `PublishPackServiceTest` / `VideoExportPublishPackTest` / `VideoExportBatchZipControllerTest`；全量门禁 725 绿。

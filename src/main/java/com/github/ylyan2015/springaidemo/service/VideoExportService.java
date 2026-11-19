@@ -601,13 +601,13 @@ public class VideoExportService {
             video = videoComposeService.compose(shotMaps, options);
         } catch (RuntimeException e) {
             // 失败也记录，历史可追溯失败原因
-            saveExportRecord(meta, null, null, null, "FAILED", truncate(e.getMessage(), 500));
+            saveExportRecord(meta, null, null, null, "FAILED", truncate(e.getMessage(), 500), null);
             throw e;
         }
 
         VideoExport record = saveExportRecord(meta, (String) video.get("videoUrl"),
                 (Long) video.get("fileSizeBytes"), ((Number) video.get("totalDuration")).intValue(),
-                "SUCCESS", null);
+                "SUCCESS", null, shotStartsCsv(video));
 
         // 高清导出成功后脚本进入 EXPORTED 状态（预览不改变状态）
         if (!preview && !"EXPORTED".equals(script.getStatus())) {
@@ -677,7 +677,8 @@ public class VideoExportService {
                               boolean hasSubtitle, boolean hasLogo, String subtitleLanguage) {}
 
     private VideoExport saveExportRecord(ExportMeta meta, String videoUrl, Long fileSizeBytes,
-                                          Integer durationSeconds, String status, String error) {
+                                          Integer durationSeconds, String status, String error,
+                                          String shotStartsCsv) {
         VideoExport export = new VideoExport();
         export.setScriptId(meta.scriptId());
         export.setUserId(meta.userId());
@@ -696,6 +697,7 @@ public class VideoExportService {
         export.setHasLogo(meta.hasLogo());
         export.setStatus(status);
         export.setErrorMessage(error);
+        export.setShotStartsCsv(shotStartsCsv);
         return exportRepository.save(export);
     }
 
@@ -742,6 +744,20 @@ public class VideoExportService {
         return normalizeAspect(scriptAspect);
     }
 
+    /**
+     * 从合成结果提取镜起点 CSV（压缩轴）；无该字段（旧合成器/异常路径）降级为 null，
+     * 发布派生会改走名义时长近似并标记 approx。
+     */
+    @SuppressWarnings("unchecked")
+    static String shotStartsCsv(Map<String, ?> composeResult) {
+        Object raw = composeResult == null ? null : composeResult.get("shotStarts");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return null;
+        }
+        List<Double> starts = ((List<Number>) list).stream().map(Number::doubleValue).toList();
+        return VideoComposeService.toStartsCsv(starts);
+    }
+
     private StoryScript requireOwnedScript(Long scriptId, Long userId) {
         return scriptRepository.findByIdAndUserId(scriptId, userId)
                 .orElseThrow(() -> new RuntimeException("脚本不存在或无权访问: " + scriptId));
@@ -770,6 +786,7 @@ public class VideoExportService {
         map.put("subtitleLanguage", export.getSubtitleLanguage());
         map.put("hasLogo", export.getHasLogo());
         map.put("coverUrl", export.getCoverUrl());
+        map.put("shotStartsCsv", export.getShotStartsCsv());
         map.put("status", export.getStatus());
         map.put("errorMessage", export.getErrorMessage());
         map.put("createdAt", export.getCreatedAt() == null ? null : export.getCreatedAt().toString());

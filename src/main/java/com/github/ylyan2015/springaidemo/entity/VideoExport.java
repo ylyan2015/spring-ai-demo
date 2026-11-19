@@ -80,6 +80,13 @@ public class VideoExport {
     @Column(name = "cover_url", length = 500)
     private String coverUrl;
 
+    /**
+     * 逐镜在成片时间轴上的起点 CSV（秒，两位小数，已扣 xfade 转场重叠）。
+     * 发布元数据时间戳的唯一来源：与字幕 cue、音轨床同源，下游不得自行用名义时长累加重算。
+     */
+    @Column(name = "shot_starts_csv", length = 1000)
+    private String shotStartsCsv;
+
     /** 导出状态: SUCCESS / FAILED */
     @Column(name = "status", nullable = false, length = 20)
     private String status = "SUCCESS";
@@ -146,6 +153,9 @@ public class VideoExport {
 
     public String getCoverUrl() { return coverUrl; }
     public void setCoverUrl(String coverUrl) { this.coverUrl = coverUrl; }
+
+    public String getShotStartsCsv() { return shotStartsCsv; }
+    public void setShotStartsCsv(String shotStartsCsv) { this.shotStartsCsv = shotStartsCsv; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

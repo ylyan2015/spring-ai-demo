@@ -293,6 +293,9 @@ public class VideoComposeService {
             result.put("width", options.getWidth());
             result.put("height", options.getHeight());
             result.put("totalDuration", totalDuration);
+            // 镜边界（压缩轴）：字幕 cue、音轨床、发布元数据时间戳共用同一条轴，
+            // 下游不得再自行用名义时长累加算一套（已两次因此出现字幕/口播漂移）
+            result.put("shotStarts", shotStarts(effectiveDurations, XFADE_DURATION));
             result.put("hasNarration", hasNarrationTrack);
             result.put("hasAudio", hasNarrationTrack || hasBgm || hasSfx); // 最终视频是否含音轨
             result.put("hasBgm", hasBgm);
@@ -874,6 +877,51 @@ public class VideoComposeService {
     static int effectiveDurationFor(int baseSeconds, double narrationSeconds, boolean hasFollowingTransition) {
         double needed = narrationSeconds + (hasFollowingTransition ? XFADE_DURATION : 0);
         return Math.max(baseSeconds, (int) Math.ceil(needed));
+    }
+
+    /**
+     * 逐镜在成片时间轴上的起点（秒，包私有测试 seam）：直接累加 {@link #audioBedDurations}，
+     * 保证与音轨床边界严格重合；末镜起点 + 末镜全时长 == exactDuration。
+     */
+    static List<Double> shotStarts(List<Integer> effectiveDurations, double xfadeDuration) {
+        List<Double> starts = new ArrayList<>();
+        double acc = 0.0;
+        for (double bed : audioBedDurations(effectiveDurations, xfadeDuration)) {
+            starts.add(acc);
+            acc += bed;
+        }
+        return starts;
+    }
+
+    /** 镜起点序列 → CSV（两位小数），供导出记录落库与发布包时间戳复用（跨包，故 public） */
+    public static String toStartsCsv(List<Double> starts) {
+        if (starts == null || starts.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < starts.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(String.format("%.2f", starts.get(i)));
+        }
+        return sb.toString();
+    }
+
+    /** CSV → 镜起点序列；null/空串/脏数据均降级为空列表，不因旧记录无该列而炸掉发布链路（跨包，故 public） */
+    public static List<Double> parseStartsCsv(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return List.of();
+        }
+        List<Double> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            try {
+                out.add(Double.parseDouble(part.trim()));
+            } catch (NumberFormatException e) {
+                log.warn("Ignore malformed shot start value '{}'", part);
+            }
+        }
+        return out;
     }
 
     /**

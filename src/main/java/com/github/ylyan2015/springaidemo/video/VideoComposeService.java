@@ -638,6 +638,8 @@ public class VideoComposeService {
     /**
      * 逐镜出处水印滤镜段（Task 5 包私有 static seam）：左下角半透明黑底白字小字。
      * 空/null 返回 ""（无插入镜不叠加）；fontFile 非空时落 fontfile（B0 教训：中文无 fontfile 静默不渲染）。
+     * fontFile 为空时同样返回 ""：Windows 实测无 fontfile 时 CJK 渲染为豆腐块（比不渲染更糟），
+     * 出处展示改由镜头图内烤字承担；占比护栏仍按 insertAttribution 字段计，不受影响。
      * 返回段以逗号结尾，便于直接插在 setpts 前。
      */
     static String attributionFilter(String text, int h) {
@@ -646,6 +648,11 @@ public class VideoComposeService {
 
     static String attributionFilter(String text, int h, String fontFile) {
         if (text == null || text.isBlank()) {
+            return "";
+        }
+        if (fontFile == null || fontFile.isBlank()) {
+            log.warn("attribution overlay skipped: video.commentary.attribution-font 未配置"
+                    + "（B0：CJK drawtext 无 fontfile 渲染豆腐块）；出处请烤入镜头图");
             return "";
         }
         // 审查 Minor#2：滤镜图级+选项级两层解析各消耗一层→运行时 1 个反斜杠落 4 个；冒号转义；单引号换弯引号防断链

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.ai.chat.client.ChatClient;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -151,5 +152,70 @@ class SubtitleServiceTest {
         service.generateSrt(List.of(shot("你好世界", 5)), "en");
         service.generateSrt(List.of(shot("你好世界", 5)), "en");
         verify(modelService, times(1)).getChatClient();
+    }
+
+    // ==================== 长行预折行（R10：libass 不折无空格 CJK） ====================
+
+    /** 全角字宽=fontSize 的独立估宽（不复用生产 charWidth，避免恒真断言） */
+    private static int fullWidth(String line, int fontSize) {
+        int w = 0;
+        for (char c : line.toCharArray()) {
+            w += (c >= 0x2E80 || c == 0x2014 || c == 0x2015 || c == 0x2026) ? fontSize : (int) Math.ceil(fontSize * 0.6);
+        }
+        return w;
+    }
+
+    @Test
+    void longCjkCueWrapsIntoLinesWithinPlayResWidth() {
+        String narration = "为什么它比劝你别碰杠杆的宣传片管用？因为它不讲道理，它让你听见心跳。"
+                + "收盘后段子比行情多：去年就亏完了，所以今年毫无损失。笑完你发现，你在重播自己。";
+        String ass = service.generateAss(List.of(shot(narration, 16)), new SubtitleStyle(), "zh");
+        String text = ass.substring(ass.lastIndexOf(",,") + 2).trim();
+        String[] lines = text.split("\\\\N");
+        assertTrue(lines.length >= 2, "超宽单行须预折行: " + text);
+        for (String line : lines) {
+            assertTrue(fullWidth(line, 24) <= 1200, "折行后仍超宽: " + line);
+        }
+        assertEquals(narration, String.join("", lines), "折行不得丢字");
+    }
+
+    @Test
+    void longestShotNarrationStaysWithinTwoLines() {
+        // S03 全片最长旁白（≈103全角字）：超两行宽须时域拆段，每段≤2行（三行会侵入卡片出处行区 y≥951）
+        String narration = "第8话的标题叫，金融宽松是狂乱派对。可画面里没有派对，只有一根柱子。"
+                + "2014年10月31日13点44分，日本银行宣布追加金融宽松，美元兑日元拔起一根直上直下的白柱。"
+                + "漫画里这个日期、这个分钟，是白纸黑字画出来的。";
+        String ass = service.generateAss(List.of(shot(narration, 21)), new SubtitleStyle(), "zh");
+        List<String> texts = new ArrayList<>();
+        for (String line : ass.split("\n")) {
+            if (line.startsWith("Dialogue:")) {
+                texts.add(line.substring(line.lastIndexOf(",,") + 2).trim());
+            }
+        }
+        assertTrue(texts.size() >= 2, "超两行宽旁白须时域拆段: " + ass);
+        StringBuilder joined = new StringBuilder();
+        for (String t : texts) {
+            String[] ls = t.split("\\\\N");
+            assertTrue(ls.length <= 2, "拆段后仍超2行: " + t);
+            for (String l : ls) {
+                assertTrue(fullWidth(l, 24) <= 1200, "折行后仍超宽: " + l);
+            }
+            joined.append(String.join("", ls));
+        }
+        assertEquals(narration, joined.toString(), "拆段+折行不得丢字");
+    }
+
+    @Test
+    void shortCueNotWrapped() {
+        String narration = "11月19日深夜，它还是红的，涨2.64%。20日收盘，跌9.71%。同一只股票，一夜之间。";
+        String ass = service.generateAss(List.of(shot(narration, 10)), new SubtitleStyle(), "zh");
+        assertFalse(ass.contains("\\N"), "未超宽不应插硬换行: " + ass);
+    }
+
+    @Test
+    void wrapKeepsExistingBilingualLineBreak() {
+        mockTranslation("[\"Hello world\"]");
+        String ass = service.generateAss(List.of(shot("你好世界", 5)), new SubtitleStyle(), "bilingual");
+        assertTrue(ass.contains("你好世界\\NHello world"));
     }
 }

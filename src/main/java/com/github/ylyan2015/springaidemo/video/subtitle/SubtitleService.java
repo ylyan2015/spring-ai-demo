@@ -34,6 +34,9 @@ public class SubtitleService {
     private static final int ASS_PLAY_RES_X = 1280;
     private static final int ASS_PLAY_RES_Y = 720;
 
+    /** Style 行左右 margin（与 cuesToAss 的 40,40 保持一致），预折行可用宽 = PlayResX − 2×margin */
+    private static final int ASS_MARGIN_LR = 40;
+
     @Value("${video.subtitle.font-name:Microsoft YaHei}")
     private String defaultFontName;
 
@@ -158,8 +161,11 @@ public class SubtitleService {
         sb.append("[Events]\n")
                 .append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
         for (SubtitleCue cue : cues) {
-            sb.append(String.format("Dialogue: 0,%s,%s,Default,,0,0,0,,%s%n",
-                    formatAssTime(cue.startMs()), formatAssTime(cue.endMs()), escapeAssText(cue.text())));
+            for (SubtitleCue part : splitLongCue(cue, s.getFontSize())) {
+                sb.append(String.format("Dialogue: 0,%s,%s,Default,,0,0,0,,%s%n",
+                        formatAssTime(part.startMs()), formatAssTime(part.endMs()),
+                        escapeAssText(wrapAssText(part.text(), s.getFontSize()))));
+            }
         }
         return sb.toString();
     }
@@ -379,5 +385,132 @@ public class SubtitleService {
         return text.replace("\r\n", "\n")
                 .replace("{", "｛").replace("}", "｝")
                 .replace("\n", "\\N");
+    }
+
+    /**
+     * 长字幕行预折行（R10）：实测本机 ffmpeg/libass 对无空格 CJK 连续文本不按 WrapStyle 折行，
+     * 超宽单行会被画面两端裁切 → 生成 ASS 前按字宽估宽、在标点处插硬换行。
+     * 全角字计 fontSize、半角计 0.6×fontSize；优先标点后断行，单段超宽按字宽强断；已有换行逐行处理。
+     */
+    static String wrapAssText(String text, int fontSize) {
+        int max = ASS_PLAY_RES_X - 2 * ASS_MARGIN_LR;
+        StringBuilder out = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            if (out.length() > 0) {
+                out.append('\n');
+            }
+            out.append(wrapLine(line, fontSize, max));
+        }
+        return out.toString();
+    }
+
+    private static String wrapLine(String line, int fontSize, int max) {
+        if (widthOf(line, fontSize) <= max) {
+            return line;
+        }
+        List<String> segs = new ArrayList<>();
+        StringBuilder seg = new StringBuilder();
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            seg.append(c);
+            if ("。？！；，、：!?;:,".indexOf(c) >= 0) {
+                segs.add(seg.toString());
+                seg.setLength(0);
+            }
+        }
+        if (seg.length() > 0) {
+            segs.add(seg.toString());
+        }
+        StringBuilder out = new StringBuilder();
+        StringBuilder cur = new StringBuilder();
+        int curW = 0;
+        for (String s : segs) {
+            while (widthOf(s, fontSize) > max) {
+                int cut = 0;
+                int w = 0;
+                while (cut < s.length() && w + charWidth(s.charAt(cut), fontSize) <= max) {
+                    w += charWidth(s.charAt(cut), fontSize);
+                    cut++;
+                }
+                if (cut == 0) {
+                    cut = 1;
+                }
+                if (cur.length() > 0) {
+                    out.append(cur).append('\n');
+                    cur.setLength(0);
+                    curW = 0;
+                }
+                out.append(s, 0, cut).append('\n');
+                s = s.substring(cut);
+            }
+            int sw = widthOf(s, fontSize);
+            if (curW + sw > max && cur.length() > 0) {
+                out.append(cur).append('\n');
+                cur.setLength(0);
+                curW = 0;
+            }
+            cur.append(s);
+            curW += sw;
+        }
+        if (cur.length() > 0) {
+            out.append(cur);
+        }
+        return out.toString();
+    }
+
+    /** 全角（CJK/全角标点/破折省略号）计 fontSize，其余半角计 0.6×fontSize（向上取整保守估宽） */
+    private static int charWidth(char c, int fontSize) {
+        boolean wide = c >= 0x2E80 || c == 0x2014 || c == 0x2015 || c == 0x2026;
+        return wide ? fontSize : (int) Math.ceil(fontSize * 0.6);
+    }
+
+    private static int widthOf(String text, int fontSize) {
+        int w = 0;
+        for (int i = 0; i < text.length(); i++) {
+            w += charWidth(text.charAt(i), fontSize);
+        }
+        return w;
+    }
+
+    /**
+     * R10 补充：单 cue 超两行宽（>2×可用宽）时按最接近半宽的标点拆成两段 Dialogue，
+     * 时间按字宽占比分配——三行字幕块会侵入卡片出处行区（y≥951），且长旁白分段显示更符合观看习惯。
+     * 仅 ASS 烧录侧拆分；SRT 保持整镜一条（平台自行折行）。
+     */
+    private static List<SubtitleCue> splitLongCue(SubtitleCue cue, int fontSize) {
+        int max = ASS_PLAY_RES_X - 2 * ASS_MARGIN_LR;
+        List<SubtitleCue> out = new ArrayList<>();
+        List<SubtitleCue> pending = new ArrayList<>(List.of(cue));
+        while (!pending.isEmpty()) {
+            SubtitleCue c = pending.remove(0);
+            int total = widthOf(c.text(), fontSize);
+            if (total <= 2 * max) {
+                out.add(c);
+                continue;
+            }
+            int half = total / 2;
+            int best = -1;
+            int bestDiff = Integer.MAX_VALUE;
+            int w = 0;
+            for (int i = 0; i < c.text().length(); i++) {
+                char ch = c.text().charAt(i);
+                w += charWidth(ch, fontSize);
+                if ("。？！；，、：!?;:,".indexOf(ch) >= 0 && Math.abs(w - half) < bestDiff) {
+                    bestDiff = Math.abs(w - half);
+                    best = i + 1;
+                }
+            }
+            if (best <= 0 || best >= c.text().length()) {
+                out.add(c);
+                continue;
+            }
+            String t1 = c.text().substring(0, best);
+            String t2 = c.text().substring(best);
+            long mid = c.startMs() + Math.round((c.endMs() - c.startMs())
+                    * (double) widthOf(t1, fontSize) / total);
+            pending.add(0, new SubtitleCue(t2, mid, c.endMs()));
+            pending.add(0, new SubtitleCue(t1, c.startMs(), mid));
+        }
+        return out;
     }
 }
